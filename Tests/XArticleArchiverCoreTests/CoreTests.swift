@@ -1501,6 +1501,68 @@ final class ArchiveDatabaseTests: XCTestCase {
     }
 }
 
+final class ArchiveSidebarStatisticsTests: XCTestCase {
+    private let firstCreatorID = UUID()
+    private let secondCreatorID = UUID()
+
+    func testCountsMatchTheThreeSidebarFilters() {
+        let articles = [
+            makeArticle(creatorID: firstCreatorID, state: .committed),
+            makeArticle(creatorID: firstCreatorID, state: .committed, lastError: "旧错误"),
+            makeArticle(creatorID: firstCreatorID, state: .fetched),
+            makeArticle(creatorID: secondCreatorID, state: .discovered, lastError: "等待重试"),
+            makeArticle(creatorID: secondCreatorID, state: .failed)
+        ]
+
+        let statistics = ArchiveSidebarStatistics(articles: articles)
+
+        XCTAssertEqual(statistics.allArticleCount, 5)
+        XCTAssertEqual(statistics.processingArticleCount, 2)
+        XCTAssertEqual(statistics.needsAttentionArticleCount, 3)
+        XCTAssertEqual(
+            articles.filter(ArchiveSidebarStatistics.isProcessing).count,
+            statistics.processingArticleCount
+        )
+        XCTAssertEqual(
+            articles.filter(ArchiveSidebarStatistics.needsAttention).count,
+            statistics.needsAttentionArticleCount
+        )
+    }
+
+    func testCreatorCountIncludesOnlyCompletedDownloads() {
+        let statistics = ArchiveSidebarStatistics(articles: [
+            makeArticle(creatorID: firstCreatorID, state: .committed),
+            makeArticle(creatorID: firstCreatorID, state: .rendered),
+            makeArticle(creatorID: firstCreatorID, state: .failed),
+            makeArticle(creatorID: secondCreatorID, state: .committed)
+        ])
+
+        XCTAssertEqual(statistics.downloadedArticleCount(for: firstCreatorID), 1)
+        XCTAssertEqual(statistics.downloadedArticleCount(for: secondCreatorID), 1)
+        XCTAssertEqual(statistics.downloadedArticleCount(for: UUID()), 0)
+    }
+
+    private func makeArticle(
+        creatorID: UUID,
+        state: PipelineState,
+        lastError: String? = nil
+    ) -> ArchivedArticle {
+        ArchivedArticle(
+            stableSourceKey: UUID().uuidString,
+            creatorID: creatorID,
+            title: "统计测试",
+            authorHandle: "writer",
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/1")!,
+            sourcePostID: UUID().uuidString,
+            publishedAt: .distantPast,
+            sourceChecksum: "checksum",
+            pipelineState: state,
+            lastError: lastError
+        )
+    }
+}
+
 final class ExactCaptureQueuePolicyTests: XCTestCase {
     private let creatorID = UUID()
 

@@ -124,7 +124,8 @@ struct RootView: View {
     }
 
     private var sidebar: some View {
-        List(selection: $model.sidebarSelection) {
+        let statistics = model.sidebarStatistics
+        return List(selection: $model.sidebarSelection) {
             Section {
                 Button {
                     model.presentDownloadSheet()
@@ -147,37 +148,68 @@ struct RootView: View {
                 .help("输入博主主页或一个及多个 X Article 链接开始下载")
             }
             Section("资料库") {
-                Label("全部文章", systemImage: "doc.text").tag(AppViewModel.SidebarSelection.all)
-                Label("处理中", systemImage: "clock.arrow.circlepath").tag(AppViewModel.SidebarSelection.pending)
-                Label("需要处理", systemImage: "exclamationmark.triangle").tag(AppViewModel.SidebarSelection.failed)
-                if model.pendingExactCaptureCount > 0 {
-                    Menu {
-                        Button {
-                            model.resumePendingBrowserCaptures()
-                        } label: {
-                            Label("继续采集 \(model.pendingExactCaptureCount) 个任务", systemImage: "play.fill")
-                        }
-                        .help("从第一个未完成任务开始继续采集")
-                        .disabled(model.isRunning)
-                        Divider()
-                        Button(role: .destructive) {
-                            model.requestDeleteAllExactCaptureTasks()
-                        } label: {
-                            Label("删除全部任务…", systemImage: "trash")
-                        }
-                        .help("清空待采集队列，已有文章归档会保留")
+                SidebarCountRow(
+                    title: "全部文章",
+                    systemImage: "doc.text",
+                    count: statistics.allArticleCount
+                )
+                .tag(AppViewModel.SidebarSelection.all)
+                .contextMenu {
+                    Button {
+                        model.presentDownloadSheet()
                     } label: {
-                        HStack(spacing: 6) {
-                            Label("继续精确采集（\(model.pendingExactCaptureCount)）", systemImage: "safari")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
+                        Label("开始下载文章…", systemImage: "square.and.arrow.down")
                     }
-                    .menuStyle(.borderlessButton)
-                    .help("打开精确采集任务管理；可继续处理或删除全部任务")
+                    .disabled(model.isRunning)
+                    Button {
+                        model.requestSyncAll()
+                    } label: {
+                        Label("同步所有博主文章…", systemImage: SyncVisualStyle.symbolName)
+                    }
+                    .disabled(model.isRunning || model.enabledCreatorCount == 0)
+                }
+
+                SidebarCountRow(
+                    title: "处理中",
+                    systemImage: "clock.arrow.circlepath",
+                    count: statistics.processingArticleCount
+                )
+                .tag(AppViewModel.SidebarSelection.pending)
+                .contextMenu {
+                    Button {
+                        model.showDownloadProgressWindow()
+                    } label: {
+                        Label("显示下载进度", systemImage: "arrow.down.circle")
+                    }
+                    .disabled(!model.hasActiveDownloadProgress)
+                    Button(role: .cancel) {
+                        model.cancelCurrentTask()
+                    } label: {
+                        Label("安全停止", systemImage: "stop.circle")
+                    }
+                    .disabled(!model.isRunning)
+                }
+
+                SidebarCountRow(
+                    title: "需要处理",
+                    systemImage: "exclamationmark.triangle",
+                    count: statistics.needsAttentionArticleCount
+                )
+                .tag(AppViewModel.SidebarSelection.failed)
+                .contextMenu {
+                    Button {
+                        model.resumePendingBrowserCaptures()
+                    } label: {
+                        Label("重新处理", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(model.isRunning || model.pendingExactCaptureCount == 0)
+                    Divider()
+                    Button(role: .destructive) {
+                        model.requestDeleteAllExactCaptureTasks()
+                    } label: {
+                        Label("删除全部待处理任务…", systemImage: "trash")
+                    }
+                    .disabled(model.pendingExactCaptureCount == 0)
                 }
             }
             Section("博主") {
@@ -192,6 +224,7 @@ struct RootView: View {
                             Image(systemName: creator.isProtected ? "lock.circle" : "person.crop.circle")
                         }
                         Spacer(minLength: 4)
+                        SidebarCountBadge(count: statistics.downloadedArticleCount(for: creator.id))
                     }
                     .tag(AppViewModel.SidebarSelection.creator(creator.id))
                     .contextMenu {
@@ -251,7 +284,7 @@ struct RootView: View {
                                         model.selectedArticleID = article.id
                                         model.captureSelectedArticleExactly()
                                     } label: {
-                                        Label("重新获取完整排版…", systemImage: "safari")
+                                        Label("重新处理", systemImage: "arrow.clockwise")
                                     }
                                     .disabled(model.isRunning)
                                     .help("重新打开 X Article 页面并严格校验完整排版")
@@ -375,11 +408,12 @@ struct RootView: View {
                             .controlSize(.small)
                             .help("在默认浏览器打开当前 X Article 原页")
                             if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
-                                Button("重新获取完整排版") { model.captureSelectedArticleExactly() }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                    .disabled(model.isRunning)
-                                    .help("重新打开原页并保存段落、列表、代码、引用和图片的真实顺序")
+                                FixedReprocessButton(
+                                    isDisabled: model.isRunning,
+                                    help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
+                                ) {
+                                    model.captureSelectedArticleExactly()
+                                }
                             }
                         }
                     }
@@ -431,7 +465,7 @@ struct RootView: View {
                             Divider()
                             Button("访问原文") { model.openSource() }
                                 .help("在默认浏览器打开当前 X Article 原页")
-                            Button("重新获取完整排版…") { model.captureSelectedArticleExactly() }
+                            Button("重新处理") { model.captureSelectedArticleExactly() }
                                 .help("重新打开原页并严格校验完整排版")
                         } label: {
                             Image(systemName: "ellipsis.circle").font(.title2)
@@ -453,12 +487,12 @@ struct RootView: View {
                                 .foregroundStyle(.orange)
                             Text("请用应用内 X 页面重新读取这篇 Article。只有段落、列表、表格、代码和图片的真实顺序通过校验后才会覆盖。")
                                 .foregroundStyle(.secondary)
-                            Button("重新获取这篇的完整排版") {
+                            FixedReprocessButton(
+                                isDisabled: model.isRunning,
+                                help: "重新打开这篇 X Article 并保存完整排版"
+                            ) {
                                 model.captureSelectedArticleExactly()
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.isRunning)
-                            .help("重新打开这篇 X Article 并保存完整排版")
                             Text(model.markdownPreview(for: article))
                                 .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
@@ -1172,6 +1206,58 @@ private struct ArticleRow: View {
 
     private var statusColor: Color {
         article.pipelineState == .committed && !hasLayoutLimit ? .green : .orange
+    }
+}
+
+private struct SidebarCountRow: View {
+    let title: String
+    let systemImage: String
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label(title, systemImage: systemImage)
+            Spacer(minLength: 4)
+            SidebarCountBadge(count: count)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct SidebarCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count, format: .number.grouping(.never))
+            .font(.caption.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .frame(minWidth: 28)
+            .background(Color.primary.opacity(0.07), in: Capsule())
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("\(count) 篇文章")
+    }
+}
+
+private struct FixedReprocessButton: View {
+    let isDisabled: Bool
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("重新处理")
+                .lineLimit(1)
+                .frame(width: 64)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(10)
+        .disabled(isDisabled)
+        .help(help)
+        .accessibilityLabel("重新处理")
     }
 }
 

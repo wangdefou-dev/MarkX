@@ -152,12 +152,16 @@ final class AppViewModel: ObservableObject {
         case .all, .none:
             articles
         case .pending:
-            articles.filter { $0.pipelineState != .committed && $0.pipelineState != .failed }
+            articles.filter(ArchiveSidebarStatistics.isProcessing)
         case .failed:
-            articles.filter { $0.pipelineState == .failed || $0.lastError != nil }
+            articles.filter(ArchiveSidebarStatistics.needsAttention)
         case .creator(let id):
             articles.filter { $0.creatorID == id }
         }
+    }
+
+    var sidebarStatistics: ArchiveSidebarStatistics {
+        ArchiveSidebarStatistics(articles: articles)
     }
 
     var selectedArticle: ArchivedArticle? {

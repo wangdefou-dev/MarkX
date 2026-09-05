@@ -19,7 +19,7 @@ plutil -lint "$APP_BUNDLE/Contents/Info.plist"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 file "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp" | grep -q 'arm64'
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleShortVersionString)" = "0.1.2"
-test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleVersion)" = "49"
+test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleVersion)" = "50"
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleURLTypes | grep -c xarticlearchiver)" -ge 1
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleIconFile)" = "AppIcon.icns"
 file "$APP_BUNDLE/Contents/Resources/AppIcon.icns" | grep -q 'Mac OS X icon'
