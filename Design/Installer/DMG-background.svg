@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="460" viewBox="0 0 720 460">
+  <rect width="720" height="460" fill="#F6F6F6"/>
+  <rect x="1" y="1" width="718" height="458" rx="22" fill="none" stroke="#E1E1E1" stroke-width="2"/>
+
+  <text x="360" y="62" text-anchor="middle"
+        font-family="PingFang SC, Helvetica Neue, sans-serif"
+        font-size="27" font-weight="600" fill="#111111">拖到“应用程序”完成安装</text>
+  <text x="360" y="94" text-anchor="middle"
+        font-family="PingFang SC, Helvetica Neue, sans-serif"
+        font-size="15" fill="#777777">将左侧应用拖到右侧快捷入口</text>
+
+  <path d="M300 242H420" fill="none" stroke="#111111" stroke-width="8" stroke-linecap="round"/>
+  <path d="M394 216L424 242L394 268" fill="none" stroke="#111111" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

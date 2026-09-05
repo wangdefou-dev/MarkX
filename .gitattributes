@@ -1,0 +1,14 @@
+* text=auto
+
+*.swift text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.plist text eol=lf
+*.entitlements text eol=lf
+*.svg text eol=lf
+
+*.png binary
+*.icns binary
+
+# Markdown uses two trailing spaces for explicit line breaks.
+*.md whitespace=-blank-at-eol

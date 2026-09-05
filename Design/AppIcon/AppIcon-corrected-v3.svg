@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="16" y="16" width="992" height="992" rx="224" fill="#000000"/>
+
+  <!-- Official X silhouette: path data is unchanged; only scaled and centered. -->
+  <g transform="translate(182 175) scale(0.55)">
+    <path d="M714.163 519.284L1160.89 0H1055.03L667.137 450.887L357.328 0H0L468.492 681.821L0 1226.37H105.866L515.491 750.218L842.672 1226.37H1200L714.137 519.284H714.163ZM569.165 687.828L521.697 619.934L144.011 79.6944H306.615L611.412 515.685L658.88 583.579L1055.08 1150.3H892.476L569.165 687.854V687.828Z" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Exactly three article lines placed on the X mark's own upper-left endpoint. -->
+  <g fill="none" stroke="#000000" stroke-width="8" stroke-linecap="round">
+    <path d="M229 190H317"/>
+    <path d="M229 204H317"/>
+    <path d="M229 218H317"/>
+  </g>
+</svg>

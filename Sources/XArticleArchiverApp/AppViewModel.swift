@@ -1,0 +1,1976 @@
+import AppKit
+import Foundation
+import SwiftUI
+import XArticleArchiverCore
+
+private enum ArticleDeletionError: LocalizedError {
+    case outsideArchiveRoot(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .outsideArchiveRoot(let path):
+            "拒绝删除归档目录之外的文件：\(path)"
+        }
+    }
+}
+
+@MainActor
+final class AppViewModel: ObservableObject {
+    private enum ActiveArchiveOperation {
+        case download
+        case syncAll(creatorCount: Int, articleLimit: Int)
+    }
+
+    enum ImageHostChoice: String, CaseIterable, Identifiable {
+        case uPic
+        case s3
+
+        var id: String { rawValue }
+        var displayName: String { self == .uPic ? "uPic 当前默认图床" : "原生 S3 / R2" }
+    }
+
+    enum SidebarSelection: Hashable {
+        case all
+        case pending
+        case failed
+        case creator(UUID)
+    }
+
+    enum ConnectionSetupTarget {
+        case overview
+        case imageHost
+    }
+
+    @Published var creators: [Creator] = []
+    @Published var articles: [ArchivedArticle] = []
+    @Published var selectedArticleID: UUID?
+    @Published var sidebarSelection: SidebarSelection? = .all
+    @Published var archiveRoot: URL?
+    @Published var hasXToken = false
+    @Published var isRunning = false
+    @Published var statusMessage = "准备就绪"
+    @Published var errorMessage: String?
+    @Published var progress = SyncProgress()
+    @Published var upicCapability = ImageHostCapability(name: "uPic 当前默认图床", version: nil, isAvailable: false, detail: "正在检测")
+    @Published var imageHostChoice: ImageHostChoice = .uPic
+    @Published var imageHostVerified = false
+    @Published var hasS3Credentials = false
+    @Published var s3Endpoint = ""
+    @Published var s3Bucket = ""
+    @Published var s3PublicBaseURL = ""
+    @Published var s3Region = "auto"
+    @Published var s3KeyPrefix = "x-archive"
+    @Published var showingAddCreators = false
+    @Published var showingSyncAllConfiguration = false
+    @Published var showingConnectionSetup = false
+    @Published var connectionSetupTarget: ConnectionSetupTarget = .overview
+    @Published var downloadSheetPrefill = ""
+    @Published var downloadSheetUsesArticleLinks = false
+    @Published var showingCreatorArticleDiscovery = false
+    @Published var creatorArticleDiscoveryRequests: [CreatorArticleDiscoveryRequest] = []
+    @Published var creatorArticleDiscoveryIndex = 0
+    @Published var showingBrowserCapture = false
+    @Published var browserCaptureRequests: [BrowserCaptureRequest] = []
+    @Published var browserCaptureIndex = 0
+    @Published var downloadResultNotice: DownloadResultNotice?
+    @Published var syncResultNotice: DownloadResultNotice?
+    @Published var articlePendingDeletion: ArchivedArticle?
+    @Published var creatorPendingDeletion: Creator?
+    @Published var exactCaptureTaskPendingDeletion: ArchivedArticle?
+    @Published var showingDeleteAllExactCaptureTasksConfirmation = false
+    @Published private(set) var scheduledSyncEnabled = false
+    @Published private(set) var scheduledSyncHour = 2
+    @Published private(set) var scheduledSyncMinute = 0
+    @Published private(set) var scheduledSyncArticleLimit = 10
+    @Published private(set) var scheduledSyncLastRunAt: Date?
+    @Published private(set) var scheduledSyncLastResult = "尚未执行过定时同步"
+    @Published private(set) var isBootstrapped = false
+
+    private var database: ArchiveDatabase?
+    private var runningTask: Task<Void, Never>?
+    private var browserCaptureFailurePostIDs = Set<String>()
+    private var browserCaptureFailureDetails: [String] = []
+    private var discoveredCreatorArticles: [CreatorArticleListItem] = []
+    private var browserCaptureStopRequested = false
+    private var activeArchiveOperation: ActiveArchiveOperation = .download
+    private var scheduledRunActive = false
+    private let defaults = UserDefaults.standard
+
+    init() {
+        if let path = defaults.string(forKey: "archiveRootPath") {
+            archiveRoot = URL(fileURLWithPath: path, isDirectory: true)
+        }
+        imageHostChoice = ImageHostChoice(rawValue: defaults.string(forKey: "imageHostChoice") ?? "") ?? .uPic
+        imageHostVerified = defaults.bool(forKey: "imageHostVerified")
+        scheduledSyncEnabled = defaults.bool(forKey: "scheduledSyncEnabled")
+        scheduledSyncHour = defaults.object(forKey: "scheduledSyncHour") as? Int ?? 2
+        scheduledSyncMinute = defaults.object(forKey: "scheduledSyncMinute") as? Int ?? 0
+        scheduledSyncArticleLimit = defaults.object(forKey: "scheduledSyncArticleLimit") as? Int ?? 10
+        scheduledSyncLastRunAt = defaults.object(forKey: "scheduledSyncLastRunAt") as? Date
+        scheduledSyncLastResult = defaults.string(forKey: "scheduledSyncLastResult") ?? "尚未执行过定时同步"
+        if let configurationData = defaults.data(forKey: "s3Configuration"),
+           let configuration = try? JSONDecoder().decode(S3ImageHostConfiguration.self, from: configurationData) {
+            s3Endpoint = configuration.endpoint.absoluteString
+            s3Bucket = configuration.bucket
+            s3PublicBaseURL = configuration.publicBaseURL.absoluteString
+            s3Region = configuration.region
+            s3KeyPrefix = configuration.keyPrefix
+        }
+        Task { await bootstrap() }
+        Task { await refreshCredentialState() }
+    }
+
+    var filteredArticles: [ArchivedArticle] {
+        switch sidebarSelection {
+        case .all, .none:
+            articles
+        case .pending:
+            articles.filter { $0.pipelineState != .committed && $0.pipelineState != .failed }
+        case .failed:
+            articles.filter { $0.pipelineState == .failed || $0.lastError != nil }
+        case .creator(let id):
+            articles.filter { $0.creatorID == id }
+        }
+    }
+
+    var selectedArticle: ArchivedArticle? {
+        guard let selectedArticleID else { return nil }
+        return articles.first { $0.id == selectedArticleID }
+    }
+
+    var currentBrowserCaptureRequest: BrowserCaptureRequest? {
+        guard browserCaptureRequests.indices.contains(browserCaptureIndex) else { return nil }
+        return browserCaptureRequests[browserCaptureIndex]
+    }
+
+    var currentCreatorArticleDiscoveryRequest: CreatorArticleDiscoveryRequest? {
+        guard creatorArticleDiscoveryRequests.indices.contains(creatorArticleDiscoveryIndex) else { return nil }
+        return creatorArticleDiscoveryRequests[creatorArticleDiscoveryIndex]
+    }
+
+    var pendingExactCaptureCount: Int {
+        pendingExactCaptureArticles.count
+    }
+
+    var pendingExactCaptureArticles: [ArchivedArticle] {
+        articles.filter(ExactCaptureQueuePolicy.needsCapture)
+    }
+
+    var enabledCreatorCount: Int {
+        SyncAllCreatorPolicy.enabledUsernames(from: creators).count
+    }
+
+    var isSyncingTrackedCreators: Bool {
+        if case .syncAll = activeArchiveOperation { return true }
+        return false
+    }
+
+    var activeSyncArticleLimit: Int? {
+        guard case .syncAll(_, let articleLimit) = activeArchiveOperation else { return nil }
+        return articleLimit
+    }
+
+    var activeSyncCreatorCount: Int? {
+        guard case .syncAll(let creatorCount, _) = activeArchiveOperation else { return nil }
+        return creatorCount
+    }
+
+    var configurationSummary: String {
+        let folder = archiveRoot?.lastPathComponent ?? "未选择归档目录"
+        let x = ChromeXSessionReader.hasLocalChromeProfile() ? "Chrome X 可用" : "Chrome X 未就绪"
+        let imageHost = imageHostVerified ? "图床已验证" : "图床未验证"
+        return "\(x) · \(imageHost) · \(folder)"
+    }
+
+    var imageHostDetail: String {
+        if imageHostVerified {
+            return imageHostChoice == .uPic ? "uPic 默认图床已通过真实上传验证" : "原生 S3/R2 真实上传验证通过"
+        }
+        if imageHostChoice == .uPic, upicCapability.isAvailable {
+            return upicCapability.detail
+        }
+        if imageHostChoice == .s3, hasS3Credentials {
+            return "S3/R2 凭证已保存，尚未通过测试上传"
+        }
+        return "尚未配置并验证图片上传"
+    }
+
+    func bootstrap() async {
+        defer { isBootstrapped = true }
+        if let archiveRoot {
+            do {
+                try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
+                database = try ArchiveDatabase(url: Self.databaseURL(for: archiveRoot))
+                try await reload()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+
+        upicCapability = await UPicAdapter().probe()
+        if upicCapability.isAvailable {
+            do {
+                let profile = try await Task.detached(priority: .utility) {
+                    try UPicConfigurationReader.readDefaultS3()
+                }.value
+                upicCapability.detail = "已读取 uPic 当前默认配置：\(profile.name)"
+                if imageHostChoice == .uPic,
+                   defaults.string(forKey: "uPicProfileFingerprint") != Self.fingerprint(for: profile) {
+                    setImageHostVerified(false)
+                }
+            } catch {
+                upicCapability.detail = error.localizedDescription
+                if imageHostChoice == .uPic { setImageHostVerified(false) }
+            }
+        }
+    }
+
+    func presentConnectionSetup(focusing target: ConnectionSetupTarget = .overview) {
+        connectionSetupTarget = target
+        showingConnectionSetup = true
+    }
+
+    func saveScheduledSync(
+        enabled: Bool,
+        hour: Int,
+        minute: Int,
+        articleLimit: Int
+    ) async -> Bool {
+        let configuration = ScheduledSyncConfiguration(
+            isEnabled: enabled,
+            hour: hour,
+            minute: minute,
+            articleLimit: articleLimit
+        )
+        guard configuration.isValid else {
+            errorMessage = "定时同步时间或文章数量无效"
+            return false
+        }
+        if enabled {
+            guard archiveRoot != nil else {
+                errorMessage = "请先选择本地归档目录"
+                return false
+            }
+            guard imageHostVerified else {
+                errorMessage = "请先验证默认图床，再启用定时同步"
+                return false
+            }
+            guard enabledCreatorCount > 0 else {
+                errorMessage = "还没有可同步的已跟踪博主"
+                return false
+            }
+        }
+
+        do {
+            try await Task.detached(priority: .utility) {
+                try ScheduledSyncLaunchAgentManager.apply(configuration)
+            }.value
+            scheduledSyncEnabled = enabled
+            scheduledSyncHour = hour
+            scheduledSyncMinute = minute
+            scheduledSyncArticleLimit = articleLimit
+            defaults.set(enabled, forKey: "scheduledSyncEnabled")
+            defaults.set(hour, forKey: "scheduledSyncHour")
+            defaults.set(minute, forKey: "scheduledSyncMinute")
+            defaults.set(articleLimit, forKey: "scheduledSyncArticleLimit")
+            statusMessage = enabled
+                ? String(format: "已启用每日 %02d:%02d 后台同步", hour, minute)
+                : "已关闭定时同步"
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func handleOpenURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "xarticlearchiver",
+              url.host?.lowercased() == "scheduled-sync" else { return }
+        Task { await startScheduledSyncFromSystem() }
+    }
+
+    private func startScheduledSyncFromSystem() async {
+        guard scheduledSyncEnabled else { return }
+        for _ in 0..<200 where !isBootstrapped {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+
+        let triggeredAt = Date()
+        if isRunning {
+            recordScheduledSyncResult(
+                at: triggeredAt,
+                message: "本次已跳过：上一个下载或同步任务仍在运行"
+            )
+            return
+        }
+        guard isBootstrapped, archiveRoot != nil else {
+            recordScheduledSyncResult(at: triggeredAt, message: "本次未执行：本地归档目录未就绪")
+            return
+        }
+        guard imageHostVerified else {
+            recordScheduledSyncResult(at: triggeredAt, message: "本次未执行：默认图床未通过验证")
+            return
+        }
+        guard enabledCreatorCount > 0 else {
+            recordScheduledSyncResult(at: triggeredAt, message: "本次未执行：没有已跟踪博主")
+            return
+        }
+
+        scheduledRunActive = true
+        recordScheduledSyncResult(
+            at: triggeredAt,
+            message: "正在后台同步 \(enabledCreatorCount) 位博主，每位最近 \(scheduledSyncArticleLimit) 篇"
+        )
+        startSyncAll(articleLimit: scheduledSyncArticleLimit)
+        if !NSApp.isActive {
+            NSApp.hide(nil)
+        }
+    }
+
+    private func publishSyncResult(title: String, message: String) {
+        if scheduledRunActive {
+            scheduledRunActive = false
+            let compact = message.replacingOccurrences(of: "\n", with: " ")
+            recordScheduledSyncResult(at: Date(), message: "\(title)：\(compact)")
+        } else {
+            syncResultNotice = DownloadResultNotice(title: title, message: message)
+        }
+    }
+
+    private func recordScheduledSyncResult(at date: Date, message: String) {
+        scheduledSyncLastRunAt = date
+        scheduledSyncLastResult = message
+        defaults.set(date, forKey: "scheduledSyncLastRunAt")
+        defaults.set(message, forKey: "scheduledSyncLastResult")
+    }
+
+    private func refreshCredentialState() async {
+        do {
+            let credentialState = try await Task.detached(priority: .userInitiated) {
+                let token = try KeychainStore.read(account: KeychainStore.xBearerAccount)
+                let access = try KeychainStore.read(account: KeychainStore.s3AccessKeyAccount)
+                let secret = try KeychainStore.read(account: KeychainStore.s3SecretKeyAccount)
+                return (
+                    hasXToken: token?.isEmpty == false,
+                    hasS3Credentials: access?.isEmpty == false && secret?.isEmpty == false
+                )
+            }.value
+            hasXToken = credentialState.hasXToken
+            hasS3Credentials = credentialState.hasS3Credentials
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func chooseArchiveFolder() {
+        guard !isRunning else { return }
+        let panel = NSOpenPanel()
+        panel.title = archiveRoot == nil ? "选择 X 长文归档目录" : "同步并切换 X 长文归档目录"
+        panel.message = archiveRoot == nil
+            ? "文章、图片缓存和资料库会保存在这个目录中。"
+            : "当前资料库会完整复制到新目录；确认复制和校验成功后，应用才会切换。旧目录将保留。"
+        panel.prompt = archiveRoot == nil ? "使用此目录" : "同步并切换"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        let destination = selectedURL.standardizedFileURL
+        guard let currentRoot = archiveRoot?.standardizedFileURL else {
+            archiveRoot = destination
+            defaults.set(destination.path, forKey: "archiveRootPath")
+            Task { await configureDatabase(at: destination) }
+            return
+        }
+        guard currentRoot.path != destination.path else {
+            statusMessage = "当前已经在使用这个归档目录"
+            return
+        }
+        synchronizeAndSwitchArchiveFolder(from: currentRoot, to: destination)
+    }
+
+    private func synchronizeAndSwitchArchiveFolder(from source: URL, to destination: URL) {
+        guard !isRunning else { return }
+        runningTask = Task {
+            isRunning = true
+            errorMessage = nil
+            progress = SyncProgress(stage: "正在准备同步现有资料库")
+            defer {
+                isRunning = false
+                runningTask = nil
+            }
+
+            do {
+                if let database {
+                    try await database.checkpointForDirectorySync()
+                }
+                let replaceablePaths = try await approvedRetryFiles(
+                    from: source,
+                    to: destination
+                )
+                progress.stage = "正在复制文章、图片缓存和来源快照"
+                statusMessage = progress.stage
+
+                let copyTask = Task.detached(priority: .userInitiated) {
+                    try ArchiveDirectorySynchronizer.synchronize(
+                        from: source,
+                        to: destination,
+                        replaceableRelativePaths: replaceablePaths
+                    )
+                }
+                let result = try await withTaskCancellationHandler {
+                    try await copyTask.value
+                } onCancel: {
+                    copyTask.cancel()
+                }
+                try Task.checkCancellation()
+
+                progress.stage = "正在校验新目录并更新文章路径"
+                let destinationDatabase = try ArchiveDatabase(url: Self.databaseURL(for: destination))
+                let copiedArticles = try await destinationDatabase.loadArticles()
+                for var article in copiedArticles {
+                    guard let currentPath = article.markdownPath,
+                          let rebasedPath = ArchiveDirectorySynchronizer.rebasedPath(
+                            currentPath,
+                            from: source,
+                            to: destination
+                          ) else { continue }
+                    guard FileManager.default.fileExists(atPath: rebasedPath) else {
+                        throw ArchiveDirectorySyncError.fileOperation(
+                            "新目录缺少文章文件：\(URL(fileURLWithPath: rebasedPath).lastPathComponent)"
+                        )
+                    }
+                    article.markdownPath = rebasedPath
+                    try await destinationDatabase.upsertArticle(article)
+                }
+
+                database = destinationDatabase
+                archiveRoot = destination
+                defaults.set(destination.path, forKey: "archiveRootPath")
+                try await reload()
+
+                let size = ByteCountFormatter.string(
+                    fromByteCount: result.copiedByteCount,
+                    countStyle: .file
+                )
+                progress.stage = "目录切换完成"
+                statusMessage = "已同步 \(articles.count) 篇文章、\(result.copiedFileCount) 个文件（\(size)）"
+            } catch is CancellationError {
+                progress.stage = "目录切换已停止"
+                statusMessage = "仍在使用原归档目录；新目录中的已复制文件可在下次同步时复用"
+            } catch {
+                progress.stage = "目录切换失败"
+                statusMessage = "仍在使用原归档目录"
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// A failed switch from an earlier build may have opened the copied SQLite
+    /// database before discovering a missing Markdown file. Opening SQLite can
+    /// change page bytes even when every logical row is unchanged, so a plain
+    /// byte comparison would make that otherwise safe retry impossible.
+    /// Approve replacement only when creators and articles are logically
+    /// identical after normalizing their archive-relative Markdown paths.
+    private func approvedRetryFiles(from source: URL, to destination: URL) async throws -> Set<String> {
+        let relativeDatabasePath = ".x-article-archiver/archive.sqlite"
+        let sourceDatabaseURL = Self.databaseURL(for: source)
+        let destinationDatabaseURL = Self.databaseURL(for: destination)
+        guard FileManager.default.fileExists(atPath: destinationDatabaseURL.path),
+              !FileManager.default.contentsEqual(
+                atPath: sourceDatabaseURL.path,
+                andPath: destinationDatabaseURL.path
+              ) else { return [] }
+        guard let sourceDatabase = database else { return [] }
+
+        let sourceCreators = try await sourceDatabase.loadCreators()
+        let sourceArticles = try await sourceDatabase.loadArticles()
+        let matches: Bool
+        do {
+            let destinationDatabase = try ArchiveDatabase(url: destinationDatabaseURL)
+            let destinationCreators = try await destinationDatabase.loadCreators()
+            let destinationArticles = try await destinationDatabase.loadArticles()
+            matches = Set(sourceCreators) == Set(destinationCreators)
+                && Self.normalizedArticles(sourceArticles, source: source, destination: destination)
+                    == Self.normalizedArticles(destinationArticles, source: source, destination: destination)
+            try await destinationDatabase.closeAfterCheckpointForDirectorySync()
+        }
+
+        guard matches else {
+            throw ArchiveDirectorySyncError.conflictingFile(relativeDatabasePath)
+        }
+        // The destination connection is closed when the scope above ends and
+        // its WAL has been checkpointed. Remove only its now-disposable SQLite
+        // sidecars so the approved main-file replacement cannot replay stale
+        // pages on the next open.
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = URL(fileURLWithPath: destinationDatabaseURL.path + suffix)
+            if FileManager.default.fileExists(atPath: sidecar.path) {
+                try FileManager.default.removeItem(at: sidecar)
+            }
+        }
+        return [relativeDatabasePath]
+    }
+
+    private static func normalizedArticles(
+        _ articles: [ArchivedArticle],
+        source: URL,
+        destination: URL
+    ) -> Set<ArchivedArticle> {
+        Set(articles.map { original in
+            var article = original
+            if let path = article.markdownPath {
+                article.markdownPath = ArchiveDirectorySynchronizer.relativePath(for: path, under: source)
+                    ?? ArchiveDirectorySynchronizer.relativePath(for: path, under: destination)
+                    ?? path
+            }
+            return article
+        })
+    }
+
+    func presentDownloadSheet(for creator: Creator? = nil) {
+        downloadSheetPrefill = creator.map { "@\($0.username)" } ?? ""
+        downloadSheetUsesArticleLinks = false
+        showingAddCreators = true
+    }
+
+    func presentArticleLinksSheet(prefill: String = "") {
+        downloadSheetPrefill = prefill
+        downloadSheetUsesArticleLinks = true
+        showingAddCreators = true
+    }
+
+    func saveAndTestToken(_ token: String) async -> Bool {
+        let cleaned = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            errorMessage = "请输入 X Developer Bearer Token"
+            return false
+        }
+        do {
+            statusMessage = "正在验证 X API…"
+            try await XAPIClient(bearerToken: cleaned).testConnection()
+            try KeychainStore.save(cleaned, account: KeychainStore.xBearerAccount)
+            hasXToken = true
+            statusMessage = "X API 连接成功"
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            statusMessage = "X API 验证失败"
+            return false
+        }
+    }
+
+    func removeToken() {
+        do {
+            try KeychainStore.delete(account: KeychainStore.xBearerAccount)
+            hasXToken = false
+            statusMessage = "X 连接已移除"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func testUPic() async -> Bool {
+        selectImageHost(.uPic)
+        let installation = UPicAdapter()
+        upicCapability = await installation.probe()
+        guard upicCapability.isAvailable else {
+            setImageHostVerified(false)
+            return false
+        }
+        do {
+            let profile = try await Task.detached(priority: .userInitiated) {
+                try UPicConfigurationReader.readDefaultS3()
+            }.value
+            let adapter = S3ImageHostAdapter(
+                configuration: profile.configuration,
+                accessKey: profile.accessKey,
+                secretKey: profile.secretKey
+            )
+            statusMessage = "正在通过 uPic 默认图床上传无隐私测试图…"
+            let remote = try await uploadSyntheticTestImage(using: adapter)
+            defaults.set(Self.fingerprint(for: profile), forKey: "uPicProfileFingerprint")
+            upicCapability.detail = "已验证 \(profile.name)：\(remote.host ?? "远程图床")"
+            setImageHostVerified(true)
+            statusMessage = "uPic 默认图床测试通过：\(remote.host ?? "远程图床")"
+            return true
+        } catch {
+            setImageHostVerified(false)
+            errorMessage = error.localizedDescription
+            upicCapability.detail = error.localizedDescription
+            statusMessage = "uPic 默认图床测试失败"
+            return false
+        }
+    }
+
+    func saveAndTestS3(accessKey: String, secretKey: String) async -> Bool {
+        do {
+            guard let endpoint = URL(string: s3Endpoint), let publicBase = URL(string: s3PublicBaseURL) else {
+                throw S3ImageHostError.invalidConfiguration("Endpoint 或公开访问地址格式不正确")
+            }
+            let existingCredentials = try await Task.detached(priority: .userInitiated) {
+                (
+                    access: try KeychainStore.read(account: KeychainStore.s3AccessKeyAccount) ?? "",
+                    secret: try KeychainStore.read(account: KeychainStore.s3SecretKeyAccount) ?? ""
+                )
+            }.value
+            let existingAccess = existingCredentials.access
+            let existingSecret = existingCredentials.secret
+            let actualAccess = accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? existingAccess : accessKey
+            let actualSecret = secretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? existingSecret : secretKey
+            let configuration = S3ImageHostConfiguration(
+                endpoint: endpoint,
+                bucket: s3Bucket,
+                publicBaseURL: publicBase,
+                region: s3Region,
+                keyPrefix: s3KeyPrefix
+            )
+            let adapter = S3ImageHostAdapter(configuration: configuration, accessKey: actualAccess, secretKey: actualSecret)
+            let capability = await adapter.probe()
+            guard capability.isAvailable else { throw S3ImageHostError.invalidConfiguration(capability.detail) }
+            statusMessage = "正在测试原生 S3/R2 上传…"
+            let remote = try await uploadSyntheticTestImage(using: adapter)
+            try await Task.detached(priority: .utility) {
+                try KeychainStore.save(actualAccess, account: KeychainStore.s3AccessKeyAccount)
+                try KeychainStore.save(actualSecret, account: KeychainStore.s3SecretKeyAccount)
+            }.value
+            defaults.set(try JSONEncoder().encode(configuration), forKey: "s3Configuration")
+            imageHostChoice = .s3
+            defaults.set(ImageHostChoice.s3.rawValue, forKey: "imageHostChoice")
+            hasS3Credentials = true
+            setImageHostVerified(true)
+            statusMessage = "S3/R2 图床测试通过：\(remote.host ?? "远程图床")"
+            return true
+        } catch {
+            setImageHostVerified(false)
+            errorMessage = error.localizedDescription
+            statusMessage = "S3/R2 图床测试失败"
+            return false
+        }
+    }
+
+    func importAndTestCurrentUPicS3() async -> Bool {
+        do {
+            statusMessage = "正在读取 uPic 当前默认 S3/R2 配置…"
+            let imported = try await Task.detached(priority: .userInitiated) {
+                try UPicConfigurationReader.readDefaultS3()
+            }.value
+            s3Endpoint = imported.configuration.endpoint.absoluteString
+            s3Bucket = imported.configuration.bucket
+            s3PublicBaseURL = imported.configuration.publicBaseURL.absoluteString
+            s3Region = imported.configuration.region
+            s3KeyPrefix = imported.configuration.keyPrefix
+            return await saveAndTestS3(accessKey: imported.accessKey, secretKey: imported.secretKey)
+        } catch {
+            setImageHostVerified(false)
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func selectImageHost(_ choice: ImageHostChoice) {
+        guard imageHostChoice != choice else { return }
+        imageHostChoice = choice
+        defaults.set(choice.rawValue, forKey: "imageHostChoice")
+        invalidateImageHostVerification()
+    }
+
+    func invalidateImageHostVerification() {
+        guard imageHostVerified else { return }
+        setImageHostVerified(false)
+        statusMessage = "图床配置已变更，请重新测试"
+    }
+
+    func removeS3Credentials() {
+        do {
+            try KeychainStore.delete(account: KeychainStore.s3AccessKeyAccount)
+            try KeychainStore.delete(account: KeychainStore.s3SecretKeyAccount)
+            hasS3Credentials = false
+            invalidateImageHostVerification()
+            statusMessage = "S3/R2 凭证已从钥匙串移除"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func addAndArchiveCreators(
+        input: String,
+        mode: ArchiveMode,
+        articleLimit: Int = 10
+    ) {
+        guard !isRunning else { return }
+        let handles = HandleParser.parse(input)
+        guard !handles.isEmpty else {
+            errorMessage = "没有识别到有效的 X 账号"
+            return
+        }
+        guard archiveRoot != nil else {
+            errorMessage = "请先选择本地归档目录"
+            showingConnectionSetup = true
+            return
+        }
+        guard imageHostVerified else {
+            errorMessage = "请先完成一次真实图片上传验证"
+            showingConnectionSetup = true
+            return
+        }
+        guard mode == .fullArchive || (1...100).contains(articleLimit) else {
+            errorMessage = "下载数量必须在 1 到 100 之间"
+            return
+        }
+        activeArchiveOperation = .download
+        showingAddCreators = false
+        beginCreatorArticleDiscovery(
+            handles: handles,
+            maximumArticles: mode == .recentWindow ? articleLimit : nil
+        )
+    }
+
+    func requestSyncAll() {
+        guard !isRunning else { return }
+        guard enabledCreatorCount > 0 else {
+            errorMessage = "还没有可同步的已跟踪博主"
+            return
+        }
+        syncResultNotice = nil
+        showingSyncAllConfiguration = true
+    }
+
+    func startSyncAll(articleLimit: Int) {
+        guard !isRunning else { return }
+        guard (1...100).contains(articleLimit) else {
+            errorMessage = "同步数量必须在 1 到 100 之间"
+            return
+        }
+        guard archiveRoot != nil else {
+            errorMessage = "请先选择本地归档目录"
+            return
+        }
+        guard imageHostVerified else {
+            errorMessage = "请先在连接设置中完成一次真实图片上传验证"
+            return
+        }
+        let handles = SyncAllCreatorPolicy.enabledUsernames(from: creators)
+        guard !handles.isEmpty else {
+            showingSyncAllConfiguration = false
+            errorMessage = "还没有可同步的已跟踪博主"
+            return
+        }
+        activeArchiveOperation = .syncAll(
+            creatorCount: handles.count,
+            articleLimit: articleLimit
+        )
+        beginCreatorArticleDiscovery(handles: handles, maximumArticles: articleLimit)
+    }
+
+    /// Discovers exact Article status URLs from each creator's dedicated
+    /// `/articles` page. This intentionally never calls the timeline or search
+    /// endpoints: regular Posts are not read, counted, or billed.
+    private func beginCreatorArticleDiscovery(handles: [String], maximumArticles: Int?) {
+        var seen = Set<String>()
+        let uniqueHandles = handles.filter { seen.insert($0.lowercased()).inserted }
+        guard !uniqueHandles.isEmpty, !isRunning else { return }
+
+        let isClosingInputSheet = showingAddCreators || showingSyncAllConfiguration
+        creatorArticleDiscoveryRequests = uniqueHandles.map {
+            CreatorArticleDiscoveryRequest(username: $0, maximumArticles: maximumArticles)
+        }
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
+        errorMessage = nil
+        progress = SyncProgress(
+            stage: isSyncingTrackedCreators
+                ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主"
+                : "正在打开 X Articles 专属列表"
+        )
+        statusMessage = isSyncingTrackedCreators
+            ? "后台同步已开始；已完整归档文章会自动跳过，X API 调用为 0"
+            : "只读取博主 Articles 列表；不扫描普通 Post，X API 调用为 0"
+        isRunning = true
+        showingAddCreators = false
+        showingSyncAllConfiguration = false
+        if isClosingInputSheet {
+            // Let SwiftUI finish dismissing the input sheet before presenting
+            // the browser sheet. Presenting both in one update can drop the
+            // second presentation on macOS.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(220))
+                guard let self, self.isRunning,
+                      !self.creatorArticleDiscoveryRequests.isEmpty else { return }
+                self.showingCreatorArticleDiscovery = true
+            }
+        } else {
+            showingCreatorArticleDiscovery = true
+        }
+    }
+
+    func completeCreatorArticleDiscovery(
+        _ items: [CreatorArticleListItem],
+        for request: CreatorArticleDiscoveryRequest
+    ) {
+        guard request.id == currentCreatorArticleDiscoveryRequest?.id else { return }
+        var knownPostIDs = Set(discoveredCreatorArticles.map(\.link.postID))
+        for item in items where knownPostIDs.insert(item.link.postID).inserted {
+            discoveredCreatorArticles.append(item)
+        }
+        progress.discoveredArticles = discoveredCreatorArticles.count
+
+        let next = creatorArticleDiscoveryIndex + 1
+        if creatorArticleDiscoveryRequests.indices.contains(next) {
+            creatorArticleDiscoveryIndex = next
+            progress.stage = isSyncingTrackedCreators
+                ? "正在同步第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主"
+                : "正在读取第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主的 Articles 列表"
+            return
+        }
+
+        let discovered = discoveredCreatorArticles
+        showingCreatorArticleDiscovery = false
+        creatorArticleDiscoveryRequests = []
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
+        isRunning = false
+
+        guard !discovered.isEmpty else {
+            if let creatorCount = activeSyncCreatorCount,
+               let articleLimit = activeSyncArticleLimit {
+                progress.stage = "同步完成：没有发现可检查的 X Article"
+                statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
+                publishSyncResult(
+                    title: "同步完成",
+                    message: "已检查 \(creatorCount) 位已跟踪博主的最近 \(articleLimit) 篇 X Article，未发现可下载文章。本次 X API 调用为 0。"
+                )
+            } else {
+                progress.stage = "没有发现 X Article"
+                statusMessage = "Articles 专属列表中没有发现文章；X API 调用为 0"
+                downloadResultNotice = DownloadResultNotice(
+                    title: "没有发现文章",
+                    message: "目标博主的 Articles 专属列表中没有找到可下载的 X Article。"
+                )
+            }
+            return
+        }
+        progress.stage = isSyncingTrackedCreators
+            ? "已检查 \(discovered.count) 篇，正在跳过已同步文章"
+            : "已发现 \(discovered.count) 篇，正在建立正文下载队列"
+        statusMessage = isSyncingTrackedCreators
+            ? "已从 Articles 专属列表检查 \(discovered.count) 篇，正在过滤已同步文章"
+            : "已从 Articles 专属列表发现 \(discovered.count) 篇；X API 调用为 0"
+        prepareDirectBrowserCapture(
+            links: discovered.map(\.link),
+            refreshExisting: false,
+            preferredTitles: Dictionary(
+                discovered.map { ($0.link.postID, $0.title) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        )
+    }
+
+    func creatorArticleDiscoveryFailed(_ error: Error) {
+        showingCreatorArticleDiscovery = false
+        creatorArticleDiscoveryRequests = []
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
+        isRunning = false
+        if isSyncingTrackedCreators {
+            progress.stage = "同步失败"
+            statusMessage = "同步未完成；没有调用 X API"
+            publishSyncResult(
+                title: "同步未完成",
+                message: "本次同步已停止，已完成的本地归档保留。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。"
+            )
+        } else {
+            progress.stage = "Articles 列表读取失败"
+            statusMessage = "没有调用 X API；请确认 Chrome 已登录 X 后重试"
+            downloadResultNotice = DownloadResultNotice(
+                title: "没有完成文章发现",
+                message: "没有下载任何文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。"
+            )
+        }
+    }
+
+    func closeCreatorArticleDiscovery() {
+        showingCreatorArticleDiscovery = false
+        creatorArticleDiscoveryRequests = []
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
+        isRunning = false
+        progress.stage = isSyncingTrackedCreators ? "已停止同步" : "已停止文章列表发现"
+        statusMessage = isSyncingTrackedCreators
+            ? "已停止同步；已完成的本地归档保留"
+            : "已停止；本次没有调用 X API"
+    }
+
+    func archiveArticleLinks(input: String, refreshExisting: Bool = false) {
+        guard !isRunning else { return }
+        let links = XArticleURLParser.parse(input)
+        guard !links.isEmpty else {
+            errorMessage = "没有识别到有效的 X Article status 链接"
+            return
+        }
+        guard links.count <= 500 else {
+            errorMessage = "一次最多下载 500 条文章链接"
+            return
+        }
+        guard archiveRoot != nil else {
+            errorMessage = "请先选择本地归档目录"
+            showingConnectionSetup = true
+            return
+        }
+        guard imageHostVerified else {
+            errorMessage = "请先完成一次真实图片上传验证"
+            showingConnectionSetup = true
+            return
+        }
+        activeArchiveOperation = .download
+        showingAddCreators = false
+        prepareDirectBrowserCapture(links: links, refreshExisting: refreshExisting)
+    }
+
+    func captureSelectedArticleExactly() {
+        guard let article = selectedArticle,
+              let link = XArticleURLParser.parse(article.sourceURL.absoluteString).first else {
+            errorMessage = "这篇文章没有可用的 X status 链接"
+            return
+        }
+        let creator = creators.first(where: { $0.id == article.creatorID })
+            ?? Creator(
+                id: article.creatorID,
+                xUserID: "browser:\(article.authorHandle.lowercased())",
+                username: article.authorHandle,
+                displayName: "@\(article.authorHandle)"
+            )
+        activeArchiveOperation = .download
+        beginBrowserCapture([
+            BrowserCaptureRequest(
+                link: link,
+                creator: creator,
+                displayTitle: article.title,
+                publishedAt: article.publishedAt,
+                sourceArticleID: article.sourceArticleID
+            )
+        ])
+    }
+
+    func resumePendingBrowserCaptures() {
+        guard !isRunning else { return }
+        let pending = pendingExactCaptureArticles
+        let requests = pending.compactMap { article -> BrowserCaptureRequest? in
+            guard let link = XArticleURLParser.parse(article.sourceURL.absoluteString).first else { return nil }
+            let creator = creators.first(where: { $0.id == article.creatorID })
+                ?? Creator(
+                    id: article.creatorID,
+                    xUserID: "browser:\(article.authorHandle.lowercased())",
+                    username: article.authorHandle,
+                    displayName: "@\(article.authorHandle)"
+                )
+            return BrowserCaptureRequest(
+                link: link,
+                creator: creator,
+                displayTitle: article.title,
+                publishedAt: article.publishedAt,
+                sourceArticleID: article.sourceArticleID
+            )
+        }
+        guard !requests.isEmpty else {
+            statusMessage = "没有待完成的精确排版采集"
+            return
+        }
+        activeArchiveOperation = .download
+        beginBrowserCapture(requests)
+    }
+
+    func advanceBrowserCapture() {
+        guard !browserCaptureStopRequested else {
+            showingBrowserCapture = false
+            browserCaptureRequests = []
+            browserCaptureIndex = 0
+            statusMessage = isSyncingTrackedCreators
+                ? "已停止同步；已完成归档保留，未完成任务可继续"
+                : "已停止精确排版采集；未完成任务已保留"
+            return
+        }
+        let next = browserCaptureIndex + 1
+        if browserCaptureRequests.indices.contains(next) {
+            browserCaptureIndex = next
+            statusMessage = "已完成 \(next) / \(browserCaptureRequests.count)，正在自动处理下一篇"
+        } else {
+            let total = browserCaptureRequests.count
+            let completed = progress.completedArticles
+            let failed = browserCaptureFailurePostIDs.count
+            let skipped = progress.skippedArticles
+            let images = progress.uploadedImages
+            let failureNote = browserCaptureFailureDetails.isEmpty
+                ? ""
+                : "\n\n未完成：\(browserCaptureFailureDetails.prefix(3).joined(separator: "；"))"
+            showingBrowserCapture = false
+            browserCaptureRequests = []
+            browserCaptureIndex = 0
+            if let creatorCount = activeSyncCreatorCount,
+               let articleLimit = activeSyncArticleLimit {
+                let checked = total + skipped
+                progress.stage = failed == 0 ? "全部博主同步完成" : "同步完成，部分文章需要重试"
+                statusMessage = "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇"
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(220))
+                    self?.publishSyncResult(
+                        title: failed == 0 ? "全部博主同步完成" : "同步完成，部分文章失败",
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存并上传/复用 \(images) 张图片。\n\n整个同步过程在后台完成，X API 调用为 0。\(failureNote)"
+                    )
+                }
+            } else {
+                progress.stage = failed == 0 ? "文章下载完成" : "文章下载完成，部分文章需要重试"
+                statusMessage = "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇"
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(220))
+                    self?.downloadResultNotice = DownloadResultNotice(
+                        title: failed == 0 ? "文章下载完成" : "下载完成，部分文章失败",
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存并上传/复用 \(images) 张图片。\(failureNote)"
+                    )
+                }
+            }
+        }
+    }
+
+    func browserCaptureState(for request: BrowserCaptureRequest) -> BackgroundDownloadItemState {
+        if browserCaptureFailurePostIDs.contains(request.link.postID) { return .failed }
+        guard let index = browserCaptureRequests.firstIndex(where: { $0.id == request.id }) else {
+            return .queued
+        }
+        if index < browserCaptureIndex { return .saved }
+        if index == browserCaptureIndex { return .running }
+        return .queued
+    }
+
+    func isPendingExactCaptureRequest(_ request: BrowserCaptureRequest) -> Bool {
+        guard let article = articles.first(where: { $0.sourcePostID == request.link.postID }) else {
+            return false
+        }
+        return ExactCaptureQueuePolicy.needsCapture(article)
+    }
+
+    func recordBrowserCaptureFailure(_ error: Error, request: BrowserCaptureRequest) async {
+        browserCaptureFailurePostIDs.insert(request.link.postID)
+        progress.failedArticles = browserCaptureFailurePostIDs.count
+        browserCaptureFailureDetails.append("《\(request.displayTitle)》：\(error.localizedDescription)")
+        if let database,
+           var failed = try? await database.article(sourcePostID: request.link.postID) {
+            failed.pipelineState = .failed
+            failed.lastError = error.localizedDescription
+            failed.lastSyncedAt = Date()
+            failed.warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
+            try? await database.upsertArticle(failed)
+            try? await reload()
+        }
+        statusMessage = "《\(request.displayTitle)》未完成，正在继续下一篇"
+    }
+
+    func closeBrowserCapture() {
+        browserCaptureStopRequested = true
+        showingBrowserCapture = false
+        browserCaptureRequests = []
+        browserCaptureIndex = 0
+        statusMessage = isSyncingTrackedCreators
+            ? "已停止同步；已完成归档保留，未完成任务可继续"
+            : "已停止精确排版采集；未完成任务已保留"
+    }
+
+    func archiveBrowserCapture(
+        _ payload: BrowserArticleCapturePayload,
+        request: BrowserCaptureRequest
+    ) async -> Bool {
+        guard !browserCaptureStopRequested,
+              !isRunning,
+              let archiveRoot,
+              let database else { return false }
+        isRunning = true
+        errorMessage = nil
+        progress.stage = "正在校验页面原始排版"
+        defer { isRunning = false }
+
+        do {
+            let imageHost = try await configuredImageHost()
+            let capturedHandle = HandleParser.normalize(payload.authorHandle ?? "")
+                ?? request.creator.username
+            let capturedName = payload.authorName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            var creator: Creator
+            if let exactCreator = try await database.creator(username: capturedHandle) {
+                creator = exactCreator
+            } else if capturedHandle.caseInsensitiveCompare(request.creator.username) == .orderedSame {
+                creator = try await database.creator(username: request.creator.username) ?? request.creator
+            } else if request.creator.xUserID.hasPrefix("browser:") {
+                // X accepts status URLs whose username segment is stale or
+                // simply wrong. Preserve the row UUID but replace that URL
+                // hint with the author rendered on the verified Article page.
+                creator = request.creator
+                creator.xUserID = "browser:\(capturedHandle.lowercased())"
+                creator.username = capturedHandle
+                creator.displayName = capturedName.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "@\(capturedHandle)"
+                creator.isEnabled = true
+                try await database.updateCreatorIdentity(creator)
+            } else {
+                creator = Creator(
+                    xUserID: "browser:\(capturedHandle.lowercased())",
+                    username: capturedHandle,
+                    displayName: capturedName.flatMap { $0.isEmpty ? nil : $0 }
+                        ?? "@\(capturedHandle)"
+                )
+                try await database.upsertCreator(creator)
+            }
+            if let capturedName, !capturedName.isEmpty, creator.displayName != capturedName {
+                creator.displayName = capturedName
+                try await database.upsertCreator(creator)
+            }
+            let canonicalURL = URL(
+                string: "https://x.com/\(creator.username)/status/\(request.link.postID)"
+            )!
+            let resolvedLink = XArticleLink(
+                postID: request.link.postID,
+                username: creator.username,
+                originalURL: canonicalURL
+            )
+            let context = BrowserArticleCaptureContext(
+                link: resolvedLink,
+                creator: creator,
+                publishedAt: request.publishedAt,
+                sourceArticleID: request.sourceArticleID,
+                expectedPlainText: request.expectedPlainText
+            )
+            let document = try BrowserArticleCaptureDecoder.decode(payload, context: context)
+            let pipeline = ArchivePipeline(database: database, imageHost: imageHost)
+            let archived = try await pipeline.archive(
+                document: document,
+                creator: creator,
+                root: archiveRoot
+            ) { [weak self] stage in
+                await MainActor.run {
+                    self?.progress.stage = stage
+                    self?.statusMessage = stage
+                }
+            }
+            progress.completedArticles += 1
+            progress.uploadedImages += document.media.count
+            browserCaptureFailurePostIDs.remove(request.link.postID)
+            progress.failedArticles = browserCaptureFailurePostIDs.count
+            try await reload()
+            selectedArticleID = archived.id
+            statusMessage = "已保存完整排版：\(document.title)"
+            return true
+        } catch is CancellationError {
+            statusMessage = "已停止精确排版采集；未完成任务已保留"
+            return false
+        } catch {
+            browserCaptureFailurePostIDs.insert(request.link.postID)
+            progress.failedArticles = browserCaptureFailurePostIDs.count
+            browserCaptureFailureDetails.append("《\(request.displayTitle)》：\(error.localizedDescription)")
+            if var failed = try? await database.article(sourcePostID: request.link.postID) {
+                failed.pipelineState = .failed
+                failed.lastError = error.localizedDescription
+                failed.lastSyncedAt = Date()
+                failed.warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
+                try? await database.upsertArticle(failed)
+                try? await reload()
+            }
+            statusMessage = "《\(request.displayTitle)》保存失败，正在继续下一篇"
+            return false
+        }
+    }
+
+    func cancelCurrentTask() {
+        if showingBrowserCapture {
+            closeBrowserCapture()
+            return
+        }
+        if showingCreatorArticleDiscovery {
+            closeCreatorArticleDiscovery()
+            return
+        }
+        runningTask?.cancel()
+        statusMessage = "正在安全停止…"
+    }
+
+    func requestDeleteArticle(_ article: ArchivedArticle) {
+        guard !isRunning else { return }
+        articlePendingDeletion = article
+    }
+
+    func deletePendingArticle() {
+        guard !isRunning,
+              let article = articlePendingDeletion,
+              let archiveRoot,
+              let database else { return }
+        articlePendingDeletion = nil
+
+        Task {
+            do {
+                if let markdownPath = article.markdownPath {
+                    let markdownURL = URL(fileURLWithPath: markdownPath)
+                    guard Self.isContained(markdownURL, in: archiveRoot) else {
+                        throw ArticleDeletionError.outsideArchiveRoot(markdownPath)
+                    }
+                    if FileManager.default.fileExists(atPath: markdownURL.path) {
+                        try FileManager.default.trashItem(at: markdownURL, resultingItemURL: nil)
+                    }
+                }
+
+                let snapshotURL = archiveRoot
+                    .appending(path: ".x-article-archiver", directoryHint: .isDirectory)
+                    .appending(path: "source-snapshots", directoryHint: .isDirectory)
+                    .appending(path: "\(article.stableSourceKey).json")
+                guard Self.isContained(snapshotURL, in: archiveRoot) else {
+                    throw ArticleDeletionError.outsideArchiveRoot(snapshotURL.path)
+                }
+                if FileManager.default.fileExists(atPath: snapshotURL.path) {
+                    try FileManager.default.trashItem(at: snapshotURL, resultingItemURL: nil)
+                }
+
+                try await database.deleteArticle(id: article.id)
+                if let creator = creators.first(where: { $0.id == article.creatorID }) {
+                    try ArchiveIndexWriter.rebuild(root: archiveRoot, creator: creator)
+                }
+                if selectedArticleID == article.id { selectedArticleID = nil }
+                try await reload()
+                statusMessage = "已将《\(article.title)》移到废纸篓；图床上的远程图片未删除"
+            } catch {
+                // If deleting the database row succeeded but refreshing an
+                // index failed, do not leave a stale in-memory ghost article.
+                try? await reload()
+                errorMessage = error.localizedDescription
+                statusMessage = "删除文章失败"
+            }
+        }
+    }
+
+    func requestDeleteExactCaptureTask(_ article: ArchivedArticle) {
+        guard ExactCaptureQueuePolicy.needsCapture(article) else { return }
+        stopBrowserCaptureBeforeConfirmation {
+            self.exactCaptureTaskPendingDeletion = article
+        }
+    }
+
+    func requestDeleteExactCaptureTask(_ request: BrowserCaptureRequest) {
+        guard let article = articles.first(where: { $0.sourcePostID == request.link.postID }) else {
+            closeBrowserCapture()
+            statusMessage = "该临时任务未写入资料库，已从本次队列移除"
+            return
+        }
+        requestDeleteExactCaptureTask(article)
+    }
+
+    func requestDeleteAllExactCaptureTasks() {
+        guard pendingExactCaptureCount > 0 else { return }
+        stopBrowserCaptureBeforeConfirmation {
+            self.showingDeleteAllExactCaptureTasksConfirmation = true
+        }
+    }
+
+    func deletePendingExactCaptureTask() {
+        guard !isRunning,
+              let article = exactCaptureTaskPendingDeletion,
+              let database else { return }
+        exactCaptureTaskPendingDeletion = nil
+
+        Task {
+            do {
+                let preserved = try await discardExactCaptureTask(article, database: database)
+                if selectedArticleID == article.id, !preserved { selectedArticleID = nil }
+                try await reload()
+                statusMessage = preserved
+                    ? "已删除《\(article.title)》的精确采集任务；原有归档保留"
+                    : "已删除《\(article.title)》的未完成采集任务"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "删除精确采集任务失败"
+            }
+        }
+    }
+
+    func deleteAllPendingExactCaptureTasks() {
+        guard !isRunning, let database else { return }
+        showingDeleteAllExactCaptureTasksConfirmation = false
+        let tasks = pendingExactCaptureArticles
+
+        Task {
+            do {
+                var preservedCount = 0
+                var removedCount = 0
+                var removedIDs = Set<UUID>()
+                for article in tasks {
+                    if try await discardExactCaptureTask(article, database: database) {
+                        preservedCount += 1
+                    } else {
+                        removedCount += 1
+                        removedIDs.insert(article.id)
+                    }
+                }
+                if let selectedArticleID, removedIDs.contains(selectedArticleID) {
+                    self.selectedArticleID = nil
+                }
+                try await reload()
+                statusMessage = "已删除 \(tasks.count) 个精确采集任务：清理 \(removedCount) 条未完成记录，保留 \(preservedCount) 篇原有归档"
+            } catch {
+                try? await reload()
+                errorMessage = error.localizedDescription
+                statusMessage = "批量删除精确采集任务失败"
+            }
+        }
+    }
+
+    func requestDeleteCreator(_ creator: Creator) {
+        guard !isRunning else { return }
+        creatorPendingDeletion = creator
+    }
+
+    func deletePendingCreator() {
+        guard !isRunning,
+              let creator = creatorPendingDeletion,
+              let database else { return }
+        creatorPendingDeletion = nil
+
+        Task {
+            do {
+                try await database.setCreatorEnabled(id: creator.id, isEnabled: false)
+                if sidebarSelection == .creator(creator.id) {
+                    sidebarSelection = .all
+                }
+                try await reload()
+                statusMessage = "已删除博主 @\(creator.username)；已经下载的文章和图片均已保留"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "删除博主失败"
+            }
+        }
+    }
+
+    func installDemo() {
+        guard let archiveRoot, let database else {
+            errorMessage = "请先选择本地归档目录"
+            showingConnectionSetup = true
+            return
+        }
+        runningTask = Task {
+            isRunning = true
+            defer { isRunning = false }
+            do {
+                let oldDemo = try await database.creator(xUserID: "demo-user")
+                let creator = Creator(
+                    id: oldDemo?.id ?? UUID(),
+                    xUserID: "demo-user",
+                    username: "demo_author",
+                    displayName: "体验作者",
+                    isEnabled: true,
+                    lastSyncAt: oldDemo?.lastSyncAt,
+                    lastSeenPostID: oldDemo?.lastSeenPostID,
+                    completeness: .recentWindowComplete
+                )
+                try await database.upsertCreator(creator)
+                let source = URL(string: "https://x.com/demo_author/status/1900000000000000000")!
+                let document = CanonicalDocument(
+                    title: "这是一篇可以落到本地的 X 长文",
+                    authorName: creator.displayName,
+                    authorHandle: creator.username,
+                    contentType: .xArticle,
+                    sourceURL: source,
+                    sourcePostID: "1900000000000000000",
+                    sourceArticleID: "demo-article-001",
+                    publishedAt: Date(),
+                    blocks: [
+                        CanonicalBlock(kind: .paragraph, text: "这不是空白界面。体验样例会实际生成一份 Markdown、作者索引和 SQLite 记录。"),
+                        CanonicalBlock(kind: .heading, text: "保留结构", level: 1),
+                        CanonicalBlock(kind: .paragraph, text: "正式归档时，正文不会交给 AI，也不会被改写。"),
+                        CanonicalBlock(kind: .unorderedListItem, text: "标题和段落保持原顺序"),
+                        CanonicalBlock(kind: .unorderedListItem, text: "图片先缓存、再上传、最后写入 Markdown"),
+                        CanonicalBlock(kind: .quote, text: "图片没有全部验证成功，文章就不会显示完成。"),
+                    ],
+                    sourceMediaIDs: [],
+                    layoutFidelity: .exactStructure
+                )
+                let pipeline = ArchivePipeline(database: database, imageHost: UPicAdapter())
+                _ = try await pipeline.archive(document: document, creator: creator, root: archiveRoot) { [weak self] stage in
+                    await MainActor.run { self?.statusMessage = stage }
+                }
+                try await reload()
+                selectedArticleID = articles.first(where: { $0.sourceArticleID == "demo-article-001" })?.id
+                statusMessage = "体验样例已经真实写入归档目录"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "体验样例生成失败"
+            }
+        }
+    }
+
+    func openSelectedArticle() {
+        guard let path = selectedArticle?.markdownPath else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    func revealSelectedArticle() {
+        guard let path = selectedArticle?.markdownPath else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    func openSource() {
+        guard let sourceURL = selectedArticle?.sourceURL else { return }
+        NSWorkspace.shared.open(sourceURL)
+    }
+
+    func openCreatorProfile(_ creator: Creator) {
+        openCreatorProfile(handle: creator.username)
+    }
+
+    func openCreatorProfile(handle: String) {
+        guard let normalized = HandleParser.normalize(handle),
+              let profileURL = URL(string: "https://x.com/\(normalized)") else { return }
+        NSWorkspace.shared.open(profileURL)
+    }
+
+    func markdownPreview(for article: ArchivedArticle?) -> String {
+        guard let path = article?.markdownPath else { return "" }
+        return (try? String(contentsOfFile: path, encoding: .utf8)) ?? "无法读取本地 Markdown。"
+    }
+
+    func previewDocument(for article: ArchivedArticle?) -> CanonicalDocument? {
+        guard let article, let archiveRoot else { return nil }
+        let snapshotURL = archiveRoot
+            .appending(path: ".x-article-archiver", directoryHint: .isDirectory)
+            .appending(path: "source-snapshots", directoryHint: .isDirectory)
+            .appending(path: "\(article.stableSourceKey).json")
+        guard let data = try? Data(contentsOf: snapshotURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let document = try? decoder.decode(CanonicalDocument.self, from: data) else { return nil }
+        let visibleBlocks = document.blocks.filter { $0.kind != .image && $0.kind != .divider }
+        if visibleBlocks.count == 1 {
+            let text = visibleBlocks[0].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.hasPrefix("https://t.co/") { return nil }
+        }
+        return document
+    }
+
+    @available(*, unavailable, message: "Build 28 起禁止通过普通 Post 或 Search API 发现文章")
+    private func legacyPaidAPISync(
+        handles: [String],
+        mode: ArchiveMode,
+        articleLimit: Int?,
+        scanPostLimit: Int,
+        useSinceID: Bool
+    ) {
+        guard !handles.isEmpty, !isRunning else { return }
+        guard archiveRoot != nil, let database else {
+            errorMessage = "归档目录尚未准备好"
+            return
+        }
+        guard let token = try? KeychainStore.read(account: KeychainStore.xBearerAccount), !token.isEmpty else {
+            errorMessage = "请先连接 X API"
+            return
+        }
+
+        runningTask = Task {
+            isRunning = true
+            errorMessage = nil
+            progress = SyncProgress(stage: "准备发现 X Article")
+            defer {
+                isRunning = false
+                runningTask = nil
+            }
+            let client = XAPIClient(bearerToken: token)
+            var captureRequests: [BrowserCaptureRequest] = []
+
+            for handle in handles {
+                if Task.isCancelled { break }
+                do {
+                    statusMessage = "正在确认 @\(handle)"
+                    var creator: Creator
+                    if var cached = try await database.creator(username: handle),
+                       !cached.xUserID.hasPrefix("browser:") {
+                        // The stable X user ID is already local. Reusing it
+                        // avoids a separately billable User Lookup on every
+                        // refresh and sync-all run.
+                        cached.isEnabled = true
+                        creator = cached
+                    } else {
+                        let lookedUp = try await client.lookupCreator(username: handle)
+                        if let browserCreator = try await database.creator(username: handle),
+                           browserCreator.xUserID.hasPrefix("browser:") {
+                            creator = Creator(
+                                id: browserCreator.id,
+                                xUserID: lookedUp.xUserID,
+                                username: lookedUp.username,
+                                displayName: lookedUp.displayName,
+                                profileImageURL: lookedUp.profileImageURL,
+                                isProtected: lookedUp.isProtected,
+                                isEnabled: true,
+                                lastSyncAt: browserCreator.lastSyncAt,
+                                lastSeenPostID: browserCreator.lastSeenPostID,
+                                completeness: browserCreator.completeness
+                            )
+                            try await database.updateCreatorIdentity(creator)
+                        } else if let old = try await database.creator(xUserID: lookedUp.xUserID) {
+                            creator = Creator(
+                                id: old.id,
+                                xUserID: lookedUp.xUserID,
+                                username: lookedUp.username,
+                                displayName: lookedUp.displayName,
+                                profileImageURL: lookedUp.profileImageURL,
+                                isProtected: lookedUp.isProtected,
+                                isEnabled: true,
+                                lastSyncAt: old.lastSyncAt,
+                                lastSeenPostID: old.lastSeenPostID,
+                                completeness: old.completeness
+                            )
+                        } else {
+                            creator = lookedUp
+                        }
+                    }
+                    guard !creator.isProtected else { throw XAPIError.forbidden("@\(handle) 是受保护账号") }
+                    try await database.upsertCreator(creator)
+
+                    let result: ArticleReferenceDiscoveryResult
+                    switch mode {
+                    case .recentWindow:
+                        let discoveryLabel = articleLimit.map { "最近 \($0) 篇 X Article" } ?? "新增 X Article"
+                        statusMessage = "正在查找 @\(creator.username) \(discoveryLabel)"
+                        let scannedBeforeCreator = progress.scannedPosts
+                        result = try await client.discoverRecentArticles(
+                            for: creator,
+                            sinceID: useSinceID ? creator.lastSeenPostID : nil,
+                            maximumArticles: articleLimit,
+                            maximumScannedPosts: scanPostLimit
+                        ) { [weak self] scanned in
+                            await MainActor.run {
+                                self?.progress.scannedPosts = scannedBeforeCreator + scanned
+                                self?.progress.stage = "正在发现\(discoveryLabel)"
+                            }
+                        }
+                    case .fullArchive:
+                        let start = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2006, month: 3, day: 1))!
+                        let scannedBeforeCreator = progress.scannedPosts
+                        result = try await client.discoverFullArchiveArticles(for: creator, startDate: start, endDate: Date()) { [weak self] scanned in
+                            await MainActor.run {
+                                self?.progress.scannedPosts = scannedBeforeCreator + scanned
+                                self?.progress.stage = "正在扫描完整历史"
+                            }
+                        }
+                    }
+                    progress.discoveredArticles += result.articles.count
+                    for reference in result.articles {
+                        let link = XArticleLink(
+                            postID: reference.postID,
+                            username: creator.username,
+                            originalURL: reference.sourceURL
+                        )
+                        try await savePendingReferenceIfNeeded(
+                            link: link,
+                            creator: creator,
+                            title: reference.title,
+                            publishedAt: reference.publishedAt,
+                            sourceArticleID: reference.articleID,
+                            database: database
+                        )
+                        captureRequests.append(BrowserCaptureRequest(
+                            link: link,
+                            creator: creator,
+                            displayTitle: reference.title,
+                            publishedAt: reference.publishedAt,
+                            sourceArticleID: reference.articleID,
+                            expectedPlainText: reference.expectedPlainText
+                        ))
+                    }
+                    creator.lastSeenPostID = result.newestPostID ?? creator.lastSeenPostID
+                    creator.lastSyncAt = Date()
+                    creator.completeness = result.completeness
+                    try await database.upsertCreator(creator)
+                } catch is CancellationError {
+                    break
+                } catch {
+                    progress.failedArticles += 1
+                    errorMessage = "@\(handle)：\(error.localizedDescription)"
+                }
+            }
+            do { try await reload() } catch { errorMessage = error.localizedDescription }
+            if Task.isCancelled {
+                progress.stage = "已安全停止，可再次发现"
+                statusMessage = progress.stage
+            } else if captureRequests.isEmpty {
+                progress.stage = "没有发现新的 X Article"
+                statusMessage = "没有发现新的 X Article · Post 读取估算 US$\(String(format: "%.3f", XAPICostEstimator.postReadCostUSD(progress.scannedPosts)))"
+            } else {
+                progress.stage = "已发现 \(captureRequests.count) 篇，等待精确排版采集"
+                statusMessage = "API 只完成链接发现；Post 读取估算 US$\(String(format: "%.3f", XAPICostEstimator.postReadCostUSD(progress.scannedPosts)))；正文页面抓取为 0 API"
+                beginBrowserCapture(captureRequests)
+            }
+        }
+    }
+
+    private func prepareDirectBrowserCapture(
+        links: [XArticleLink],
+        refreshExisting: Bool,
+        preferredTitles: [String: String] = [:]
+    ) {
+        guard !links.isEmpty, !isRunning else { return }
+        guard let archiveRoot, let database else {
+            errorMessage = "归档目录尚未准备好"
+            return
+        }
+
+        runningTask = Task {
+            isRunning = true
+            errorMessage = nil
+            progress = SyncProgress(stage: "正在建立本地采集队列")
+            defer {
+                isRunning = false
+                runningTask = nil
+            }
+            do {
+                var requests: [BrowserCaptureRequest] = []
+                var localHits = 0
+                for link in links {
+                    if !refreshExisting,
+                       let existing = try await database.article(sourcePostID: link.postID),
+                       Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
+                        localHits += 1
+                        continue
+                    }
+
+                    var creator = try await database.creator(username: link.username)
+                        ?? Creator(
+                            xUserID: "browser:\(link.username.lowercased())",
+                            username: link.username,
+                            displayName: "@\(link.username)"
+                        )
+                    creator.isEnabled = true
+                    try await database.upsertCreator(creator)
+                    let existing = try await database.article(sourcePostID: link.postID)
+                    let title = existing?.title
+                        ?? preferredTitles[link.postID]
+                        ?? "待读取的 X Article · \(link.postID.suffix(8))"
+                    let sourcePublishedAt = XArticleURLParser.publishedAt(forPostID: link.postID)
+                    try await savePendingReferenceIfNeeded(
+                        link: link,
+                        creator: creator,
+                        title: title,
+                        publishedAt: sourcePublishedAt ?? existing?.publishedAt ?? Date(),
+                        sourceArticleID: existing?.sourceArticleID,
+                        database: database
+                    )
+                    requests.append(BrowserCaptureRequest(
+                        link: link,
+                        creator: creator,
+                        displayTitle: title,
+                        publishedAt: sourcePublishedAt ?? existing?.publishedAt,
+                        sourceArticleID: existing?.sourceArticleID
+                    ))
+                }
+                try await reload()
+                progress.discoveredArticles = links.count
+                progress.skippedArticles = localHits
+                guard !requests.isEmpty else {
+                    if let creatorCount = activeSyncCreatorCount,
+                       let articleLimit = activeSyncArticleLimit {
+                        progress.stage = "全部博主同步完成"
+                        statusMessage = "同步完成：\(localHits) 篇已有完整归档，全部跳过"
+                        publishSyncResult(
+                            title: "全部博主已经是最新状态",
+                            message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或上传图片。\n\n本次 X API 调用为 0。"
+                        )
+                    } else {
+                        progress.stage = "全部链接已精确保存"
+                        statusMessage = "\(localHits) 篇文章已有完整排版；本次 X API 调用为 0"
+                        downloadResultNotice = DownloadResultNotice(
+                            title: "不需要重复下载",
+                            message: "识别到的 \(localHits) 篇文章都已经完整保存在本地，本次没有重复下载或上传图片。"
+                        )
+                    }
+                    return
+                }
+                progress.stage = isSyncingTrackedCreators ? "正在后台同步新文章" : "等待精确排版采集"
+                statusMessage = isSyncingTrackedCreators
+                    ? "需要保存 \(requests.count) 篇，已同步跳过 \(localHits) 篇；X API 调用为 0"
+                    : "已建立 \(requests.count) 篇采集队列；X API 调用为 0"
+                beginBrowserCapture(requests, skippedCount: localHits)
+            } catch {
+                errorMessage = error.localizedDescription
+                progress.stage = "无法建立采集队列"
+                if isSyncingTrackedCreators {
+                    publishSyncResult(
+                        title: "同步未完成",
+                        message: "无法建立新文章采集队列：\(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func savePendingReferenceIfNeeded(
+        link: XArticleLink,
+        creator: Creator,
+        title: String,
+        publishedAt: Date,
+        sourceArticleID: String?,
+        database: ArchiveDatabase
+    ) async throws {
+        guard try await database.article(sourcePostID: link.postID) == nil else { return }
+        let record = ArchivedArticle(
+            stableSourceKey: sourceArticleID ?? link.postID,
+            creatorID: creator.id,
+            title: title,
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/\(link.username)/status/\(link.postID)")!,
+            sourcePostID: link.postID,
+            sourceArticleID: sourceArticleID,
+            publishedAt: publishedAt,
+            sourceChecksum: "pending-rendered-page-capture",
+            pipelineState: .discovered,
+            warnings: ["等待在应用内打开 X Article 并保存精确排版"]
+        )
+        try await database.upsertArticle(record)
+    }
+
+    private func beginBrowserCapture(
+        _ requests: [BrowserCaptureRequest],
+        skippedCount: Int = 0
+    ) {
+        browserCaptureStopRequested = false
+        var seen = Set<String>()
+        browserCaptureRequests = requests.filter { seen.insert($0.link.postID).inserted }
+        reactivateExactCaptureTasks(for: browserCaptureRequests)
+        browserCaptureFailurePostIDs.removeAll()
+        browserCaptureFailureDetails.removeAll()
+        progress.skippedArticles = skippedCount
+        progress.completedArticles = 0
+        progress.uploadedImages = 0
+        progress.failedArticles = 0
+        progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
+        browserCaptureIndex = 0
+        showingBrowserCapture = !browserCaptureRequests.isEmpty
+    }
+
+    private func reactivateExactCaptureTasks(for requests: [BrowserCaptureRequest]) {
+        let postIDs = Set(requests.map(\.link.postID))
+        var changed: [ArchivedArticle] = []
+        for index in articles.indices where postIDs.contains(articles[index].sourcePostID) {
+            let originalCount = articles[index].warnings.count
+            articles[index].warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
+            if articles[index].warnings.count != originalCount {
+                changed.append(articles[index])
+            }
+        }
+        guard !changed.isEmpty, let database else { return }
+        Task {
+            for article in changed {
+                try? await database.upsertArticle(article)
+            }
+        }
+    }
+
+    private func stopBrowserCaptureBeforeConfirmation(_ action: @escaping @MainActor () -> Void) {
+        if showingBrowserCapture || !browserCaptureRequests.isEmpty {
+            closeBrowserCapture()
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.isRunning {
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+            try? await Task.sleep(for: .milliseconds(160))
+            action()
+        }
+    }
+
+    private func discardExactCaptureTask(
+        _ article: ArchivedArticle,
+        database: ArchiveDatabase
+    ) async throws -> Bool {
+        if let preserved = ExactCaptureQueuePolicy.articleAfterDismissingTask(article) {
+            try await database.upsertArticle(preserved)
+            return true
+        }
+        try await database.deleteArticle(id: article.id)
+        return false
+    }
+
+    private static func hasExactValidatedLocalArchive(_ article: ArchivedArticle, root: URL) -> Bool {
+        guard article.pipelineState == .committed,
+              let markdownPath = article.markdownPath,
+              let markdown = try? String(contentsOfFile: markdownPath, encoding: .utf8) else { return false }
+        let snapshotURL = root
+            .appending(path: ".x-article-archiver", directoryHint: .isDirectory)
+            .appending(path: "source-snapshots", directoryHint: .isDirectory)
+            .appending(path: "\(article.stableSourceKey).json")
+        guard let data = try? Data(contentsOf: snapshotURL) else { return false }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let document = try? decoder.decode(CanonicalDocument.self, from: data),
+              document.layoutFidelity == .renderedPageVerified || document.layoutFidelity == .exactStructure,
+              (try? ContentFidelityValidator.validateCanonical(document)) != nil,
+              (try? MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)) != nil else {
+            return false
+        }
+        return true
+    }
+
+    private func configureDatabase(at root: URL) async {
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            database = try ArchiveDatabase(url: Self.databaseURL(for: root))
+            try await reload()
+            statusMessage = "归档目录已就绪"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func reload() async throws {
+        guard let database else { return }
+        creators = try await database.loadCreators().filter(\.isEnabled)
+        // Older builds also stored Note Posts and assembled threads. Keep the
+        // user's files and rows intact, but never present them as X Articles.
+        var loadedArticles = try await database.loadArticles().filter { $0.contentType == .xArticle }
+        // Builds before 18 could persist the discovery/archive timestamp for a
+        // direct link. Correct every existing UI/database record from the X
+        // Snowflake itself, without touching a possibly user-edited Markdown
+        // file. A later automatic recapture safely rewrites and renames the
+        // exported file through the normal checksum gate.
+        for index in loadedArticles.indices {
+            guard let sourceDate = XArticleURLParser.publishedAt(
+                forPostID: loadedArticles[index].sourcePostID
+            ), abs(loadedArticles[index].publishedAt.timeIntervalSince(sourceDate)) > 1 else { continue }
+            loadedArticles[index].publishedAt = sourceDate
+            try await database.upsertArticle(loadedArticles[index])
+        }
+        if let archiveRoot {
+            Self.migrateGeneratedMarkdownFormattingIfSafe(loadedArticles, root: archiveRoot)
+        }
+        articles = loadedArticles.sorted { lhs, rhs in
+            if lhs.publishedAt != rhs.publishedAt { return lhs.publishedAt > rhs.publishedAt }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+        if let selectedArticleID, !articles.contains(where: { $0.id == selectedArticleID }) {
+            self.selectedArticleID = articles.first?.id
+        } else if selectedArticleID == nil {
+            selectedArticleID = articles.first?.id
+        }
+        if case .creator(let creatorID) = sidebarSelection,
+           !creators.contains(where: { $0.id == creatorID }) {
+            sidebarSelection = .all
+        }
+    }
+
+    /// Re-renders only files that still carry a valid exporter checksum. This
+    /// upgrades old generated list numbering and list/paragraph boundaries
+    /// without ever overwriting a Markdown file the user edited by hand.
+    private static func migrateGeneratedMarkdownFormattingIfSafe(
+        _ articles: [ArchivedArticle],
+        root: URL
+    ) {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshotRoot = root
+            .appending(path: ".x-article-archiver", directoryHint: .isDirectory)
+            .appending(path: "source-snapshots", directoryHint: .isDirectory)
+
+        for article in articles {
+            guard let markdownPath = article.markdownPath else { continue }
+            let markdownURL = URL(fileURLWithPath: markdownPath)
+            guard isContained(markdownURL, in: root),
+                  let current = try? String(contentsOf: markdownURL, encoding: .utf8),
+                  MarkdownRenderer.isUnmodifiedExport(current),
+                  let snapshotData = try? Data(
+                    contentsOf: snapshotRoot.appending(path: "\(article.stableSourceKey).json")
+                  ),
+                  let document = try? decoder.decode(CanonicalDocument.self, from: snapshotData),
+                  document.sourcePostID == article.sourcePostID,
+                  document.title == article.title,
+                  document.sourceURL == article.sourceURL,
+                  (try? ContentFidelityValidator.validateCanonical(document)) != nil,
+                  let rendered = try? MarkdownRenderer.render(
+                    document: document,
+                    archivedAt: article.archivedAt
+                  ),
+                  (try? MarkdownRenderer.validateRenderedText(document: document, markdown: rendered)) != nil else {
+                continue
+            }
+            let upgraded = MarkdownRenderer.addingExportChecksum(to: rendered)
+            guard upgraded != current else { continue }
+            try? Data(upgraded.utf8).write(to: markdownURL, options: .atomic)
+        }
+    }
+
+    private static func databaseURL(for root: URL) -> URL {
+        root.appending(path: ".x-article-archiver/archive.sqlite")
+    }
+
+    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+        let candidatePath = candidate.standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+    }
+
+    private func configuredImageHost() async throws -> any ImageHostAdapter {
+        switch imageHostChoice {
+        case .uPic:
+            let profile = try await Task.detached(priority: .userInitiated) {
+                try UPicConfigurationReader.readDefaultS3()
+            }.value
+            guard defaults.string(forKey: "uPicProfileFingerprint") == Self.fingerprint(for: profile) else {
+                setImageHostVerified(false)
+                throw S3ImageHostError.invalidConfiguration("uPic 默认图床配置已变更，请重新验证")
+            }
+            return S3ImageHostAdapter(
+                configuration: profile.configuration,
+                accessKey: profile.accessKey,
+                secretKey: profile.secretKey
+            )
+        case .s3:
+            let credentials = try await Task.detached(priority: .userInitiated) {
+                (
+                    access: try KeychainStore.read(account: KeychainStore.s3AccessKeyAccount),
+                    secret: try KeychainStore.read(account: KeychainStore.s3SecretKeyAccount)
+                )
+            }.value
+            guard let endpoint = URL(string: s3Endpoint), let publicBase = URL(string: s3PublicBaseURL),
+                  let access = credentials.access,
+                  let secret = credentials.secret else {
+                throw S3ImageHostError.invalidConfiguration("缺少 S3/R2 配置或钥匙串凭证")
+            }
+            let configuration = S3ImageHostConfiguration(endpoint: endpoint, bucket: s3Bucket, publicBaseURL: publicBase, region: s3Region, keyPrefix: s3KeyPrefix)
+            return S3ImageHostAdapter(configuration: configuration, accessKey: access, secretKey: secret)
+        }
+    }
+
+    private func setImageHostVerified(_ value: Bool) {
+        imageHostVerified = value
+        defaults.set(value, forKey: "imageHostVerified")
+    }
+
+    private func uploadSyntheticTestImage(using adapter: any ImageHostAdapter) async throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "x-article-archiver-s3-test-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "连接测试.png")
+        try Self.testPNGData.write(to: file, options: .atomic)
+        let results = try await adapter.upload(fileURLs: [file])
+        guard let remote = results.first?.remoteURL else { throw ImagePipelineError.invalidOutput("没有返回 URL") }
+        try await adapter.verify(remoteURL: remote)
+        return remote
+    }
+
+    private static func fingerprint(for profile: UPicS3Profile) -> String {
+        let configuration = profile.configuration
+        let value = [
+            configuration.endpoint.absoluteString,
+            configuration.bucket,
+            configuration.publicBaseURL.absoluteString,
+            configuration.region,
+            configuration.keyPrefix,
+            profile.accessKey,
+            profile.secretKey
+        ].joined(separator: "|")
+        return ContentHasher.sha256(value)
+    }
+
+    private static let testPNGData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
+}
