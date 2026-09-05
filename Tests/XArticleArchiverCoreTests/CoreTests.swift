@@ -2183,7 +2183,7 @@ final class ArchivePipelineTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
-        let file = directory.appending(path: "X长文归档器-uPic联调.png")
+        let file = directory.appending(path: "MarkX-uPic联调.png")
         try png.write(to: file)
         let primary = UPicAdapter()
         let capability = await primary.probe()

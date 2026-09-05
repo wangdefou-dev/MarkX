@@ -1,11 +1,11 @@
-# X 长文归档器
+# MarkX
 
-一个面向 Apple Silicon Mac 的原生 X 长文归档工具。当前版本为研发预览 `0.1.5`（Build 54）。
+一个面向 Apple Silicon Mac 的原生 X 长文归档工具。当前版本为研发预览 `0.2.0`（Build 55）。
 
 ## 已实现
 
 - SwiftUI 原生三栏资料库界面；
-- X 黑白配色的大号完整 X 标志，三条文章横线位于 X 左上斜臂的黑色内镂空中，包含完整 macOS `.icns` 尺寸；
+- X 黑白配色、四周留有安全边距的完整 X 标志，三条文章横线位于 X 左上斜臂的黑色内镂空中，包含完整 macOS `.icns` 尺寸；
 - 首次配置与本地归档目录；
 - 自动复用本机 Chrome 的 X 登录态；应用不再提供 X Developer API 配置、Bearer Token 输入或钥匙串读取，升级后会清理旧版保存的 Token；
 - 单个博主主页下载和多账号批量输入；
@@ -102,7 +102,7 @@ swift run XArticleArchiverApp
 swift test
 ```
 
-截至 2026-09-05，本地实际运行共 73 项默认测试：68 项通过、5 项显式外部联调测试跳过、0 项失败。新增覆盖旧版博主目录无损迁移、迁移冲突拒绝覆盖、处理日志数据库往返，以及“远程 Markdown 链接 + 本地媒体备份”的双存储端到端验证；原有统计、视频、本地媒体和单行输入测试继续通过。默认测试不读取实时 X/Chrome 会话数据，也不写入外部 S3/R2；Chrome 会话联调只校验存在性、数量和域名范围，不输出 Cookie 值。
+截至 2026-09-05，本地实际运行共 76 项默认测试：71 项通过、5 项显式外部联调测试跳过、0 项失败。新增覆盖旧版博主目录无损迁移、迁移冲突拒绝覆盖、处理日志数据库往返，以及“远程 Markdown 链接 + 本地媒体备份”的双存储端到端验证；原有统计、视频、本地媒体和单行输入测试继续通过。默认测试不读取实时 X/Chrome 会话数据，也不写入外部 S3/R2；Chrome 会话联调只校验存在性、数量和域名范围，不输出 Cookie 值。
 
 真实端到端验收已用先前失败的《Codex 实战系列｜ 零代码个人网站搭建》完成：应用显示成功 1 篇、失败 0 篇、10 张图片、1 个视频；实际 MP4 为 H.264/AAC、1438×720、27.65 秒、3,134,794 字节。远程 Range 回读返回 HTTP 206、`video/mp4` 和有效 `ftyp` 头，SQLite 记录 `video_count = 1`，Markdown 已写入原位置视频块。从最终 ZIP 安装的应用内，系统播放控件识别出 `00:28` 时长，已实际播放到 `27.61` 秒结束，应用进程保持稳定。同一最终安装版在设置页通过 uPic 真实上传与 `1want.link` HTTPS 回读验证。
 
@@ -153,4 +153,4 @@ RUN_X_DIRECT_INTEGRATION=1 X_API_BEARER_TOKEN=... swift test --filter XAPIClient
 CODE_SIGN_IDENTITY="Developer ID Application: ..." ./scripts/build-app.sh
 ```
 
-PRD 见 [PRD-X长文归档器-macOS.md](PRD-X长文归档器-macOS.md)。
+PRD 见 [PRD-MarkX-macOS.md](PRD-MarkX-macOS.md)。

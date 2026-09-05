@@ -1,26 +1,27 @@
 # 正式应用图标
 
-## 当前采用方案
+## 当前采用方案（v5）
 
 - 采用 X 的黑白配色：黑色圆角方形底板、白色 X。
 - X 使用官方品牌工具包中的原始矢量路径；路径数据不作修改，只进行等比例缩放和居中。
 - 文章元素仅保留三条白色横线。
 - 三条横线位于 X 左上斜臂内部的黑色镂空区域，不放在底板左上角，也不覆盖或改变 X 的白色外轮廓。
 - 圆角方形外保留真实 Alpha 透明通道。
+- v4 图形整体以画布中心等比缩放到 90%，不改变任何内部比例；1024 px 母图的可见外边界约为 66–958 px，避免在 Dock、Finder 和安装器里贴边。
 
 ## 制作方式
 
 本版属于已有 SVG 标志的确定性矢量组合，不使用生成模型重画标志：
 
 1. 从 X 官方品牌工具包取得原始 X SVG 路径。
-2. 在 `AppIcon-corrected-v4.svg` 中原样保留该路径。
+2. 在 `AppIcon-corrected-v5.svg` 中原样保留该路径，并在外层统一缩放到 90%。
 3. 将三条独立白色横线放入 X 左上斜臂的黑色内镂空。
 4. 输出 1024×1024 PNG，再生成 macOS 标准 iconset 和 ICNS。
 
 ## 资产
 
-- `AppIcon-corrected-v4.svg`：可编辑矢量终稿。
-- `AppIcon-corrected-v4-preview.png`：1024×1024 设计终稿。
+- `AppIcon-corrected-v5.svg`：可编辑矢量终稿。
+- `AppIcon-corrected-v5-preview.png`：1024×1024 设计终稿。
 - `../../Config/AppIcon-1024.png`：安装使用的 1024×1024 母图。
 - `../../Config/AppIcon.iconset/`：macOS 标准 16–1024 px 尺寸。
 - `../../Config/AppIcon.icns`：应用包使用的最终图标文件。

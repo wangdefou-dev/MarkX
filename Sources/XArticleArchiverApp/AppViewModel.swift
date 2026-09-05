@@ -303,7 +303,7 @@ final class AppViewModel: ObservableObject {
             // unchanged origin would make the window visibly drift off-center.
             hostingController.sizingOptions = []
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "X 长文下载进度"
+            window.title = "MarkX 下载进度"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 860, height: 680))
             window.minSize = NSSize(width: 760, height: 590)

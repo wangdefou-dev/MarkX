@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>X 长文归档器</string>
+    <string>MarkX</string>
     <key>CFBundleExecutable</key>
     <string>XArticleArchiverApp</string>
 	<key>CFBundleIdentifier</key>
@@ -26,13 +26,13 @@
 	<key>CFBundleIconFile</key>
 	<string>AppIcon.icns</string>
     <key>CFBundleName</key>
-    <string>X 长文归档器</string>
+    <string>MarkX</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.5</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>54</string>
+	<string>55</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>

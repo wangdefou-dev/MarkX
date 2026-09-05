@@ -5,7 +5,7 @@ struct XArticleArchiverApp: App {
     @StateObject private var model = AppViewModel()
 
     var body: some Scene {
-        WindowGroup("X 长文归档器") {
+        WindowGroup("MarkX") {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 1_080, minHeight: 680)
