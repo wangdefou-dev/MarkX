@@ -158,10 +158,17 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     }
 
                     let imageCount = payload.blocks.filter { $0.kind == .image }.count
-                    pageStatus = stableMatches >= 3
+                    // A valid X Article may contain one very large DraftJS
+                    // paragraph instead of several blocks. Give that shape a
+                    // longer stability window rather than rejecting it or
+                    // accepting a briefly half-rendered page.
+                    let requiredStableMatches = payload.blocks.count == 1 ? 8 : 3
+                    pageStatus = stableMatches >= requiredStableMatches
                         ? "完整排版已稳定，正在自动保存…"
-                        : "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片，正在确认内容完整…"
-                    if stableMatches >= 3 { return payload }
+                        : payload.blocks.count == 1
+                            ? "已读取单块长文，正在延长检查内容稳定性…"
+                            : "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片，正在确认内容完整…"
+                    if stableMatches >= requiredStableMatches { return payload }
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
                     lastNotReadyReason = detail
                     pageStatus = "已使用 Chrome 登录状态，正在等待正文完整加载…"
@@ -640,7 +647,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         });
       }
 
-      if (!blocks.some(b => b.text.trim().length > 0) || blocks.length < 2)
+      if (!blocks.some(b => b.text.trim().length > 0))
         return ERROR + "正文块还没有完整加载。";
 
       const visibleArticleImages = [...articleView.querySelectorAll('[data-testid="tweetPhoto"] img')]
@@ -715,10 +722,14 @@ struct BrowserArticleCaptureView: View {
             do {
                 let payload = try await controller.captureAutomatically(request)
                 try Task.checkCancellation()
-                if !(await model.archiveBrowserCapture(payload, request: request)) {
-                    controller.pageStatus = "自动保存失败，未覆盖本地文件"
+                let outcome = await model.archiveBrowserCapture(payload, request: request)
+                switch outcome {
+                case .saved, .failed:
+                    model.advanceBrowserCapture()
+                case .stopped:
+                    controller.pageStatus = "采集已停止，未覆盖本地文件"
+                    return
                 }
-                model.advanceBrowserCapture()
             } catch is CancellationError {
                 return
             } catch {

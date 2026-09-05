@@ -233,7 +233,18 @@ public struct MirroredMediaHostAdapter<Primary: ImageHostAdapter>: ImageHostAdap
 
     public func upload(fileURLs: [URL]) async throws -> [UploadResult] {
         guard !fileURLs.isEmpty else { return [] }
-        let localResults = try await local.upload(fileURLs: fileURLs)
+        // The download cache is content-addressed, so two distinct Article
+        // image blocks can legitimately point at the same local file. Upload
+        // each physical file once, then expand the result back to the caller's
+        // original order. Dictionary(uniqueKeysWithValues:) would otherwise
+        // trap the entire process when it sees those duplicate paths.
+        var seenPaths = Set<String>()
+        let uniqueFileURLs = fileURLs.compactMap { fileURL -> URL? in
+            let normalized = fileURL.standardizedFileURL
+            return seenPaths.insert(normalized.path).inserted ? normalized : nil
+        }
+
+        let localResults = try await local.upload(fileURLs: uniqueFileURLs)
         for result in localResults {
             let ext = URL(fileURLWithPath: result.localPath).pathExtension.lowercased()
             if ext == "mp4" || ext == "m4v" {
@@ -243,26 +254,49 @@ public struct MirroredMediaHostAdapter<Primary: ImageHostAdapter>: ImageHostAdap
             }
         }
 
-        let primaryResults = try await primary.upload(fileURLs: fileURLs)
+        let primaryResults = try await primary.upload(fileURLs: uniqueFileURLs)
         guard primaryResults.count == localResults.count else {
             throw ImagePipelineError.outputCountMismatch(
                 expected: localResults.count,
                 actual: primaryResults.count
             )
         }
-        let localByPath = Dictionary(uniqueKeysWithValues: localResults.map { ($0.localPath, $0) })
-        return try primaryResults.map { result in
-            guard let localResult = localByPath[result.localPath] else {
+
+        let localByPath = Dictionary(
+            localResults.map { (URL(fileURLWithPath: $0.localPath).standardizedFileURL.path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var combinedByPath: [String: UploadResult] = [:]
+        for result in primaryResults {
+            let path = URL(fileURLWithPath: result.localPath).standardizedFileURL.path
+            guard combinedByPath[path] == nil, let localResult = localByPath[path] else {
                 throw ImagePipelineError.outputCountMismatch(
                     expected: localResults.count,
-                    actual: primaryResults.count
+                    actual: combinedByPath.count
                 )
             }
-            return UploadResult(
-                localPath: result.localPath,
+            combinedByPath[path] = UploadResult(
+                localPath: path,
                 remoteURL: result.remoteURL,
                 localBackupURL: localResult.remoteURL
             )
+        }
+        guard combinedByPath.count == uniqueFileURLs.count else {
+            throw ImagePipelineError.outputCountMismatch(
+                expected: uniqueFileURLs.count,
+                actual: combinedByPath.count
+            )
+        }
+
+        return try fileURLs.map { fileURL in
+            let path = fileURL.standardizedFileURL.path
+            guard let result = combinedByPath[path] else {
+                throw ImagePipelineError.outputCountMismatch(
+                    expected: uniqueFileURLs.count,
+                    actual: combinedByPath.count
+                )
+            }
+            return result
         }
     }
 

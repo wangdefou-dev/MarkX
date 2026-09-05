@@ -734,6 +734,32 @@ final class BrowserArticleCaptureDecoderTests: XCTestCase {
         originalURL: URL(string: "https://x.com/writer/status/2094984812251746424")!
     )
 
+    func testAcceptsLegitimateSingleBlockArticle() throws {
+        let creator = Creator(xUserID: "u1", username: "writer", displayName: "作者")
+        let text = String(repeating: "这是一段由 X 合并渲染的长文正文。", count: 80)
+        let payload = BrowserArticleCapturePayload(
+            postID: link.postID,
+            title: "单块长文",
+            authorHandle: creator.username,
+            authorName: creator.displayName,
+            publishedAt: "2026-09-02T03:04:00.000Z",
+            pageURL: link.originalURL.absoluteString,
+            blocks: [BrowserCapturedBlock(kind: .paragraph, text: text)]
+        )
+        let context = BrowserArticleCaptureContext(
+            link: link,
+            creator: creator,
+            expectedPlainText: text
+        )
+
+        let document = try BrowserArticleCaptureDecoder.decode(payload, context: context)
+
+        XCTAssertEqual(document.blocks.count, 1)
+        XCTAssertEqual(document.blocks.first?.kind, .paragraph)
+        XCTAssertEqual(document.blocks.first?.text, text)
+        try ContentFidelityValidator.validateCanonical(document)
+    }
+
     func testPreservesRenderedBlockOrderStylesCodeAndOriginalImages() throws {
         let creator = Creator(xUserID: "u1", username: "writer", displayName: "作者")
         let payload = BrowserArticleCapturePayload(
@@ -1519,11 +1545,12 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
         let statistics = ArchiveSidebarStatistics(articles: articles)
 
         XCTAssertEqual(statistics.allArticleCount, 5)
-        XCTAssertEqual(statistics.processingArticleCount, 2)
+        XCTAssertEqual(statistics.waitingArticleCount, 1)
+        XCTAssertEqual(statistics.processingArticleCount, statistics.waitingArticleCount)
         XCTAssertEqual(statistics.needsAttentionArticleCount, 3)
         XCTAssertEqual(
-            articles.filter(ArchiveSidebarStatistics.isProcessing).count,
-            statistics.processingArticleCount
+            articles.filter(ArchiveSidebarStatistics.isWaiting).count,
+            statistics.waitingArticleCount
         )
         XCTAssertEqual(
             articles.filter(ArchiveSidebarStatistics.needsAttention).count,
@@ -2021,6 +2048,99 @@ final class ArchivePipelineTests: XCTestCase {
             snapshot.media[0].localCachePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
             backups[0].resolvingSymlinksInPath().path
         )
+    }
+
+    func testMirroredAdapterHandlesDuplicateFilePathsWithoutCrashing() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "x-archive-mirrored-duplicate-adapter-test-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let staging = root.appending(path: "capture-cache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = staging.appending(path: "reused.png")
+        try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!.write(to: image)
+
+        let adapter = MirroredMediaHostAdapter(
+            primary: DeterministicRemoteImageHost(),
+            archiveRoot: root
+        )
+        let results = try await adapter.upload(fileURLs: [image, image])
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(results[0], results[1])
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                at: root.appending(path: "media/images"),
+                includingPropertiesForKeys: nil
+            ).count,
+            1
+        )
+    }
+
+    func testPipelineArchivesDistinctImageBlocksThatShareCachedContent() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "x-archive-duplicate-media-content-test-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let staging = root.appending(path: "capture-cache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = staging.appending(path: "reused.png")
+        try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!.write(to: image)
+
+        let database = try ArchiveDatabase(url: root.appending(path: ".x-article-archiver/archive.sqlite"))
+        let creator = Creator(xUserID: "duplicate-media-user", username: "writer", displayName: "作者")
+        try await database.upsertCreator(creator)
+        let document = CanonicalDocument(
+            title: "重复图片内容",
+            authorName: creator.displayName,
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/399")!,
+            sourcePostID: "399",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [
+                CanonicalBlock(kind: .image, mediaID: "image-1"),
+                CanonicalBlock(kind: .paragraph, text: "中间正文保持不变。"),
+                CanonicalBlock(kind: .image, mediaID: "image-2")
+            ],
+            media: [
+                MediaAsset(
+                    id: "image-1",
+                    sourceURL: URL(string: "https://pbs.twimg.com/media/reused-one.png")!,
+                    altText: "重用图片一",
+                    position: 0,
+                    localCachePath: image.path
+                ),
+                MediaAsset(
+                    id: "image-2",
+                    sourceURL: URL(string: "https://pbs.twimg.com/media/reused-two.png")!,
+                    altText: "重用图片二",
+                    position: 1,
+                    localCachePath: image.path
+                )
+            ],
+            sourceMediaIDs: ["image-1", "image-2"],
+            layoutFidelity: .renderedPageVerified
+        )
+        let adapter = MirroredMediaHostAdapter(
+            primary: DeterministicRemoteImageHost(),
+            archiveRoot: root
+        )
+
+        let archived = try await ArchivePipeline(database: database, imageHost: adapter)
+            .archive(document: document, creator: creator, root: root)
+        let markdown = try String(contentsOfFile: XCTUnwrap(archived.markdownPath), encoding: .utf8)
+        let remoteReference = "https://cdn.example.test/reused.png"
+
+        XCTAssertEqual(markdown.components(separatedBy: remoteReference).count - 1, 2)
+        let snapshotData = try Data(contentsOf: root.appending(path: ".x-article-archiver/source-snapshots/399.json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshot = try decoder.decode(CanonicalDocument.self, from: snapshotData)
+        XCTAssertEqual(snapshot.media.map(\.remoteURL), [URL(string: remoteReference), URL(string: remoteReference)])
+        XCTAssertEqual(snapshot.media[0].localCachePath, snapshot.media[1].localCachePath)
     }
 
     func testPipelineIsIdempotentAndDoesNotMistakeOwnChecksumForLocalEdit() async throws {

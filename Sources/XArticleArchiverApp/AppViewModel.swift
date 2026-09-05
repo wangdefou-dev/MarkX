@@ -95,6 +95,7 @@ final class AppViewModel: ObservableObject {
 
     private var database: ArchiveDatabase?
     private var runningTask: Task<Void, Never>?
+    private var browserCaptureSavedPostIDs = Set<String>()
     private var browserCaptureFailurePostIDs = Set<String>()
     private var browserCaptureFailureDetails: [String] = []
     private var discoveredCreatorArticles: [CreatorArticleListItem] = []
@@ -1121,38 +1122,57 @@ final class AppViewModel: ObservableObject {
             statusMessage = "已完成 \(next) / \(browserCaptureRequests.count)，正在自动处理下一篇"
         } else {
             let total = browserCaptureRequests.count
-            let completed = progress.completedArticles
+            let completed = browserCaptureSavedPostIDs.count
             let failed = browserCaptureFailurePostIDs.count
+            let accountedPostIDs = browserCaptureSavedPostIDs.union(browserCaptureFailurePostIDs)
+            let unaccounted = browserCaptureRequests.lazy.filter {
+                !accountedPostIDs.contains($0.link.postID)
+            }.count
             let skipped = progress.skippedArticles
             let images = progress.uploadedImages
             let videos = progress.uploadedVideos
             let failureNote = browserCaptureFailureDetails.isEmpty
                 ? ""
                 : "\n\n未完成：\(browserCaptureFailureDetails.prefix(3).joined(separator: "；"))"
+            let pending = pendingExactCaptureArticles
+            let attentionRemaining = pending.lazy.filter(ArchiveSidebarStatistics.needsAttention).count
+            let waitingRemaining = max(0, pending.count - attentionRemaining)
+            let outstandingNote = pending.isEmpty
+                ? ""
+                : "\n\n资料库仍有等待继续 \(waitingRemaining) 篇、需要处理 \(attentionRemaining) 篇；本次队列结束不代表这些文章已经完成。可在左侧对应分类中重新开始。"
+            let hasUnfinishedWork = !pending.isEmpty || unaccounted > 0
+            let unaccountedNote = unaccounted == 0
+                ? ""
+                : "\n\n另有 \(unaccounted) 篇没有得到已保存或明确失败结果，系统未把它们计为完成。"
             showingBrowserCapture = false
             browserCaptureRequests = []
             browserCaptureIndex = 0
+            browserCaptureSavedPostIDs.removeAll()
             finishDownloadProgressWindow()
             if let creatorCount = activeSyncCreatorCount,
                let articleLimit = activeSyncArticleLimit {
                 let checked = total + skipped
-                progress.stage = failed == 0 ? "全部博主同步完成" : "同步完成，部分文章需要重试"
-                statusMessage = "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇"
+                progress.stage = hasUnfinishedWork ? "本次同步结束，资料库仍有未完成文章" : "全部博主同步完成"
+                statusMessage = hasUnfinishedWork
+                    ? "本次同步结束：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇；仍有未完成任务"
+                    : "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
-                        title: failed == 0 ? "全部博主同步完成" : "同步完成，部分文章失败",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n整个同步过程在后台完成，X API 调用为 0。\(failureNote)"
+                        title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(outstandingNote)"
                     )
                 }
             } else {
-                progress.stage = failed == 0 ? "文章下载完成" : "文章下载完成，部分文章需要重试"
-                statusMessage = "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇"
+                progress.stage = hasUnfinishedWork ? "本次队列结束，资料库仍有未完成文章" : "文章下载完成"
+                statusMessage = hasUnfinishedWork
+                    ? "本次队列结束：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇；仍有未完成任务"
+                    : "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.downloadResultNotice = DownloadResultNotice(
-                        title: failed == 0 ? "文章下载完成" : "下载完成，部分文章失败",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)"
+                        title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(outstandingNote)"
                     )
                 }
             }
@@ -1161,10 +1181,10 @@ final class AppViewModel: ObservableObject {
 
     func browserCaptureState(for request: BrowserCaptureRequest) -> BackgroundDownloadItemState {
         if browserCaptureFailurePostIDs.contains(request.link.postID) { return .failed }
+        if browserCaptureSavedPostIDs.contains(request.link.postID) { return .saved }
         guard let index = browserCaptureRequests.firstIndex(where: { $0.id == request.id }) else {
             return .queued
         }
-        if index < browserCaptureIndex { return .saved }
         if index == browserCaptureIndex { return .running }
         return .queued
     }
@@ -1177,9 +1197,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func recordBrowserCaptureFailure(_ error: Error, request: BrowserCaptureRequest) async {
-        browserCaptureFailurePostIDs.insert(request.link.postID)
+        let isNewFailure = browserCaptureFailurePostIDs.insert(request.link.postID).inserted
         progress.failedArticles = browserCaptureFailurePostIDs.count
-        browserCaptureFailureDetails.append("《\(request.displayTitle)》：\(error.localizedDescription)")
+        if isNewFailure {
+            browserCaptureFailureDetails.append("《\(request.displayTitle)》：\(error.localizedDescription)")
+        }
         if let database,
            var failed = try? await database.article(sourcePostID: request.link.postID) {
             failed.pipelineState = .failed
@@ -1219,11 +1241,15 @@ final class AppViewModel: ObservableObject {
     func archiveBrowserCapture(
         _ payload: BrowserArticleCapturePayload,
         request: BrowserCaptureRequest
-    ) async -> Bool {
-        guard !browserCaptureStopRequested,
-              !isRunning,
-              let archiveRoot,
-              let database else { return false }
+    ) async -> BrowserCaptureArchiveOutcome {
+        guard !browserCaptureStopRequested else { return .stopped }
+        guard let archiveRoot, let database else {
+            await recordBrowserCaptureFailure(
+                BrowserArticleCaptureError.pageNotReady("归档目录或资料库尚未就绪，未写入本地文件"),
+                request: request
+            )
+            return .failed
+        }
         isRunning = true
         errorMessage = nil
         progress.stage = "正在校验页面原始排版"
@@ -1299,6 +1325,7 @@ final class AppViewModel: ObservableObject {
                 }
             }
             progress.completedArticles += 1
+            browserCaptureSavedPostIDs.insert(request.link.postID)
             progress.uploadedImages += document.media.count
             progress.uploadedVideos += document.videos?.count ?? 0
             browserCaptureFailurePostIDs.remove(request.link.postID)
@@ -1306,25 +1333,13 @@ final class AppViewModel: ObservableObject {
             try await reload()
             selectedArticleID = archived.id
             statusMessage = "已保存完整排版：\(document.title)"
-            return true
+            return .saved
         } catch is CancellationError {
             statusMessage = "已停止精确排版采集；未完成任务已保留"
-            return false
+            return .stopped
         } catch {
-            browserCaptureFailurePostIDs.insert(request.link.postID)
-            progress.failedArticles = browserCaptureFailurePostIDs.count
-            browserCaptureFailureDetails.append("《\(request.displayTitle)》：\(error.localizedDescription)")
-            if var failed = try? await database.article(sourcePostID: request.link.postID) {
-                failed.pipelineState = .failed
-                failed.lastError = error.localizedDescription
-                failed.lastSyncedAt = Date()
-                failed.warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
-                failed.appendProcessingLog("处理失败：\(error.localizedDescription)")
-                try? await database.upsertArticle(failed)
-                try? await reload()
-            }
-            statusMessage = "《\(request.displayTitle)》保存失败，正在继续下一篇"
-            return false
+            await recordBrowserCaptureFailure(error, request: request)
+            return .failed
         }
     }
 
@@ -1804,6 +1819,7 @@ final class AppViewModel: ObservableObject {
         var seen = Set<String>()
         browserCaptureRequests = requests.filter { seen.insert($0.link.postID).inserted }
         reactivateExactCaptureTasks(for: browserCaptureRequests)
+        browserCaptureSavedPostIDs.removeAll()
         browserCaptureFailurePostIDs.removeAll()
         browserCaptureFailureDetails.removeAll()
         progress.skippedArticles = skippedCount

@@ -106,13 +106,15 @@ public actor ArchivePipeline {
                 guard let path = media.localCachePath else { throw ArchivePipelineError.missingLocalImage(media.id) }
                 return URL(fileURLWithPath: path)
             }
-            let uploadResults = try await imageHost.upload(fileURLs: localURLs)
-            let resultByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0) })
+            let uploadURLs = Self.uniqueFileURLs(localURLs)
+            let uploadResults = try await imageHost.upload(fileURLs: uploadURLs)
+            let resultByPath = try Self.uploadResultsByPath(uploadResults, expectedFileURLs: uploadURLs)
             for index in document.media.indices {
                 guard let path = document.media[index].localCachePath,
                       pendingMedia.contains(where: { $0.localCachePath == path }) else { continue }
-                guard let result = resultByPath[path] else {
-                    throw ImagePipelineError.outputCountMismatch(expected: localURLs.count, actual: resultByPath.count)
+                let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+                guard let result = resultByPath[normalizedPath] else {
+                    throw ImagePipelineError.outputCountMismatch(expected: uploadURLs.count, actual: resultByPath.count)
                 }
                 try await imageHost.verify(remoteURL: result.remoteURL)
                 document.media[index].remoteURL = result.remoteURL
@@ -149,14 +151,16 @@ public actor ArchivePipeline {
                 }
                 return URL(fileURLWithPath: path)
             }
-            let uploadResults = try await imageHost.upload(fileURLs: localURLs)
-            let resultByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0) })
+            let uploadURLs = Self.uniqueFileURLs(localURLs)
+            let uploadResults = try await imageHost.upload(fileURLs: uploadURLs)
+            let resultByPath = try Self.uploadResultsByPath(uploadResults, expectedFileURLs: uploadURLs)
             for index in videos.indices {
                 guard let path = videos[index].localCachePath,
                       pendingVideos.contains(where: { $0.localCachePath == path }) else { continue }
-                guard let result = resultByPath[path] else {
+                let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+                guard let result = resultByPath[normalizedPath] else {
                     throw ImagePipelineError.outputCountMismatch(
-                        expected: localURLs.count,
+                        expected: uploadURLs.count,
                         actual: resultByPath.count
                     )
                 }
@@ -251,6 +255,34 @@ public actor ArchivePipeline {
         guard let path else { return false }
         let mediaRoot = root.appending(path: ArchiveLayout.mediaDirectoryName).standardizedFileURL.path
         return URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(mediaRoot + "/")
+    }
+
+    private static func uniqueFileURLs(_ fileURLs: [URL]) -> [URL] {
+        var seenPaths = Set<String>()
+        return fileURLs.compactMap { fileURL in
+            let normalized = fileURL.standardizedFileURL
+            return seenPaths.insert(normalized.path).inserted ? normalized : nil
+        }
+    }
+
+    private static func uploadResultsByPath(
+        _ results: [UploadResult],
+        expectedFileURLs: [URL]
+    ) throws -> [String: UploadResult] {
+        let resultByPath = Dictionary(
+            results.map { (URL(fileURLWithPath: $0.localPath).standardizedFileURL.path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let expectedPaths = Set(expectedFileURLs.map { $0.standardizedFileURL.path })
+        guard results.count == expectedPaths.count,
+              resultByPath.count == expectedPaths.count,
+              Set(resultByPath.keys) == expectedPaths else {
+            throw ImagePipelineError.outputCountMismatch(
+                expected: expectedPaths.count,
+                actual: resultByPath.count
+            )
+        }
+        return resultByPath
     }
 
 }

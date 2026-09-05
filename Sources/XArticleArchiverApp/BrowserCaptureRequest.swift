@@ -31,6 +31,12 @@ struct DownloadResultNotice: Identifiable, Hashable {
     var message: String
 }
 
+enum BrowserCaptureArchiveOutcome: Hashable {
+    case saved
+    case failed
+    case stopped
+}
+
 enum BackgroundDownloadItemState: Hashable {
     case queued
     case running

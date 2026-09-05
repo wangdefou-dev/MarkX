@@ -29,10 +29,10 @@
     <string>X 长文归档器</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.2</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.5</string>
 	<key>CFBundleVersion</key>
-	<string>51</string>
+	<string>54</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>

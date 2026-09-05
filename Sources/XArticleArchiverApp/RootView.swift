@@ -170,9 +170,9 @@ struct RootView: View {
                 }
 
                 SidebarCountRow(
-                    title: "处理中",
+                    title: "等待继续",
                     systemImage: "clock.arrow.circlepath",
-                    count: statistics.processingArticleCount
+                    count: statistics.waitingArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.pending)
                 .contextMenu {
@@ -620,7 +620,7 @@ struct RootView: View {
     private var listTitle: String {
         switch model.sidebarSelection {
         case .all, .none: "全部文章"
-        case .pending: "处理中"
+        case .pending: "等待继续"
         case .failed: "需要处理"
         case .creator(let id): model.creators.first(where: { $0.id == id })?.displayName ?? "博主"
         }
