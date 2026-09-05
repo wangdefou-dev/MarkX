@@ -921,3 +921,15 @@ public enum HandleParser {
         return value
     }
 }
+
+public enum SingleCreatorInputPolicy {
+    /// Keeps the single-creator field physically and semantically single-line.
+    /// Normal typing is preserved exactly; when Return or a multi-line paste
+    /// introduces line separators, only the first non-empty line is retained.
+    public static func sanitize(_ input: String) -> String {
+        let lines = input.components(separatedBy: .newlines)
+        guard lines.count > 1 else { return input }
+        return lines.first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+    }
+}

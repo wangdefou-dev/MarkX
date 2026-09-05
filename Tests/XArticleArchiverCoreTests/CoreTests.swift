@@ -20,6 +20,26 @@ final class HandleParserTests: XCTestCase {
         XCTAssertNil(HandleParser.normalize("abcdefghijklmnop"))
         XCTAssertNil(HandleParser.normalize("hello-world"))
     }
+
+    func testSingleCreatorInputRejectsReturnAndKeepsFirstNonemptyPastedLine() {
+        XCTAssertEqual(
+            SingleCreatorInputPolicy.sanitize("@OpenAI\n@XDevelopers"),
+            "@OpenAI"
+        )
+        XCTAssertEqual(
+            SingleCreatorInputPolicy.sanitize("\r\n  https://x.com/OpenAI  \r\n@XDevelopers"),
+            "https://x.com/OpenAI"
+        )
+        XCTAssertEqual(
+            SingleCreatorInputPolicy.sanitize("@OpenAI\u{2028}@XDevelopers"),
+            "@OpenAI"
+        )
+    }
+
+    func testSingleCreatorInputPreservesAnUnfinishedSingleLineExactly() {
+        XCTAssertEqual(SingleCreatorInputPolicy.sanitize("  @Open"), "  @Open")
+        XCTAssertEqual(SingleCreatorInputPolicy.sanitize("https://x.com/"), "https://x.com/")
+    }
 }
 
 final class XAPICostEstimatorTests: XCTestCase {

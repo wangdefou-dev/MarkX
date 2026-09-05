@@ -1,3 +1,4 @@
+@preconcurrency import AppKit
 import SwiftUI
 import XArticleArchiverCore
 
@@ -80,6 +81,11 @@ struct AddCreatorsView: View {
                 entryMode = .articleLinks
             }
         }
+        .onChange(of: entryMode) { _, newMode in
+            if newMode == .single {
+                input = SingleCreatorInputPolicy.sanitize(input)
+            }
+        }
     }
 
     @ViewBuilder
@@ -88,9 +94,17 @@ struct AddCreatorsView: View {
         case .single:
             VStack(alignment: .leading, spacing: 7) {
                 Text("博主主页").font(.headline)
-                TextField("@username 或 https://x.com/username", text: $input)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
+                StrictSingleLineTextField(
+                    text: Binding(
+                        get: { input },
+                        set: { input = SingleCreatorInputPolicy.sanitize($0) }
+                    ),
+                    placeholder: "@username 或 https://x.com/username"
+                )
+                    .frame(height: 23)
+                Text("仅支持一行；按回车不会换行，粘贴多行内容时只保留第一条非空内容。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if parsedHandles.count > 1 {
                     Label("单个模式一次只接受一个博主", systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -249,6 +263,151 @@ struct AddCreatorsView: View {
         } else {
             model.addAndArchiveCreators(input: input, mode: mode, articleLimit: articleLimit)
         }
+    }
+}
+
+/// A native one-line field that intercepts paste before AppKit converts line
+/// separators to spaces. SwiftUI's TextField is visually one line, but AppKit
+/// can normalize a multi-line paste into one space-separated value before its
+/// Binding setter sees it, which would silently accept multiple creators.
+private struct StrictSingleLineTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> StrictSingleLineNSTextField {
+        let field = StrictSingleLineNSTextField()
+        field.delegate = context.coordinator
+        field.placeholderString = placeholder
+        field.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        field.bezelStyle = .roundedBezel
+        field.isBezeled = true
+        field.drawsBackground = true
+        field.focusRingType = .default
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.cell?.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.setAccessibilityLabel("博主主页")
+        field.stringValue = SingleCreatorInputPolicy.sanitize(text)
+        context.coordinator.installKeyboardGuard(for: field)
+        return field
+    }
+
+    func updateNSView(_ field: StrictSingleLineNSTextField, context: Context) {
+        context.coordinator.parent = self
+        field.placeholderString = placeholder
+        let sanitized = SingleCreatorInputPolicy.sanitize(text)
+        if field.stringValue != sanitized {
+            field.stringValue = sanitized
+        }
+    }
+
+    static func dismantleNSView(_ field: StrictSingleLineNSTextField, coordinator: Coordinator) {
+        coordinator.removeKeyboardGuard()
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: StrictSingleLineTextField
+        private weak var field: StrictSingleLineNSTextField?
+        private var keyboardMonitor: Any?
+
+        init(parent: StrictSingleLineTextField) {
+            self.parent = parent
+        }
+
+        func installKeyboardGuard(for field: StrictSingleLineNSTextField) {
+            self.field = field
+            keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                let coordinator = UnsafeSendableBox(self)
+                let boxedEvent = UnsafeSendableBox(event)
+                let shouldConsume: Bool = MainActor.assumeIsolated {
+                    coordinator.value.consumeIfForbidden(boxedEvent.value)
+                }
+                return shouldConsume ? nil : event
+            }
+        }
+
+        @MainActor
+        private func consumeIfForbidden(_ event: NSEvent) -> Bool {
+            guard let field,
+                  let editor = field.currentEditor() as? NSTextView
+            else { return false }
+
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            if flags.contains(.command), key == "v",
+               let pasted = NSPasteboard.general.string(forType: .string),
+               pasted.components(separatedBy: .newlines).count > 1 {
+                let sanitized = SingleCreatorInputPolicy.sanitize(pasted)
+                if !sanitized.isEmpty {
+                    editor.insertText(sanitized, replacementRange: editor.selectedRange())
+                }
+                return true
+            }
+
+            return event.keyCode == 36 || event.keyCode == 76
+        }
+
+        func removeKeyboardGuard() {
+            if let keyboardMonitor {
+                NSEvent.removeMonitor(keyboardMonitor)
+                self.keyboardMonitor = nil
+            }
+        }
+
+        deinit {
+            removeKeyboardGuard()
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            let sanitized = SingleCreatorInputPolicy.sanitize(field.stringValue)
+            if field.stringValue != sanitized {
+                field.stringValue = sanitized
+                field.currentEditor()?.selectedRange = NSRange(location: sanitized.utf16.count, length: 0)
+            }
+            if parent.text != sanitized {
+                parent.text = sanitized
+            }
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            switch NSStringFromSelector(commandSelector) {
+            case "insertNewline:", "insertNewlineIgnoringFieldEditor:", "insertLineBreak:":
+                return true
+            case "paste:":
+                guard let pasted = NSPasteboard.general.string(forType: .string) else { return false }
+                let sanitized = SingleCreatorInputPolicy.sanitize(pasted)
+                guard !sanitized.isEmpty else { return true }
+                textView.insertText(sanitized, replacementRange: textView.selectedRange())
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+private final class StrictSingleLineNSTextField: NSTextField {}
+
+/// AppKit invokes local key monitors on the main thread, but the SDK callback
+/// is not annotated `@MainActor`. This narrow wrapper lets us state that runtime
+/// guarantee while keeping all AppKit access inside `MainActor.assumeIsolated`.
+private struct UnsafeSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+
+    init(_ value: Value) {
+        self.value = value
     }
 }
 
