@@ -8,7 +8,7 @@ if [ "$#" -gt 0 ]; then
 else
   VERIFY_DIR="$(mktemp -d /tmp/x-article-archiver-app-verify.XXXXXX)"
   trap 'rm -rf "$VERIFY_DIR"' EXIT
-  ditto -x -k "$PROJECT_DIR/dist/MarkX-0.2.0.zip" "$VERIFY_DIR"
+  ditto -x -k "$PROJECT_DIR/dist/MarkX-0.2.1.zip" "$VERIFY_DIR"
   APP_BUNDLE="$VERIFY_DIR/MarkX.app"
 fi
 
@@ -20,8 +20,8 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 file "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp" | grep -q 'arm64'
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleDisplayName)" = "MarkX"
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleName)" = "MarkX"
-test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleShortVersionString)" = "0.2.0"
-test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleVersion)" = "55"
+test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleShortVersionString)" = "0.2.1"
+test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleVersion)" = "56"
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleURLTypes | grep -c xarticlearchiver)" -ge 1
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleIconFile)" = "AppIcon.icns"
 file "$APP_BUNDLE/Contents/Resources/AppIcon.icns" | grep -q 'Mac OS X icon'

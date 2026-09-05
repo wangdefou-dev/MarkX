@@ -2,9 +2,9 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEFAULT_SOURCE_IMAGE="$PROJECT_DIR/Design/AppIcon/AppIcon-corrected-v5.svg"
+DEFAULT_SOURCE_IMAGE="$PROJECT_DIR/Design/AppIcon/AppIcon-corrected-v6.svg"
 SOURCE_IMAGE="${1:-$DEFAULT_SOURCE_IMAGE}"
-PREVIEW_IMAGE="$PROJECT_DIR/Design/AppIcon/AppIcon-corrected-v5-preview.png"
+PREVIEW_IMAGE="$PROJECT_DIR/Design/AppIcon/AppIcon-corrected-v6-preview.png"
 MASTER_IMAGE="$PROJECT_DIR/Config/AppIcon-1024.png"
 ICONSET_DIR="$PROJECT_DIR/Config/AppIcon.iconset"
 ICNS_PATH="$PROJECT_DIR/Config/AppIcon.icns"
