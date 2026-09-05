@@ -22,11 +22,18 @@ final class AppViewModel: ObservableObject {
     }
 
     enum ImageHostChoice: String, CaseIterable, Identifiable {
+        case local
         case uPic
         case s3
 
         var id: String { rawValue }
-        var displayName: String { self == .uPic ? "uPic 当前默认图床" : "原生 S3 / R2" }
+        var displayName: String {
+            switch self {
+            case .local: "本地存储"
+            case .uPic: "uPic 图床"
+            case .s3: "原生 S3 / R2"
+            }
+        }
     }
 
     enum SidebarSelection: Hashable {
@@ -46,14 +53,13 @@ final class AppViewModel: ObservableObject {
     @Published var selectedArticleID: UUID?
     @Published var sidebarSelection: SidebarSelection? = .all
     @Published var archiveRoot: URL?
-    @Published var hasXToken = false
     @Published var isRunning = false
     @Published var statusMessage = "准备就绪"
     @Published var errorMessage: String?
     @Published var progress = SyncProgress()
-    @Published var upicCapability = ImageHostCapability(name: "uPic 当前默认图床", version: nil, isAvailable: false, detail: "正在检测")
-    @Published var imageHostChoice: ImageHostChoice = .uPic
-    @Published var imageHostVerified = false
+    @Published var upicCapability = ImageHostCapability(name: "uPic 图床", version: nil, isAvailable: false, detail: "正在检测")
+    @Published var imageHostChoice: ImageHostChoice = .local
+    @Published var imageHostVerified = true
     @Published var hasS3Credentials = false
     @Published var s3Endpoint = ""
     @Published var s3Bucket = ""
@@ -70,6 +76,7 @@ final class AppViewModel: ObservableObject {
     @Published var creatorArticleDiscoveryRequests: [CreatorArticleDiscoveryRequest] = []
     @Published var creatorArticleDiscoveryIndex = 0
     @Published var showingBrowserCapture = false
+    @Published private(set) var isDownloadProgressWindowVisible = false
     @Published var browserCaptureRequests: [BrowserCaptureRequest] = []
     @Published var browserCaptureIndex = 0
     @Published var downloadResultNotice: DownloadResultNotice?
@@ -94,14 +101,25 @@ final class AppViewModel: ObservableObject {
     private var browserCaptureStopRequested = false
     private var activeArchiveOperation: ActiveArchiveOperation = .download
     private var scheduledRunActive = false
+    private var downloadProgressWindowController: NSWindowController?
+    private var downloadProgressWindowDelegate: DownloadProgressWindowDelegate?
+    private weak var downloadProgressAnchorWindow: NSWindow?
+    private var downloadProgressWindowHiddenByUser = false
     private let defaults = UserDefaults.standard
 
     init() {
         if let path = defaults.string(forKey: "archiveRootPath") {
             archiveRoot = URL(fileURLWithPath: path, isDirectory: true)
         }
-        imageHostChoice = ImageHostChoice(rawValue: defaults.string(forKey: "imageHostChoice") ?? "") ?? .uPic
-        imageHostVerified = defaults.bool(forKey: "imageHostVerified")
+        let localDefaultMigrationKey = "didMakeLocalMediaStorageDefaultV1"
+        if defaults.bool(forKey: localDefaultMigrationKey) {
+            imageHostChoice = ImageHostChoice(rawValue: defaults.string(forKey: "imageHostChoice") ?? "") ?? .local
+        } else {
+            imageHostChoice = .local
+            defaults.set(ImageHostChoice.local.rawValue, forKey: "imageHostChoice")
+            defaults.set(true, forKey: localDefaultMigrationKey)
+        }
+        imageHostVerified = imageHostChoice == .local || defaults.bool(forKey: "imageHostVerified")
         scheduledSyncEnabled = defaults.bool(forKey: "scheduledSyncEnabled")
         scheduledSyncHour = defaults.object(forKey: "scheduledSyncHour") as? Int ?? 2
         scheduledSyncMinute = defaults.object(forKey: "scheduledSyncMinute") as? Int ?? 0
@@ -117,7 +135,16 @@ final class AppViewModel: ObservableObject {
             s3KeyPrefix = configuration.keyPrefix
         }
         Task { await bootstrap() }
-        Task { await refreshCredentialState() }
+        Task { await refreshS3CredentialState() }
+        // Build 47 removes the retired X Developer API configuration entirely.
+        // Delete any credential created by older builds without surfacing or
+        // retaining its value.
+        for key in ["xBearerToken", "xAPIBearerToken", "hasXToken"] {
+            defaults.removeObject(forKey: key)
+        }
+        Task.detached(priority: .utility) {
+            try? KeychainStore.delete(account: "x-api-bearer-token")
+        }
     }
 
     var filteredArticles: [ArchivedArticle] {
@@ -178,13 +205,22 @@ final class AppViewModel: ObservableObject {
     var configurationSummary: String {
         let folder = archiveRoot?.lastPathComponent ?? "未选择归档目录"
         let x = ChromeXSessionReader.hasLocalChromeProfile() ? "Chrome X 可用" : "Chrome X 未就绪"
-        let imageHost = imageHostVerified ? "图床已验证" : "图床未验证"
-        return "\(x) · \(imageHost) · \(folder)"
+        let storage = imageHostVerified ? "媒体存储已就绪" : "媒体存储未验证"
+        return "\(x) · \(storage) · \(folder)"
+    }
+
+    var hasActiveDownloadProgress: Bool {
+        showingCreatorArticleDiscovery || showingBrowserCapture
+            || !creatorArticleDiscoveryRequests.isEmpty || !browserCaptureRequests.isEmpty
     }
 
     var imageHostDetail: String {
         if imageHostVerified {
-            return imageHostChoice == .uPic ? "uPic 默认图床已通过真实上传验证" : "原生 S3/R2 真实上传验证通过"
+            switch imageHostChoice {
+            case .local: return "默认本地保存：图片 media/images，视频 media/videos"
+            case .uPic: return "uPic 图床已通过真实上传验证"
+            case .s3: return "原生 S3/R2 真实上传验证通过"
+            }
         }
         if imageHostChoice == .uPic, upicCapability.isAvailable {
             return upicCapability.detail
@@ -192,7 +228,7 @@ final class AppViewModel: ObservableObject {
         if imageHostChoice == .s3, hasS3Credentials {
             return "S3/R2 凭证已保存，尚未通过测试上传"
         }
-        return "尚未配置并验证图片上传"
+        return "尚未配置并验证媒体存储"
     }
 
     func bootstrap() async {
@@ -208,16 +244,126 @@ final class AppViewModel: ObservableObject {
         }
 
         upicCapability = await UPicAdapter().probe()
-        if !upicCapability.isAvailable, imageHostChoice == .uPic {
+        if imageHostChoice == .local {
+            setImageHostVerified(true)
+        } else if !upicCapability.isAvailable, imageHostChoice == .uPic {
             setImageHostVerified(false)
         } else if imageHostChoice == .uPic, imageHostVerified {
-            upicCapability.detail = "uPic 当前默认图床已通过真实上传验证"
+            upicCapability.detail = "uPic 图床已通过真实上传验证"
         }
     }
 
     func presentConnectionSetup(focusing target: ConnectionSetupTarget = .overview) {
         connectionSetupTarget = target
         showingConnectionSetup = true
+    }
+
+    func showDownloadProgressWindow() {
+        guard hasActiveDownloadProgress else { return }
+        downloadProgressWindowHiddenByUser = false
+        presentDownloadProgressWindowIfAllowed()
+    }
+
+    func hideDownloadProgressWindow() {
+        downloadProgressWindowHiddenByUser = true
+        downloadProgressWindowController?.window?.orderOut(nil)
+        isDownloadProgressWindowVisible = false
+        statusMessage = "下载继续在后台执行；可点击工具栏的「显示下载进度」重新打开"
+    }
+
+    private func beginDownloadProgressSession() {
+        downloadProgressWindowHiddenByUser = false
+        downloadProgressAnchorWindow = resolveDownloadProgressAnchorWindow(
+            excluding: downloadProgressWindowController?.window
+        )
+    }
+
+    private func presentDownloadProgressWindowIfAllowed() {
+        guard hasActiveDownloadProgress, !downloadProgressWindowHiddenByUser else { return }
+        if downloadProgressWindowController == nil {
+            let rootView = DownloadProgressRootView().environmentObject(self)
+            let hostingController = NSHostingController(rootView: rootView)
+            // The progress content changes from discovery to capture while the
+            // same window stays alive. Do not let NSHostingController resize
+            // that window to each SwiftUI view's preferred size, because the
+            // unchanged origin would make the window visibly drift off-center.
+            hostingController.sizingOptions = []
+            let window = NSWindow(contentViewController: hostingController)
+            window.title = "X 长文下载进度"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 860, height: 680))
+            window.minSize = NSSize(width: 760, height: 590)
+            window.isReleasedWhenClosed = false
+            let delegate = DownloadProgressWindowDelegate(model: self)
+            window.delegate = delegate
+            downloadProgressWindowDelegate = delegate
+            downloadProgressWindowController = NSWindowController(window: window)
+        }
+        guard let progressWindow = downloadProgressWindowController?.window else { return }
+        if let currentAnchor = resolveDownloadProgressAnchorWindow(excluding: progressWindow) {
+            downloadProgressAnchorWindow = currentAnchor
+        }
+        if let anchorWindow = downloadProgressAnchorWindow {
+            centerDownloadProgressWindow(progressWindow, over: anchorWindow)
+        }
+        downloadProgressWindowController?.showWindow(nil)
+        progressWindow.deminiaturize(nil)
+        progressWindow.makeKeyAndOrderFront(nil)
+        isDownloadProgressWindowVisible = true
+    }
+
+    private func resolveDownloadProgressAnchorWindow(excluding progressWindow: NSWindow?) -> NSWindow? {
+        let preferredWindows = [NSApp.mainWindow, NSApp.keyWindow, downloadProgressAnchorWindow]
+        for candidate in preferredWindows {
+            guard let rootWindow = rootApplicationWindow(for: candidate),
+                  rootWindow !== progressWindow,
+                  rootWindow.styleMask.contains(.titled) else { continue }
+            return rootWindow
+        }
+
+        return NSApp.windows.first { window in
+            window !== progressWindow
+                && window.isVisible
+                && window.sheetParent == nil
+                && window.level == .normal
+                && window.styleMask.contains(.titled)
+        }
+    }
+
+    private func rootApplicationWindow(for window: NSWindow?) -> NSWindow? {
+        var rootWindow = window
+        while let parent = rootWindow?.sheetParent {
+            rootWindow = parent
+        }
+        return rootWindow
+    }
+
+    private func centerDownloadProgressWindow(_ progressWindow: NSWindow, over anchorWindow: NSWindow) {
+        let anchorFrame = anchorWindow.frame
+        let progressSize = progressWindow.frame.size
+        var origin = NSPoint(
+            x: anchorFrame.midX - progressSize.width / 2,
+            y: anchorFrame.midY - progressSize.height / 2
+        )
+
+        if let visibleFrame = anchorWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+            let maximumX = max(visibleFrame.minX, visibleFrame.maxX - progressSize.width)
+            let maximumY = max(visibleFrame.minY, visibleFrame.maxY - progressSize.height)
+            origin.x = min(max(origin.x, visibleFrame.minX), maximumX)
+            origin.y = min(max(origin.y, visibleFrame.minY), maximumY)
+        }
+
+        // Position before ordering the window front so it never flashes at an
+        // AppKit cascade location. Reopening repeats this calculation against
+        // the main app window's latest position.
+        progressWindow.setFrameOrigin(origin)
+    }
+
+    private func finishDownloadProgressWindow() {
+        downloadProgressWindowController?.window?.orderOut(nil)
+        isDownloadProgressWindowVisible = false
+        downloadProgressWindowHiddenByUser = false
+        downloadProgressAnchorWindow = nil
     }
 
     func saveScheduledSync(
@@ -242,7 +388,7 @@ final class AppViewModel: ObservableObject {
                 return false
             }
             guard imageHostVerified else {
-                errorMessage = "请先验证默认图床，再启用定时同步"
+                errorMessage = "请先验证当前媒体存储，再启用定时同步"
                 return false
             }
             guard enabledCreatorCount > 0 else {
@@ -298,7 +444,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard imageHostVerified else {
-            recordScheduledSyncResult(at: triggeredAt, message: "本次未执行：默认图床未通过验证")
+            recordScheduledSyncResult(at: triggeredAt, message: "本次未执行：当前媒体存储未通过验证")
             return
         }
         guard enabledCreatorCount > 0 else {
@@ -334,19 +480,14 @@ final class AppViewModel: ObservableObject {
         defaults.set(message, forKey: "scheduledSyncLastResult")
     }
 
-    private func refreshCredentialState() async {
+    private func refreshS3CredentialState() async {
         do {
             let credentialState = try await Task.detached(priority: .userInitiated) {
-                let token = try KeychainStore.read(account: KeychainStore.xBearerAccount)
                 let access = try KeychainStore.read(account: KeychainStore.s3AccessKeyAccount)
                 let secret = try KeychainStore.read(account: KeychainStore.s3SecretKeyAccount)
-                return (
-                    hasXToken: token?.isEmpty == false,
-                    hasS3Credentials: access?.isEmpty == false && secret?.isEmpty == false
-                )
+                return access?.isEmpty == false && secret?.isEmpty == false
             }.value
-            hasXToken = credentialState.hasXToken
-            hasS3Credentials = credentialState.hasS3Credentials
+            hasS3Credentials = credentialState
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -530,36 +671,6 @@ final class AppViewModel: ObservableObject {
         showingAddCreators = true
     }
 
-    func saveAndTestToken(_ token: String) async -> Bool {
-        let cleaned = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else {
-            errorMessage = "请输入 X Developer Bearer Token"
-            return false
-        }
-        do {
-            statusMessage = "正在验证 X API…"
-            try await XAPIClient(bearerToken: cleaned).testConnection()
-            try KeychainStore.save(cleaned, account: KeychainStore.xBearerAccount)
-            hasXToken = true
-            statusMessage = "X API 连接成功"
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            statusMessage = "X API 验证失败"
-            return false
-        }
-    }
-
-    func removeToken() {
-        do {
-            try KeychainStore.delete(account: KeychainStore.xBearerAccount)
-            hasXToken = false
-            statusMessage = "X 连接已移除"
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func testUPic() async -> Bool {
         selectImageHost(.uPic)
         let installation = UPicAdapter()
@@ -573,7 +684,7 @@ final class AppViewModel: ObservableObject {
             guard let archiveRoot else {
                 throw ImagePipelineError.hostUnavailable("请先选择本地归档目录")
             }
-            statusMessage = "正在通过 uPic 默认图床上传无隐私测试图…"
+            statusMessage = "正在通过 uPic 图床上传无隐私测试图…"
             // The App Store build of uPic is sandboxed. Staging the probe inside
             // the selected archive root verifies the exact filesystem scope that
             // will later contain image/video cache files; another app's private
@@ -585,15 +696,15 @@ final class AppViewModel: ObservableObject {
                     directoryHint: .isDirectory
                 )
             )
-            upicCapability.detail = "已验证 uPic 当前默认图床：\(remote.host ?? "远程图床")"
+            upicCapability.detail = "已验证 uPic 图床：\(remote.host ?? "远程图床")"
             setImageHostVerified(true)
-            statusMessage = "uPic 默认图床测试通过：\(remote.host ?? "远程图床")"
+            statusMessage = "uPic 图床测试通过：\(remote.host ?? "远程图床")"
             return true
         } catch {
             setImageHostVerified(false)
             errorMessage = error.localizedDescription
             upicCapability.detail = error.localizedDescription
-            statusMessage = "uPic 默认图床测试失败"
+            statusMessage = "uPic 图床测试失败"
             return false
         }
     }
@@ -648,13 +759,22 @@ final class AppViewModel: ObservableObject {
         guard imageHostChoice != choice else { return }
         imageHostChoice = choice
         defaults.set(choice.rawValue, forKey: "imageHostChoice")
-        invalidateImageHostVerification()
+        if choice == .local {
+            setImageHostVerified(true)
+            statusMessage = "已切换为默认本地存储"
+        } else {
+            invalidateImageHostVerification()
+        }
     }
 
     func invalidateImageHostVerification() {
+        guard imageHostChoice != .local else {
+            setImageHostVerified(true)
+            return
+        }
         guard imageHostVerified else { return }
         setImageHostVerified(false)
-        statusMessage = "图床配置已变更，请重新测试"
+        statusMessage = "媒体存储配置已变更，请重新测试"
     }
 
     func removeS3Credentials() {
@@ -686,7 +806,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard imageHostVerified else {
-            errorMessage = "请先完成一次真实图片上传验证"
+            errorMessage = "请先完成当前媒体存储验证"
             showingConnectionSetup = true
             return
         }
@@ -746,6 +866,7 @@ final class AppViewModel: ObservableObject {
         var seen = Set<String>()
         let uniqueHandles = handles.filter { seen.insert($0.lowercased()).inserted }
         guard !uniqueHandles.isEmpty, !isRunning else { return }
+        beginDownloadProgressSession()
 
         let isClosingInputSheet = showingAddCreators || showingSyncAllConfiguration
         creatorArticleDiscoveryRequests = uniqueHandles.map {
@@ -774,9 +895,11 @@ final class AppViewModel: ObservableObject {
                 guard let self, self.isRunning,
                       !self.creatorArticleDiscoveryRequests.isEmpty else { return }
                 self.showingCreatorArticleDiscovery = true
+                self.presentDownloadProgressWindowIfAllowed()
             }
         } else {
             showingCreatorArticleDiscovery = true
+            presentDownloadProgressWindowIfAllowed()
         }
     }
 
@@ -808,6 +931,7 @@ final class AppViewModel: ObservableObject {
         isRunning = false
 
         guard !discovered.isEmpty else {
+            finishDownloadProgressWindow()
             if let creatorCount = activeSyncCreatorCount,
                let articleLimit = activeSyncArticleLimit {
                 progress.stage = "同步完成：没有发现可检查的 X Article"
@@ -848,6 +972,7 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
         isRunning = false
+        finishDownloadProgressWindow()
         if isSyncingTrackedCreators {
             progress.stage = "同步失败"
             statusMessage = "同步未完成；没有调用 X API"
@@ -871,6 +996,7 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
         isRunning = false
+        finishDownloadProgressWindow()
         progress.stage = isSyncingTrackedCreators ? "已停止同步" : "已停止文章列表发现"
         statusMessage = isSyncingTrackedCreators
             ? "已停止同步；已完成的本地归档保留"
@@ -894,12 +1020,13 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard imageHostVerified else {
-            errorMessage = "请先完成一次真实图片上传验证"
+            errorMessage = "请先完成当前媒体存储验证"
             showingConnectionSetup = true
             return
         }
         activeArchiveOperation = .download
         showingAddCreators = false
+        beginDownloadProgressSession()
         prepareDirectBrowserCapture(links: links, refreshExisting: refreshExisting)
     }
 
@@ -917,6 +1044,7 @@ final class AppViewModel: ObservableObject {
                 displayName: "@\(article.authorHandle)"
             )
         activeArchiveOperation = .download
+        beginDownloadProgressSession()
         beginBrowserCapture([
             BrowserCaptureRequest(
                 link: link,
@@ -953,6 +1081,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         activeArchiveOperation = .download
+        beginDownloadProgressSession()
         beginBrowserCapture(requests)
     }
 
@@ -961,6 +1090,7 @@ final class AppViewModel: ObservableObject {
             showingBrowserCapture = false
             browserCaptureRequests = []
             browserCaptureIndex = 0
+            finishDownloadProgressWindow()
             statusMessage = isSyncingTrackedCreators
                 ? "已停止同步；已完成归档保留，未完成任务可继续"
                 : "已停止精确排版采集；未完成任务已保留"
@@ -983,6 +1113,7 @@ final class AppViewModel: ObservableObject {
             showingBrowserCapture = false
             browserCaptureRequests = []
             browserCaptureIndex = 0
+            finishDownloadProgressWindow()
             if let creatorCount = activeSyncCreatorCount,
                let articleLimit = activeSyncArticleLimit {
                 let checked = total + skipped
@@ -992,7 +1123,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
                         title: failed == 0 ? "全部博主同步完成" : "同步完成，部分文章失败",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存并上传/复用 \(images) 张图片、\(videos) 个视频。\n\n整个同步过程在后台完成，X API 调用为 0。\(failureNote)"
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n整个同步过程在后台完成，X API 调用为 0。\(failureNote)"
                     )
                 }
             } else {
@@ -1002,7 +1133,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.downloadResultNotice = DownloadResultNotice(
                         title: failed == 0 ? "文章下载完成" : "下载完成，部分文章失败",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存并上传/复用 \(images) 张图片、\(videos) 个视频。\(failureNote)"
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)"
                     )
                 }
             }
@@ -1047,6 +1178,7 @@ final class AppViewModel: ObservableObject {
         showingBrowserCapture = false
         browserCaptureRequests = []
         browserCaptureIndex = 0
+        finishDownloadProgressWindow()
         statusMessage = isSyncingTrackedCreators
             ? "已停止同步；已完成归档保留，未完成任务可继续"
             : "已停止精确排版采集；未完成任务已保留"
@@ -1365,7 +1497,10 @@ final class AppViewModel: ObservableObject {
                     sourceMediaIDs: [],
                     layoutFidelity: .exactStructure
                 )
-                let pipeline = ArchivePipeline(database: database, imageHost: UPicAdapter())
+                let pipeline = ArchivePipeline(
+                    database: database,
+                    imageHost: LocalMediaHostAdapter(archiveRoot: archiveRoot)
+                )
                 _ = try await pipeline.archive(document: document, creator: creator, root: archiveRoot) { [weak self] stage in
                     await MainActor.run { self?.statusMessage = stage }
                 }
@@ -1418,7 +1553,21 @@ final class AppViewModel: ObservableObject {
         guard let data = try? Data(contentsOf: snapshotURL) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let document = try? decoder.decode(CanonicalDocument.self, from: data) else { return nil }
+        guard var document = try? decoder.decode(CanonicalDocument.self, from: data) else { return nil }
+        for index in document.media.indices {
+            document.media[index].remoteURL = Self.previewMediaURL(
+                document.media[index].remoteURL,
+                root: archiveRoot
+            )
+        }
+        if document.videos != nil {
+            for index in document.videos!.indices {
+                document.videos![index].remoteURL = Self.previewMediaURL(
+                    document.videos![index].remoteURL,
+                    root: archiveRoot
+                )
+            }
+        }
         let visibleBlocks = document.blocks.filter { $0.kind != .image && $0.kind != .divider }
         if visibleBlocks.count == 1 {
             let text = visibleBlocks[0].text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1427,159 +1576,17 @@ final class AppViewModel: ObservableObject {
         return document
     }
 
-    @available(*, unavailable, message: "Build 28 起禁止通过普通 Post 或 Search API 发现文章")
-    private func legacyPaidAPISync(
-        handles: [String],
-        mode: ArchiveMode,
-        articleLimit: Int?,
-        scanPostLimit: Int,
-        useSinceID: Bool
-    ) {
-        guard !handles.isEmpty, !isRunning else { return }
-        guard archiveRoot != nil, let database else {
-            errorMessage = "归档目录尚未准备好"
-            return
-        }
-        guard let token = try? KeychainStore.read(account: KeychainStore.xBearerAccount), !token.isEmpty else {
-            errorMessage = "请先连接 X API"
-            return
-        }
-
-        runningTask = Task {
-            isRunning = true
-            errorMessage = nil
-            progress = SyncProgress(stage: "准备发现 X Article")
-            defer {
-                isRunning = false
-                runningTask = nil
-            }
-            let client = XAPIClient(bearerToken: token)
-            var captureRequests: [BrowserCaptureRequest] = []
-
-            for handle in handles {
-                if Task.isCancelled { break }
-                do {
-                    statusMessage = "正在确认 @\(handle)"
-                    var creator: Creator
-                    if var cached = try await database.creator(username: handle),
-                       !cached.xUserID.hasPrefix("browser:") {
-                        // The stable X user ID is already local. Reusing it
-                        // avoids a separately billable User Lookup on every
-                        // refresh and sync-all run.
-                        cached.isEnabled = true
-                        creator = cached
-                    } else {
-                        let lookedUp = try await client.lookupCreator(username: handle)
-                        if let browserCreator = try await database.creator(username: handle),
-                           browserCreator.xUserID.hasPrefix("browser:") {
-                            creator = Creator(
-                                id: browserCreator.id,
-                                xUserID: lookedUp.xUserID,
-                                username: lookedUp.username,
-                                displayName: lookedUp.displayName,
-                                profileImageURL: lookedUp.profileImageURL,
-                                isProtected: lookedUp.isProtected,
-                                isEnabled: true,
-                                lastSyncAt: browserCreator.lastSyncAt,
-                                lastSeenPostID: browserCreator.lastSeenPostID,
-                                completeness: browserCreator.completeness
-                            )
-                            try await database.updateCreatorIdentity(creator)
-                        } else if let old = try await database.creator(xUserID: lookedUp.xUserID) {
-                            creator = Creator(
-                                id: old.id,
-                                xUserID: lookedUp.xUserID,
-                                username: lookedUp.username,
-                                displayName: lookedUp.displayName,
-                                profileImageURL: lookedUp.profileImageURL,
-                                isProtected: lookedUp.isProtected,
-                                isEnabled: true,
-                                lastSyncAt: old.lastSyncAt,
-                                lastSeenPostID: old.lastSeenPostID,
-                                completeness: old.completeness
-                            )
-                        } else {
-                            creator = lookedUp
-                        }
-                    }
-                    guard !creator.isProtected else { throw XAPIError.forbidden("@\(handle) 是受保护账号") }
-                    try await database.upsertCreator(creator)
-
-                    let result: ArticleReferenceDiscoveryResult
-                    switch mode {
-                    case .recentWindow:
-                        let discoveryLabel = articleLimit.map { "最近 \($0) 篇 X Article" } ?? "新增 X Article"
-                        statusMessage = "正在查找 @\(creator.username) \(discoveryLabel)"
-                        let scannedBeforeCreator = progress.scannedPosts
-                        result = try await client.discoverRecentArticles(
-                            for: creator,
-                            sinceID: useSinceID ? creator.lastSeenPostID : nil,
-                            maximumArticles: articleLimit,
-                            maximumScannedPosts: scanPostLimit
-                        ) { [weak self] scanned in
-                            await MainActor.run {
-                                self?.progress.scannedPosts = scannedBeforeCreator + scanned
-                                self?.progress.stage = "正在发现\(discoveryLabel)"
-                            }
-                        }
-                    case .fullArchive:
-                        let start = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2006, month: 3, day: 1))!
-                        let scannedBeforeCreator = progress.scannedPosts
-                        result = try await client.discoverFullArchiveArticles(for: creator, startDate: start, endDate: Date()) { [weak self] scanned in
-                            await MainActor.run {
-                                self?.progress.scannedPosts = scannedBeforeCreator + scanned
-                                self?.progress.stage = "正在扫描完整历史"
-                            }
-                        }
-                    }
-                    progress.discoveredArticles += result.articles.count
-                    for reference in result.articles {
-                        let link = XArticleLink(
-                            postID: reference.postID,
-                            username: creator.username,
-                            originalURL: reference.sourceURL
-                        )
-                        try await savePendingReferenceIfNeeded(
-                            link: link,
-                            creator: creator,
-                            title: reference.title,
-                            publishedAt: reference.publishedAt,
-                            sourceArticleID: reference.articleID,
-                            database: database
-                        )
-                        captureRequests.append(BrowserCaptureRequest(
-                            link: link,
-                            creator: creator,
-                            displayTitle: reference.title,
-                            publishedAt: reference.publishedAt,
-                            sourceArticleID: reference.articleID,
-                            expectedPlainText: reference.expectedPlainText
-                        ))
-                    }
-                    creator.lastSeenPostID = result.newestPostID ?? creator.lastSeenPostID
-                    creator.lastSyncAt = Date()
-                    creator.completeness = result.completeness
-                    try await database.upsertCreator(creator)
-                } catch is CancellationError {
-                    break
-                } catch {
-                    progress.failedArticles += 1
-                    errorMessage = "@\(handle)：\(error.localizedDescription)"
-                }
-            }
-            do { try await reload() } catch { errorMessage = error.localizedDescription }
-            if Task.isCancelled {
-                progress.stage = "已安全停止，可再次发现"
-                statusMessage = progress.stage
-            } else if captureRequests.isEmpty {
-                progress.stage = "没有发现新的 X Article"
-                statusMessage = "没有发现新的 X Article · Post 读取估算 US$\(String(format: "%.3f", XAPICostEstimator.postReadCostUSD(progress.scannedPosts)))"
-            } else {
-                progress.stage = "已发现 \(captureRequests.count) 篇，等待精确排版采集"
-                statusMessage = "API 只完成链接发现；Post 读取估算 US$\(String(format: "%.3f", XAPICostEstimator.postReadCostUSD(progress.scannedPosts)))；正文页面抓取为 0 API"
-                beginBrowserCapture(captureRequests)
-            }
-        }
+    private static func previewMediaURL(_ storedURL: URL?, root: URL) -> URL? {
+        guard let storedURL else { return nil }
+        if storedURL.scheme != nil { return storedURL }
+        let relativePath = storedURL.relativeString.removingPercentEncoding ?? storedURL.relativeString
+        let components = NSString(string: relativePath).pathComponents
+        guard relativePath.hasPrefix("media/"),
+              !relativePath.hasPrefix("/"),
+              !components.contains("..") else { return nil }
+        let resolved = root.appending(path: relativePath).standardizedFileURL
+        guard isContained(resolved, in: root) else { return nil }
+        return resolved
     }
 
     private func prepareDirectBrowserCapture(
@@ -1645,20 +1652,21 @@ final class AppViewModel: ObservableObject {
                 progress.discoveredArticles = links.count
                 progress.skippedArticles = localHits
                 guard !requests.isEmpty else {
+                    finishDownloadProgressWindow()
                     if let creatorCount = activeSyncCreatorCount,
                        let articleLimit = activeSyncArticleLimit {
                         progress.stage = "全部博主同步完成"
                         statusMessage = "同步完成：\(localHits) 篇已有完整归档，全部跳过"
                         publishSyncResult(
                             title: "全部博主已经是最新状态",
-                            message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或上传图片。\n\n本次 X API 调用为 0。"
+                            message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或存储媒体。\n\n本次 X API 调用为 0。"
                         )
                     } else {
                         progress.stage = "全部链接已精确保存"
                         statusMessage = "\(localHits) 篇文章已有完整排版；本次 X API 调用为 0"
                         downloadResultNotice = DownloadResultNotice(
                             title: "不需要重复下载",
-                            message: "识别到的 \(localHits) 篇文章都已经完整保存在本地，本次没有重复下载或上传图片。"
+                            message: "识别到的 \(localHits) 篇文章都已经完整保存在本地，本次没有重复下载或存储媒体。"
                         )
                     }
                     return
@@ -1671,6 +1679,7 @@ final class AppViewModel: ObservableObject {
             } catch {
                 errorMessage = error.localizedDescription
                 progress.stage = "无法建立采集队列"
+                finishDownloadProgressWindow()
                 if isSyncingTrackedCreators {
                     publishSyncResult(
                         title: "同步未完成",
@@ -1725,6 +1734,7 @@ final class AppViewModel: ObservableObject {
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
         showingBrowserCapture = !browserCaptureRequests.isEmpty
+        presentDownloadProgressWindowIfAllowed()
     }
 
     private func reactivateExactCaptureTasks(for requests: [BrowserCaptureRequest]) {
@@ -1785,7 +1795,12 @@ final class AppViewModel: ObservableObject {
         guard let document = try? decoder.decode(CanonicalDocument.self, from: data),
               document.layoutFidelity == .renderedPageVerified || document.layoutFidelity == .exactStructure,
               (try? ContentFidelityValidator.validateCanonical(document)) != nil,
-              (try? MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)) != nil else {
+              (try? MarkdownRenderer.validateRenderedText(
+                document: document,
+                markdown: markdown,
+                archiveRoot: root,
+                markdownDirectory: URL(fileURLWithPath: markdownPath).deletingLastPathComponent()
+              )) != nil else {
             return false
         }
         return true
@@ -1867,9 +1882,16 @@ final class AppViewModel: ObservableObject {
                   (try? ContentFidelityValidator.validateCanonical(document)) != nil,
                   let rendered = try? MarkdownRenderer.render(
                     document: document,
-                    archivedAt: article.archivedAt
+                    archivedAt: article.archivedAt,
+                    archiveRoot: root,
+                    markdownDirectory: markdownURL.deletingLastPathComponent()
                   ),
-                  (try? MarkdownRenderer.validateRenderedText(document: document, markdown: rendered)) != nil else {
+                  (try? MarkdownRenderer.validateRenderedText(
+                    document: document,
+                    markdown: rendered,
+                    archiveRoot: root,
+                    markdownDirectory: markdownURL.deletingLastPathComponent()
+                  )) != nil else {
                 continue
             }
             let upgraded = MarkdownRenderer.addingExportChecksum(to: rendered)
@@ -1890,6 +1912,11 @@ final class AppViewModel: ObservableObject {
 
     private func configuredImageHost() async throws -> any ImageHostAdapter {
         switch imageHostChoice {
+        case .local:
+            guard let archiveRoot else {
+                throw ImagePipelineError.hostUnavailable("请先选择本地归档目录")
+            }
+            return LocalMediaHostAdapter(archiveRoot: archiveRoot)
         case .uPic:
             let adapter = UPicAdapter()
             let capability = await adapter.probe()

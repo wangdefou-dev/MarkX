@@ -207,7 +207,7 @@ struct SyncAllCreatorsView: View {
     @ViewBuilder
     private var readinessRow: some View {
         if readinessWarning.isEmpty {
-            Label("归档目录、Chrome 和图床已就绪", systemImage: "checkmark.circle.fill")
+            Label("归档目录、Chrome 和媒体存储已就绪", systemImage: "checkmark.circle.fill")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.green)
         } else {
@@ -223,7 +223,7 @@ struct SyncAllCreatorsView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.orange)
-            .help("关闭同步窗口并直接打开图床配置")
+            .help("关闭同步窗口并直接打开媒体存储配置")
         }
     }
 
@@ -272,7 +272,7 @@ struct SyncAllCreatorsView: View {
 
     private var readinessWarning: String {
         if model.archiveRoot == nil { return "本地归档目录未配置，点击前往设置" }
-        if !model.imageHostVerified { return "默认图床未连接，点击前往配置" }
+        if !model.imageHostVerified { return "媒体存储未就绪，点击前往配置" }
         if model.enabledCreatorCount == 0 { return "还没有已跟踪博主" }
         return ""
     }

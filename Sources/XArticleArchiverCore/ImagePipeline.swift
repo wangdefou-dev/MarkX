@@ -57,6 +57,143 @@ public extension ImageHostAdapter {
     }
 }
 
+/// Stores verified media below the user-selected archive root instead of
+/// transmitting it to a third-party image host. Returned URLs are deliberately
+/// relative to the archive root so Markdown remains portable when the whole
+/// archive directory is moved to another disk or Mac.
+public struct LocalMediaHostAdapter: ImageHostAdapter {
+    public let displayName = "本地存储"
+    public let archiveRoot: URL
+
+    public init(archiveRoot: URL) {
+        self.archiveRoot = archiveRoot.standardizedFileURL
+    }
+
+    public func probe() async -> ImageHostCapability {
+        ImageHostCapability(
+            name: displayName,
+            version: nil,
+            isAvailable: FileManager.default.isWritableFile(atPath: archiveRoot.path),
+            detail: "图片保存到 media/images，视频保存到 media/videos"
+        )
+    }
+
+    public func upload(fileURLs: [URL]) async throws -> [UploadResult] {
+        guard !fileURLs.isEmpty else { return [] }
+        var results: [UploadResult] = []
+        for sourceURL in fileURLs {
+            try Task.checkCancellation()
+            let source = sourceURL.standardizedFileURL
+            guard source.isFileURL,
+                  FileManager.default.fileExists(atPath: source.path) else {
+                throw ImagePipelineError.invalidLocalPath(source.path)
+            }
+            let ext = source.pathExtension.lowercased()
+            let isVideo = ext == "mp4" || ext == "m4v"
+            let allowedImageExtensions = Set(["png", "jpg", "jpeg", "gif", "webp", "avif"])
+            guard isVideo || allowedImageExtensions.contains(ext) else {
+                throw ImagePipelineError.invalidMIME(ext.isEmpty ? nil : ext)
+            }
+            let digest = try hashFile(source)
+            let folder = isVideo ? "videos" : "images"
+            let normalizedExtension = isVideo ? "mp4" : ext
+            let relativePath = "media/\(folder)/\(digest).\(normalizedExtension)"
+            let destination = archiveRoot.appending(path: relativePath)
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if FileManager.default.fileExists(atPath: destination.path) {
+                guard try hashFile(destination) == digest else {
+                    throw ImagePipelineError.localFileMismatch(destination.path)
+                }
+            } else {
+                let staging = destination.deletingLastPathComponent().appending(
+                    path: ".\(destination.lastPathComponent).\(UUID().uuidString).tmp"
+                )
+                do {
+                    try FileManager.default.copyItem(at: source, to: staging)
+                    guard try hashFile(staging) == digest else {
+                        throw ImagePipelineError.localFileMismatch(staging.path)
+                    }
+                    try FileManager.default.moveItem(at: staging, to: destination)
+                } catch {
+                    try? FileManager.default.removeItem(at: staging)
+                    throw error
+                }
+            }
+            guard let relativeURL = URL(string: relativePath) else {
+                throw ImagePipelineError.invalidLocalPath(relativePath)
+            }
+            results.append(UploadResult(localPath: source.path, remoteURL: relativeURL))
+        }
+        return results
+    }
+
+    public func verify(remoteURL: URL) async throws {
+        let localURL = try resolve(remoteURL, expectedFolder: "images")
+        let attributes = try FileManager.default.attributesOfItem(atPath: localURL.path)
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        guard size > 0 else { throw ImagePipelineError.emptyFile }
+        let bytes = [UInt8](try filePrefix(localURL))
+        let isImage = bytes.starts(with: [0x89, 0x50, 0x4E, 0x47])
+            || bytes.starts(with: [0xFF, 0xD8, 0xFF])
+            || bytes.starts(with: [0x47, 0x49, 0x46, 0x38])
+            || (bytes.count >= 12
+                && String(bytes: bytes[0..<4], encoding: .ascii) == "RIFF"
+                && String(bytes: bytes[8..<12], encoding: .ascii) == "WEBP")
+            || (bytes.count >= 12
+                && String(bytes: bytes[4..<8], encoding: .ascii) == "ftyp"
+                && String(bytes: bytes[8..<12], encoding: .ascii)?.lowercased().contains("avif") == true)
+        guard isImage else { throw ImagePipelineError.invalidMIME(localURL.pathExtension) }
+    }
+
+    public func verifyVideo(remoteURL: URL) async throws {
+        let localURL = try resolve(remoteURL, expectedFolder: "videos")
+        let attributes = try FileManager.default.attributesOfItem(atPath: localURL.path)
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        guard size > 0 else { throw VideoPipelineError.emptyFile }
+        let prefix = try filePrefix(localURL)
+        guard prefix.count >= 8,
+              String(data: Data(prefix.dropFirst(4).prefix(4)), encoding: .ascii) == "ftyp" else {
+            throw VideoPipelineError.invalidMP4
+        }
+    }
+
+    private func resolve(_ relativeURL: URL, expectedFolder: String) throws -> URL {
+        let relativePath = relativeURL.relativeString.removingPercentEncoding ?? relativeURL.relativeString
+        guard relativeURL.scheme == nil,
+              !relativePath.hasPrefix("/"),
+              !relativePath.split(separator: "/").contains(".."),
+              relativePath.hasPrefix("media/\(expectedFolder)/") else {
+            throw ImagePipelineError.invalidLocalPath(relativeURL.absoluteString)
+        }
+        let resolved = archiveRoot.appending(path: relativePath).standardizedFileURL
+        guard resolved.path.hasPrefix(archiveRoot.path + "/") else {
+            throw ImagePipelineError.invalidLocalPath(resolved.path)
+        }
+        return resolved
+    }
+
+    private func hashFile(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let data = try handle.read(upToCount: 1_048_576) ?? Data()
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func filePrefix(_ url: URL) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        return try handle.read(upToCount: 16) ?? Data()
+    }
+}
+
 public enum ImagePipelineError: LocalizedError, Sendable {
     case hostUnavailable(String)
     case processFailed(Int32, String)
@@ -67,10 +204,12 @@ public enum ImagePipelineError: LocalizedError, Sendable {
     case invalidMIME(String?)
     case fileTooLarge(Int64)
     case emptyFile
+    case invalidLocalPath(String)
+    case localFileMismatch(String)
 
     public var errorDescription: String? {
         switch self {
-        case .hostUnavailable(let detail): "默认图床不可用：\(detail)"
+        case .hostUnavailable(let detail): "媒体存储不可用：\(detail)"
         case .processFailed(let code, let detail): "uPic 上传失败（\(code)）：\(detail)"
         case .invalidOutput(let detail): "无法解析图床返回结果：\(detail)"
         case .outputCountMismatch(let expected, let actual): "图床返回 URL 数量不一致，应为 \(expected)，实际为 \(actual)"
@@ -79,6 +218,8 @@ public enum ImagePipelineError: LocalizedError, Sendable {
         case .invalidMIME(let mime): "远程内容不是可识别图片（\(mime ?? "无 MIME")）"
         case .fileTooLarge(let bytes): "图片超过 50 MB 限制（\(bytes) bytes）"
         case .emptyFile: "图片文件为空"
+        case .invalidLocalPath(let path): "本地媒体路径无效或超出归档目录：\(path)"
+        case .localFileMismatch(let path): "本地媒体复制后校验失败：\(path)"
         }
     }
 }
@@ -179,7 +320,7 @@ public struct VideoDownloader: Sendable {
 }
 
 public struct UPicAdapter: ImageHostAdapter {
-    public let displayName = "uPic 当前默认图床"
+    public let displayName = "uPic 图床"
     public var executableURL: URL
     private let session: URLSession
 

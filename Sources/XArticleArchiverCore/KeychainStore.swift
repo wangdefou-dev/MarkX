@@ -17,7 +17,6 @@ public enum KeychainStoreError: LocalizedError {
 
 public enum KeychainStore {
     public static let service = "ai.defou.XArticleArchiver"
-    public static let xBearerAccount = "x-api-bearer-token"
     public static let s3AccessKeyAccount = "s3-access-key"
     public static let s3SecretKeyAccount = "s3-secret-key"
 

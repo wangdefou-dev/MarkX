@@ -92,7 +92,9 @@ public actor ArchivePipeline {
             record.pipelineState = .mediaCached
             try await database.upsertArticle(record)
 
-            await progress?("正在上传 \(document.media.count) 张图片到 \(imageHost.displayName)")
+            await progress?(imageHost is LocalMediaHostAdapter
+                ? "正在保存 \(document.media.count) 张图片到本地媒体目录"
+                : "正在上传 \(document.media.count) 张图片到 \(imageHost.displayName)")
             let pendingMedia = document.media.filter { $0.remoteURL == nil }
             let localURLs = try pendingMedia.map { media -> URL in
                 guard let path = media.localCachePath else { throw ArchivePipelineError.missingLocalImage(media.id) }
@@ -122,7 +124,9 @@ public actor ArchivePipeline {
             record.pipelineState = .mediaCached
             try await database.upsertArticle(record)
 
-            await progress?("正在上传 \(videos.count) 个视频到 \(imageHost.displayName)")
+            await progress?(imageHost is LocalMediaHostAdapter
+                ? "正在保存 \(videos.count) 个视频到本地媒体目录"
+                : "正在上传 \(videos.count) 个视频到 \(imageHost.displayName)")
             let pendingVideos = videos.filter { $0.remoteURL == nil }
             let localURLs = try pendingVideos.map { video -> URL in
                 guard let path = video.localCachePath else {
@@ -148,17 +152,26 @@ public actor ArchivePipeline {
             try await database.upsertArticle(record)
         }
 
-        await progress?("正在生成并校验 Markdown")
-        let markdown = try MarkdownRenderer.render(document: document)
-        try MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)
-        record.pipelineState = .verified
-        try await database.upsertArticle(record)
-
         let creatorDirectory = root.appending(path: SafeFileName.creatorDirectory(handle: creator.username, displayName: creator.displayName), directoryHint: .isDirectory)
         let articlesDirectory = creatorDirectory.appending(path: "articles", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: articlesDirectory, withIntermediateDirectories: true)
         let fileName = SafeFileName.articleFileName(title: document.title, publishedAt: document.publishedAt, postID: document.sourcePostID)
         let destination = articlesDirectory.appending(path: fileName)
+
+        await progress?("正在生成并校验 Markdown")
+        let markdown = try MarkdownRenderer.render(
+            document: document,
+            archiveRoot: root,
+            markdownDirectory: articlesDirectory
+        )
+        try MarkdownRenderer.validateRenderedText(
+            document: document,
+            markdown: markdown,
+            archiveRoot: root,
+            markdownDirectory: articlesDirectory
+        )
+        record.pipelineState = .verified
+        try await database.upsertArticle(record)
 
         var obsoleteCleanFile: URL?
         if let existing, let oldPath = existing.markdownPath, FileManager.default.fileExists(atPath: oldPath) {

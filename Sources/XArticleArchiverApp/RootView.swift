@@ -31,14 +31,6 @@ struct RootView: View {
             ConnectionSetupView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $model.showingCreatorArticleDiscovery) {
-            BrowserCreatorArticleDiscoveryView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.showingBrowserCapture) {
-            BrowserArticleCaptureView()
-                .environmentObject(model)
-        }
         .alert("需要处理", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -323,13 +315,13 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     SetupStatusRow(title: "本地归档目录", isReady: model.archiveRoot != nil, detail: model.archiveRoot?.path ?? "尚未选择")
                     SetupStatusRow(title: "Chrome X 登录状态", isReady: ChromeXSessionReader.hasLocalChromeProfile(), detail: ChromeXSessionReader.hasLocalChromeProfile() ? "自动复用本机 Chrome 登录态，无需重复输入密码" : "请先在 Chrome 登录 x.com")
-                    SetupStatusRow(title: "默认图床", isReady: model.imageHostVerified, detail: model.imageHostDetail)
+                    SetupStatusRow(title: "媒体存储", isReady: model.imageHostVerified, detail: model.imageHostDetail)
                 }
                 HStack {
                     Button("开始配置") { model.showingConnectionSetup = true }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .help("设置本地归档目录并验证默认图床")
+                        .help("设置本地归档目录和图片、视频存储方式")
                     if model.archiveRoot != nil {
                         Button("先生成本地体验样例") { model.installDemo() }
                             .controlSize(.large)
@@ -527,12 +519,24 @@ struct RootView: View {
                 .help("停止当前发现或精确采集流程，已完成内容保留")
             }
 
+            if model.hasActiveDownloadProgress {
+                Button {
+                    model.showDownloadProgressWindow()
+                } label: {
+                    Label(
+                        model.isDownloadProgressWindowVisible ? "下载进度" : "显示下载进度",
+                        systemImage: "arrow.down.circle"
+                    )
+                }
+                .help("重新打开后台下载队列和当前进度")
+            }
+
             Button {
                 model.presentConnectionSetup()
             } label: {
                 Label("连接设置", systemImage: "gearshape")
             }
-            .help("配置归档目录、默认图床和可选的 X API")
+            .help("配置归档目录以及图片、视频存储方式")
         }
     }
 
@@ -627,13 +631,13 @@ private struct SidebarStatusCard: View {
             HStack(spacing: 6) {
                 SidebarConnectionBadge(title: "Chrome", isReady: hasChromeSession)
                 if hasImageHost {
-                    SidebarConnectionBadge(title: "图床", isReady: true)
+                    SidebarConnectionBadge(title: "存储", isReady: true)
                 } else {
                     Button(action: configureImageHost) {
-                        SidebarConnectionBadge(title: "图床", isReady: false, showsDisclosure: true)
+                        SidebarConnectionBadge(title: "存储", isReady: false, showsDisclosure: true)
                     }
                     .buttonStyle(.plain)
-                    .help("图床未连接，点击直接打开图床配置")
+                    .help("媒体存储未就绪，点击直接打开存储配置")
                     .disabled(isRunning)
                 }
             }

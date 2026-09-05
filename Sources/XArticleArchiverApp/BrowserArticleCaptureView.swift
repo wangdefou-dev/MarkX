@@ -859,6 +859,8 @@ struct BrowserArticleCaptureView: View {
                 }
                 .help("停止当前采集并清空所有待精确采集任务；已有归档保留")
             }
+            Button("隐藏到后台") { model.hideDownloadProgressWindow() }
+                .help("隐藏进度窗口，当前下载和后续队列会继续在后台执行")
             Button("停止") { model.closeBrowserCapture() }
                 .keyboardShortcut(.cancelAction)
                 .help(model.isSyncingTrackedCreators

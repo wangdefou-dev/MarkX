@@ -1248,10 +1248,7 @@ final class XAPIClientDirectArticleTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["RUN_X_DIRECT_INTEGRATION"] == "1" else {
             throw XCTSkip("Set RUN_X_DIRECT_INTEGRATION=1 to retrieve one known public X Article by status URL")
         }
-        let token = try XCTUnwrap(
-            ProcessInfo.processInfo.environment["X_API_BEARER_TOKEN"]
-                ?? KeychainStore.read(account: KeychainStore.xBearerAccount)
-        )
+        let token = try XCTUnwrap(ProcessInfo.processInfo.environment["X_API_BEARER_TOKEN"])
         let links = XArticleURLParser.parse("https://x.com/wangdefou/status/2091770029713084630")
         let result = try await XAPIClient(bearerToken: token).fetchArticles(links: links)
         let document = try XCTUnwrap(result.items.first?.document)
@@ -1708,6 +1705,101 @@ final class ArchiveIndexWriterTests: XCTestCase {
 }
 
 final class ArchivePipelineTests: XCTestCase {
+    func testLocalMediaStorageCopiesImageAndVideoAndWritesPortableMarkdownPaths() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "x-archive-local-media-test-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let staging = root.appending(path: "capture-cache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let png = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let imageCache = staging.appending(path: "source.png")
+        try png.write(to: imageCache)
+        let mp4 = Data([
+            0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70,
+            0x69, 0x73, 0x6F, 0x6D, 0x00, 0x00, 0x02, 0x00,
+            0x69, 0x73, 0x6F, 0x6D, 0x69, 0x73, 0x6F, 0x32
+        ])
+        let videoCache = staging.appending(path: "source.mp4")
+        try mp4.write(to: videoCache)
+
+        let database = try ArchiveDatabase(
+            url: root.appending(path: ".x-article-archiver/archive.sqlite")
+        )
+        let creator = Creator(xUserID: "local-media-user", username: "writer", displayName: "作者")
+        try await database.upsertCreator(creator)
+        let document = CanonicalDocument(
+            title: "本地媒体归档",
+            authorName: creator.displayName,
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/199")!,
+            sourcePostID: "199",
+            sourceArticleID: "article-local-media-199",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [
+                CanonicalBlock(kind: .paragraph, text: "正文保持原样。"),
+                CanonicalBlock(kind: .image, mediaID: "image-1"),
+                CanonicalBlock(kind: .video, mediaID: "video-1")
+            ],
+            media: [MediaAsset(
+                id: "image-1",
+                sourceURL: URL(string: "https://pbs.twimg.com/media/source.png")!,
+                altText: "本地图片",
+                position: 0,
+                localCachePath: imageCache.path
+            )],
+            videos: [VideoAsset(
+                id: "video-1",
+                sourceURL: URL(string: "https://video.twimg.com/ext_tw_video/source.mp4")!,
+                position: 0,
+                localCachePath: videoCache.path
+            )],
+            sourceMediaIDs: ["image-1"],
+            sourceVideoIDs: ["video-1"],
+            layoutFidelity: .renderedPageVerified
+        )
+
+        let adapter = LocalMediaHostAdapter(archiveRoot: root)
+        let pipeline = ArchivePipeline(database: database, imageHost: adapter)
+        let archived = try await pipeline.archive(document: document, creator: creator, root: root)
+        let markdownPath = try XCTUnwrap(archived.markdownPath)
+        let markdown = try String(contentsOfFile: markdownPath, encoding: .utf8)
+
+        XCTAssertTrue(markdown.contains("![本地图片](../../media/images/"))
+        XCTAssertTrue(markdown.contains("<video controls preload=\"metadata\" src=\"../../media/videos/"))
+        XCTAssertTrue(markdown.contains("[打开或下载视频](../../media/videos/"))
+        XCTAssertFalse(markdown.contains(imageCache.path))
+        XCTAssertFalse(markdown.contains(videoCache.path))
+
+        let localImages = try FileManager.default.contentsOfDirectory(
+            at: root.appending(path: "media/images"),
+            includingPropertiesForKeys: nil
+        )
+        let localVideos = try FileManager.default.contentsOfDirectory(
+            at: root.appending(path: "media/videos"),
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(localImages.count, 1)
+        XCTAssertEqual(localVideos.count, 1)
+        try await adapter.verify(remoteURL: URL(string: "media/images/\(localImages[0].lastPathComponent)")!)
+        try await adapter.verifyVideo(remoteURL: URL(string: "media/videos/\(localVideos[0].lastPathComponent)")!)
+
+        let snapshotURL = root
+            .appending(path: ".x-article-archiver/source-snapshots")
+            .appending(path: "article-local-media-199.json")
+        let snapshotData = try Data(contentsOf: snapshotURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshot = try decoder.decode(CanonicalDocument.self, from: snapshotData)
+        XCTAssertTrue(snapshot.media[0].remoteURL?.relativeString.hasPrefix("media/images/") == true)
+        XCTAssertTrue(snapshot.videos?[0].remoteURL?.relativeString.hasPrefix("media/videos/") == true)
+    }
+
     func testPipelineIsIdempotentAndDoesNotMistakeOwnChecksumForLocalEdit() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "x-archive-pipeline-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

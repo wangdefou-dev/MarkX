@@ -255,10 +255,8 @@ struct AddCreatorsView: View {
 struct ConnectionSetupView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var token = ""
     @State private var accessKey = ""
     @State private var secretKey = ""
-    @State private var isTestingX = false
     @State private var isTestingUPic = false
     @State private var isTestingS3 = false
 
@@ -267,7 +265,7 @@ struct ConnectionSetupView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(connectionTitle).font(.title2.bold())
-                    Text("所有正文在本地转换，凭证只保存在这台 Mac 的钥匙串。")
+                    Text("所有正文在本地转换；S3/R2 凭证仅保存在这台 Mac 的钥匙串。")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -295,15 +293,10 @@ struct ConnectionSetupView: View {
                         }
                         .id("archive-directory")
 
-                        setupSection(number: "2", title: "配置并验证默认图床") {
+                        setupSection(number: "2", title: "选择图片和视频存储") {
                             imageHostConfiguration
                         }
                         .id("image-host")
-
-                        setupSection(number: "3", title: "可选：旧版 X API 连接") {
-                            xAPIConfiguration
-                        }
-                        .id("x-api")
                     }
                     .padding(.trailing, 8)
                 }
@@ -328,50 +321,18 @@ struct ConnectionSetupView: View {
             .foregroundStyle(.secondary)
         }
         .padding(24)
-        .frame(width: 720, height: 720)
+        .frame(width: 720, height: 640)
     }
 
     private var connectionTitle: String {
-        if case .imageHost = model.connectionSetupTarget { return "图床连接设置" }
+        if case .imageHost = model.connectionSetupTarget { return "媒体存储设置" }
         return "开始前配置"
-    }
-
-    @ViewBuilder
-    private var xAPIConfiguration: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("当前的博主发现和文章下载都直接使用 X 页面，不调用 X API；此配置仅为旧版兼容保留。", systemImage: "info.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if model.hasXToken {
-                Label("Bearer Token 已保存在钥匙串", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Button("移除连接", role: .destructive) { model.removeToken() }
-                    .help("从 macOS 钥匙串删除已保存的 X Developer Bearer Token")
-            } else {
-                SecureField("粘贴 X Developer Bearer Token", text: $token)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button(isTestingX ? "正在验证…" : "验证并安全保存") {
-                        isTestingX = true
-                        Task {
-                            _ = await model.saveAndTestToken(token)
-                            isTestingX = false
-                            if model.hasXToken { token = "" }
-                        }
-                    }
-                    .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isTestingX)
-                    .help("验证 Bearer Token，成功后加密保存到 macOS 钥匙串")
-                    Link("X Developer Portal", destination: URL(string: "https://developer.x.com/")!)
-                        .help("在默认浏览器打开 X Developer Portal")
-                }
-            }
-        }
     }
 
     @ViewBuilder
     private var imageHostConfiguration: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("上传方式", selection: Binding(
+            Picker("存储方式", selection: Binding(
                 get: { model.imageHostChoice },
                 set: { model.selectImageHost($0) }
             )) {
@@ -380,9 +341,15 @@ struct ConnectionSetupView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .help("选择使用 uPic 当前默认图床，或由应用直接上传到 S3/R2")
+            .help("默认保存在归档目录，也可切换为 uPic 或 S3/R2 图床")
 
-            if model.imageHostChoice == .uPic {
+            if model.imageHostChoice == .local {
+                Label("无需额外配置，已可用", systemImage: "externaldrive.fill.badge.checkmark")
+                    .foregroundStyle(.green)
+                Text("图片保存到归档目录的 media/images，视频保存到 media/videos；Markdown 使用可随整个归档目录移动的相对路径。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if model.imageHostChoice == .uPic {
                 Label(model.upicCapability.detail, systemImage: model.upicCapability.isAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(model.upicCapability.isAvailable ? .green : .orange)
                 Text("会让 uPic 使用它当前的默认图床上传一张 1×1 无隐私测试图，再由本应用验证返回的 HTTPS 图片。")
@@ -486,11 +453,11 @@ struct SettingsView: View {
                 Text("博主发现直接读取 /articles 专属列表，完整历史通过自动滚动列表获取；不需要 X Developer API。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("默认图床") {
-                LabeledContent("适配器", value: model.imageHostChoice.displayName)
+            Section("媒体存储") {
+                LabeledContent("当前方式", value: model.imageHostChoice.displayName)
                 LabeledContent("状态", value: model.imageHostDetail)
                 Button("打开连接配置") { model.showingConnectionSetup = true }
-                    .help("打开默认图床、归档目录和可选 X API 的设置窗口")
+                    .help("打开归档目录与媒体存储设置")
             }
             Section("隐私") {
                 Text("软件不收集遥测，不上传诊断日志。文章链接与正文仅从你在应用内打开的 X 页面读取并在本机转换，不调用 X API；图片和视频只发送到你明确选择并测试通过的存储。")

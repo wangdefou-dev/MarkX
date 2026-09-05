@@ -12,7 +12,7 @@ public enum DocumentProcessingError: LocalizedError, Sendable {
         switch self {
         case .missingTitle: "文章没有可用标题"
         case .missingBody: "文章没有可用正文"
-        case .missingRemoteImage(let id): "图片尚未上传或验证：\(id)"
+        case .missingRemoteImage(let id): "图片尚未存储或验证：\(id)"
         case .fidelityMismatch(let detail): "Markdown 内容一致性校验失败：\(detail)"
         case .invalidSourceURL: "原文链接无效"
         }
@@ -332,11 +332,20 @@ public enum ArticleListMarkerResolver {
 }
 
 public enum MarkdownRenderer {
-    public static func render(document: CanonicalDocument, archivedAt: Date = Date()) throws -> String {
+    public static func render(
+        document: CanonicalDocument,
+        archivedAt: Date = Date(),
+        archiveRoot: URL? = nil,
+        markdownDirectory: URL? = nil
+    ) throws -> String {
         try ContentFidelityValidator.validateCanonical(document)
         let title = document.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw DocumentProcessingError.missingTitle }
-        guard document.blocks.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.kind == .image }) else {
+        guard document.blocks.contains(where: {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || $0.kind == .image
+                || $0.kind == .video
+        }) else {
             throw DocumentProcessingError.missingBody
         }
 
@@ -369,7 +378,9 @@ public enum MarkdownRenderer {
         lines.append(contentsOf: try renderBodyLines(
             document: document,
             mediaByID: mediaByID,
-            videoByID: videoByID
+            videoByID: videoByID,
+            archiveRoot: archiveRoot,
+            markdownDirectory: markdownDirectory
         ))
 
         while lines.last == "" { lines.removeLast() }
@@ -409,7 +420,12 @@ public enum MarkdownRenderer {
             .precomposedStringWithCanonicalMapping
     }
 
-    public static func validateRenderedText(document: CanonicalDocument, markdown: String) throws {
+    public static func validateRenderedText(
+        document: CanonicalDocument,
+        markdown: String,
+        archiveRoot: URL? = nil,
+        markdownDirectory: URL? = nil
+    ) throws {
         try ContentFidelityValidator.validateCanonical(document)
         guard markdown.contains("source_post_id: \(yamlQuoted(document.sourcePostID))") else {
             throw DocumentProcessingError.fidelityMismatch("缺少稳定来源 ID")
@@ -436,7 +452,9 @@ public enum MarkdownRenderer {
         var expectedLines = try renderBodyLines(
             document: document,
             mediaByID: mediaByID,
-            videoByID: videoByID
+            videoByID: videoByID,
+            archiveRoot: archiveRoot,
+            markdownDirectory: markdownDirectory
         )
         while expectedLines.last == "" { expectedLines.removeLast() }
         let expectedBody = expectedLines.joined(separator: "\n") + "\n"
@@ -448,11 +466,14 @@ public enum MarkdownRenderer {
             guard block.kind == .image else { return nil }
             guard let mediaID = block.mediaID,
                   let media = mediaByID[mediaID],
-                  let remoteURL = media.remoteURL,
-                  remoteURL.scheme?.lowercased() == "https" else {
+                  let remoteURL = media.remoteURL else {
                 throw DocumentProcessingError.missingRemoteImage(block.mediaID ?? "unknown")
             }
-            return remoteURL.absoluteString
+            return try mediaReference(
+                for: remoteURL,
+                archiveRoot: archiveRoot,
+                markdownDirectory: markdownDirectory
+            )
         }
         let actualImageURLs = imageURLs(inMarkdownBody: actualBody)
         guard actualImageURLs == expectedImageURLs else {
@@ -522,7 +543,9 @@ public enum MarkdownRenderer {
     private static func renderBodyLines(
         document: CanonicalDocument,
         mediaByID: [String: MediaAsset],
-        videoByID: [String: VideoAsset]
+        videoByID: [String: VideoAsset],
+        archiveRoot: URL?,
+        markdownDirectory: URL?
     ) throws -> [String] {
         var lines: [String] = []
         let orderedMarkers = ArticleListMarkerResolver.orderedMarkers(for: document.blocks)
@@ -576,24 +599,33 @@ public enum MarkdownRenderer {
                 guard let mediaID = block.mediaID, let media = mediaByID[mediaID] else {
                     throw DocumentProcessingError.fidelityMismatch("图片块找不到对应资源：\(block.mediaID ?? "unknown")")
                 }
-                guard let remoteURL = media.remoteURL, remoteURL.scheme?.lowercased() == "https" else {
+                guard let remoteURL = media.remoteURL else {
                     throw DocumentProcessingError.missingRemoteImage(media.id)
                 }
+                let reference = try mediaReference(
+                    for: remoteURL,
+                    archiveRoot: archiveRoot,
+                    markdownDirectory: markdownDirectory
+                )
                 let alt = (media.altText?.isEmpty == false ? media.altText! : "图片 \(String(format: "%02d", media.position + 1))")
-                lines.append("![\(escapeAltText(alt))](\(remoteURL.absoluteString))")
+                lines.append("![\(escapeAltText(alt))](\(reference))")
                 lines.append("")
             case .video:
                 guard let videoID = block.mediaID, let video = videoByID[videoID] else {
                     throw DocumentProcessingError.fidelityMismatch("视频块找不到对应资源：\(block.mediaID ?? "unknown")")
                 }
-                guard let remoteURL = video.remoteURL,
-                      remoteURL.scheme?.lowercased() == "https" else {
-                    throw DocumentProcessingError.fidelityMismatch("视频尚未上传或验证：\(video.id)")
+                guard let remoteURL = video.remoteURL else {
+                    throw DocumentProcessingError.fidelityMismatch("视频尚未存储或验证：\(video.id)")
                 }
-                let escapedURL = escapeHTMLAttribute(remoteURL.absoluteString)
+                let reference = try mediaReference(
+                    for: remoteURL,
+                    archiveRoot: archiveRoot,
+                    markdownDirectory: markdownDirectory
+                )
+                let escapedURL = escapeHTMLAttribute(reference)
                 lines.append("<video controls preload=\"metadata\" src=\"\(escapedURL)\"></video>")
                 lines.append("")
-                lines.append("[打开或下载视频](\(remoteURL.absoluteString))")
+                lines.append("[打开或下载视频](\(reference))")
                 lines.append("")
             case .embeddedPost:
                 if let referenceURL = block.links.first?.url {
@@ -747,6 +779,50 @@ public enum MarkdownRenderer {
             }) { output += marker.suffix }
         }
         return output
+    }
+
+    private static func mediaReference(
+        for storedURL: URL,
+        archiveRoot: URL?,
+        markdownDirectory: URL?
+    ) throws -> String {
+        if storedURL.scheme?.lowercased() == "https" {
+            return storedURL.absoluteString
+        }
+
+        let relativePath = storedURL.relativeString.removingPercentEncoding ?? storedURL.relativeString
+        guard storedURL.scheme == nil,
+              !relativePath.hasPrefix("/"),
+              !relativePath.split(separator: "/").contains(".."),
+              relativePath.hasPrefix("media/"),
+              let archiveRoot,
+              let markdownDirectory else {
+            throw DocumentProcessingError.fidelityMismatch("本地媒体缺少可验证的相对路径")
+        }
+
+        let root = archiveRoot.standardizedFileURL
+        let base = markdownDirectory.standardizedFileURL
+        let target = root.appending(path: relativePath).standardizedFileURL
+        guard target.path.hasPrefix(root.path + "/"),
+              base.path == root.path || base.path.hasPrefix(root.path + "/"),
+              FileManager.default.fileExists(atPath: target.path) else {
+            throw DocumentProcessingError.fidelityMismatch("本地媒体不存在或超出归档目录")
+        }
+        let baseComponents = base.pathComponents
+        let targetComponents = target.pathComponents
+        var commonCount = 0
+        while commonCount < min(baseComponents.count, targetComponents.count),
+              baseComponents[commonCount] == targetComponents[commonCount] {
+            commonCount += 1
+        }
+        let parentComponents = Array(repeating: "..", count: baseComponents.count - commonCount)
+        let childComponents = Array(targetComponents.dropFirst(commonCount))
+        let portablePath = (parentComponents + childComponents).joined(separator: "/")
+        guard !portablePath.isEmpty,
+              let encoded = portablePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
+            throw DocumentProcessingError.fidelityMismatch("无法生成本地媒体相对路径")
+        }
+        return encoded
     }
 
     private static func imageURLs(inMarkdownBody body: String) -> [String] {

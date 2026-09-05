@@ -425,6 +425,8 @@ struct BrowserCreatorArticleDiscoveryView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
+            Button("隐藏到后台") { model.hideDownloadProgressWindow() }
+                .help("隐藏进度窗口，文章发现会继续在后台执行")
             Button("停止") { model.closeCreatorArticleDiscovery() }
                 .keyboardShortcut(.cancelAction)
                 .help(model.isSyncingTrackedCreators
