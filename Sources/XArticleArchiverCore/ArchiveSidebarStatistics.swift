@@ -35,10 +35,13 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
     public static func isWaiting(_ article: ArchivedArticle) -> Bool {
         article.pipelineState != .committed
             && article.pipelineState != .failed
+            && article.pipelineState != .subscriptionRequired
             && article.lastError == nil
     }
 
     public static func needsAttention(_ article: ArchivedArticle) -> Bool {
-        article.pipelineState == .failed || article.lastError != nil
+        article.pipelineState == .failed
+            || article.pipelineState == .subscriptionRequired
+            || article.lastError != nil
     }
 }

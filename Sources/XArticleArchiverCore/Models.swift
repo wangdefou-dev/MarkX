@@ -85,6 +85,7 @@ public enum PipelineState: String, Codable, Sendable {
     case rendered
     case verified
     case committed
+    case subscriptionRequired = "subscription_required"
     case failed
     case cancelled
 
@@ -98,6 +99,7 @@ public enum PipelineState: String, Codable, Sendable {
         case .rendered: "已生成"
         case .verified: "已校验"
         case .committed: "已完成"
+        case .subscriptionRequired: "需要订阅"
         case .failed: "失败"
         case .cancelled: "已停止"
         }

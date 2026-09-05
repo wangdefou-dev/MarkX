@@ -41,6 +41,7 @@ enum BackgroundDownloadItemState: Hashable {
     case queued
     case running
     case saved
+    case subscriptionRequired
     case failed
 
     var title: String {
@@ -48,6 +49,7 @@ enum BackgroundDownloadItemState: Hashable {
         case .queued: "等待下载"
         case .running: "正在保存完整排版"
         case .saved: "已保存"
+        case .subscriptionRequired: "需要订阅"
         case .failed: "下载失败"
         }
     }
@@ -57,6 +59,7 @@ enum BackgroundDownloadItemState: Hashable {
         case .queued: "clock"
         case .running: "arrow.triangle.2.circlepath"
         case .saved: "checkmark.circle.fill"
+        case .subscriptionRequired: "lock.fill"
         case .failed: "exclamationmark.circle.fill"
         }
     }

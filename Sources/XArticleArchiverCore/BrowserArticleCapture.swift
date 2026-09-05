@@ -2,6 +2,7 @@ import Foundation
 
 public enum BrowserArticleCaptureError: LocalizedError, Sendable {
     case pageNotReady(String)
+    case subscriptionRequired(creatorHandle: String?)
     case wrongPost(expected: String, actual: String)
     case missingTitle
     case missingBody
@@ -16,6 +17,12 @@ public enum BrowserArticleCaptureError: LocalizedError, Sendable {
         switch self {
         case .pageNotReady(let detail):
             "X Article 页面还没有准备好：\(detail)"
+        case .subscriptionRequired(let creatorHandle):
+            if let creatorHandle, !creatorHandle.isEmpty {
+                "这是一篇订阅用户专享的 X Article。当前 Chrome 登录账号没有 @\(creatorHandle) 的正文访问权限；请先订阅该博主，或切换到已订阅账号，再重新处理。"
+            } else {
+                "这是一篇订阅用户专享的 X Article。当前 Chrome 登录账号没有正文访问权限；请先订阅该博主，或切换到已订阅账号，再重新处理。"
+            }
         case .wrongPost(let expected, let actual):
             "当前页面不是待保存的文章（期望 \(expected)，实际 \(actual)）"
         case .missingTitle:
@@ -35,6 +42,90 @@ public enum BrowserArticleCaptureError: LocalizedError, Sendable {
         case .invalidEmbeddedArticleLink(let value):
             "引用文章卡片中没有可验证的 X 文章链接：\(value)"
         }
+    }
+
+    public var requiresSubscription: Bool {
+        if case .subscriptionRequired = self { return true }
+        return false
+    }
+}
+
+/// A deliberately small, non-persistent snapshot of the rendered page when
+/// the Article body is missing. It contains no cookies or browser storage and
+/// is used only to distinguish a real subscription wall from a slow page.
+public struct BrowserArticlePageDiagnostic: Codable, Hashable, Sendable {
+    public var visibleText: String
+    public var linkURLs: [String]
+    public var authorHandle: String?
+
+    public init(visibleText: String, linkURLs: [String], authorHandle: String? = nil) {
+        self.visibleText = visibleText
+        self.linkURLs = linkURLs
+        self.authorHandle = authorHandle
+    }
+}
+
+public enum BrowserArticleAccessGateDetector {
+    public static func isSubscriptionRequired(_ diagnostic: BrowserArticlePageDiagnostic) -> Bool {
+        let text = diagnostic.visibleText
+            .lowercased()
+            .replacingOccurrences(of: "\u{00a0}", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let hasSubscriptionURL = diagnostic.linkURLs.contains { value in
+            guard let components = URLComponents(string: value) else { return false }
+            let host = (components.host ?? "")
+                .lowercased()
+                .replacingOccurrences(of: "www.", with: "")
+            guard host == "x.com" || host == "twitter.com" else { return false }
+            let path = components.path.lowercased()
+            return path.hasSuffix("/superfollows/subscribe")
+                || path.hasSuffix("/creator-subscriptions/subscribe")
+        }
+
+        let exactPhrases = [
+            "subscribers only",
+            "subscriber-only",
+            "only subscribers can",
+            "only paid subscribers",
+            "available to subscribers",
+            "this article is for subscribers",
+            "this post is for subscribers",
+            "subscribe to read",
+            "subscribe to unlock",
+            "subscribe to see",
+            "subscribe to view",
+            "subscribe to access",
+            "subscribe to continue",
+            "订阅用户专享",
+            "订阅专享",
+            "仅限订阅用户",
+            "仅订阅用户可见",
+            "只有订阅用户",
+            "订阅后即可阅读",
+            "订阅后可阅读",
+            "订阅后即可查看",
+            "订阅后可查看",
+            "订阅以阅读",
+            "订阅以查看",
+            "订阅解锁"
+        ]
+        if hasSubscriptionURL && exactPhrases.contains(where: text.contains) { return true }
+
+        // X changes the copy and punctuation frequently. These bounded
+        // patterns cover equivalent English/Chinese wording, but a generic
+        // profile "Subscribe" button is intentionally insufficient.
+        let contextualPatterns = [
+            #"(?:only|exclusively for).{0,80}subscribers"#,
+            #"subscribe.{0,80}(?:read|see|view|unlock|access|continue)"#,
+            #"(?:仅|只|只有).{0,24}订阅.{0,24}(?:可见|查看|阅读|才能)"#,
+            #"订阅.{0,24}(?:阅读|查看|解锁|阅读全文|访问)"#
+        ]
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        let hasContextualText = contextualPatterns.contains { pattern in
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+            return expression.firstMatch(in: text, range: fullRange) != nil
+        }
+        return hasSubscriptionURL && hasContextualText
     }
 }
 

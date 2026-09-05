@@ -286,6 +286,13 @@ struct RootView: View {
                             ArticleRow(article: article)
                                 .tag(article.id)
                                 .contextMenu {
+                                    if article.pipelineState == .subscriptionRequired {
+                                        Button {
+                                            model.openSubscriptionPage(for: article)
+                                        } label: {
+                                            Label("在 Chrome 订阅 @\(article.authorHandle)", systemImage: "lock.open")
+                                        }
+                                    }
                                     if model.isArticleActivelyProcessing(article) {
                                         Button(role: .cancel) {
                                             model.stopProcessing(article)
@@ -407,7 +414,12 @@ struct RootView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         HStack {
-                            StatusPill(article.pipelineState.displayName, color: article.pipelineState == .committed ? .green : .orange)
+                            StatusPill(
+                                article.pipelineState.displayName,
+                                color: article.pipelineState == .committed
+                                    ? .green
+                                    : article.pipelineState == .subscriptionRequired ? .purple : .orange
+                            )
                             StatusPill("\(article.imageCount) 张图片", color: .blue)
                             if article.videoCount > 0 {
                                 StatusPill("\(article.videoCount) 个视频", color: .purple)
@@ -478,6 +490,12 @@ struct RootView: View {
                             Divider()
                             Button("访问原文") { model.openSource() }
                                 .help("在默认浏览器打开当前 X Article 原页")
+                            if article.pipelineState == .subscriptionRequired {
+                                Button("在 Chrome 订阅 @\(article.authorHandle)") {
+                                    model.openSubscriptionPage(for: article)
+                                }
+                                .help("使用 MarkX 会读取登录状态的同一个 Chrome 完成订阅")
+                            }
                             if model.isArticleActivelyProcessing(article) {
                                 Button("停止处理", role: .cancel) { model.stopProcessing(article) }
                             } else {
@@ -500,7 +518,8 @@ struct RootView: View {
                         isActive: model.isArticleActivelyProcessing(article),
                         isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
                         stop: { model.stopProcessing(article) },
-                        restart: { model.restartProcessing(article) }
+                        restart: { model.restartProcessing(article) },
+                        openSubscription: { model.openSubscriptionPage(for: article) }
                     )
                     Divider()
                 }
@@ -1252,11 +1271,15 @@ private struct ArticleRow: View {
     }
 
     private var statusIcon: String {
-        article.pipelineState == .committed && !hasLayoutLimit ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+        if article.pipelineState == .subscriptionRequired { return "lock.fill" }
+        return article.pipelineState == .committed && !hasLayoutLimit
+            ? "checkmark.circle.fill"
+            : "exclamationmark.circle.fill"
     }
 
     private var statusColor: Color {
-        article.pipelineState == .committed && !hasLayoutLimit ? .green : .orange
+        if article.pipelineState == .subscriptionRequired { return .purple }
+        return article.pipelineState == .committed && !hasLayoutLimit ? .green : .orange
     }
 }
 
@@ -1318,8 +1341,14 @@ private struct ArticleProcessingPanel: View {
     let isActionDisabled: Bool
     let stop: () -> Void
     let restart: () -> Void
+    let openSubscription: () -> Void
+
+    private var requiresSubscription: Bool {
+        article.pipelineState == .subscriptionRequired
+    }
 
     private var title: String {
+        if requiresSubscription { return "需要订阅 @\(article.authorHandle)" }
         if article.pipelineState == .failed || article.lastError != nil { return "文章处理失败" }
         if article.pipelineState == .cancelled { return "文章处理已停止" }
         if isActive { return "文章正在处理中" }
@@ -1327,6 +1356,9 @@ private struct ArticleProcessingPanel: View {
     }
 
     private var detail: String {
+        if requiresSubscription {
+            return "MarkX 不会绕过 X 的订阅权限。请在 Chrome 中订阅，或切换到已订阅账号，然后重新处理；任务会一直保留。"
+        }
         if article.pipelineState == .failed || article.lastError != nil {
             return "错误原因和处理日志已保存在资料库；本地已完成的媒体不会被删除。"
         }
@@ -1338,11 +1370,13 @@ private struct ArticleProcessingPanel: View {
     }
 
     private var color: Color {
-        article.pipelineState == .failed || article.lastError != nil ? .red : .orange
+        requiresSubscription ? .purple : article.pipelineState == .failed || article.lastError != nil ? .red : .orange
     }
 
     private var icon: String {
-        article.pipelineState == .failed || article.lastError != nil
+        requiresSubscription
+            ? "lock.fill"
+            : article.pipelineState == .failed || article.lastError != nil
             ? "xmark.octagon.fill"
             : article.pipelineState == .cancelled ? "stop.circle.fill" : "clock.arrow.circlepath"
     }
@@ -1362,6 +1396,14 @@ private struct ArticleProcessingPanel: View {
                     Button("停止处理", role: .cancel, action: stop)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                } else if requiresSubscription {
+                    Button("在 Chrome 订阅", action: openSubscription)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    Button("订阅后重新处理", action: restart)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(isActionDisabled)
                 } else {
                     FixedReprocessButton(
                         isDisabled: isActionDisabled,
@@ -1374,14 +1416,16 @@ private struct ArticleProcessingPanel: View {
 
             if let lastError = article.lastError, !lastError.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("错误原因").font(.caption.weight(.semibold)).foregroundStyle(.red)
+                    Text(requiresSubscription ? "访问说明" : "错误原因")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(color)
                     Text(lastError)
                         .font(.callout)
                         .textSelection(.enabled)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.red.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1413,6 +1457,9 @@ private struct ArticleProcessingPanel: View {
             if isActive {
                 Button("停止处理", role: .cancel, action: stop)
             } else {
+                if requiresSubscription {
+                    Button("在 Chrome 订阅", action: openSubscription)
+                }
                 Button("重新处理", action: restart)
                     .disabled(isActionDisabled)
             }

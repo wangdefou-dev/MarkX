@@ -94,7 +94,10 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         return session
     }
 
-    func capture(updateStatus: Bool = true) async throws -> BrowserArticleCapturePayload {
+    func capture(
+        updateStatus: Bool = true,
+        expectedCreatorHandle: String? = nil
+    ) async throws -> BrowserArticleCapturePayload {
         isCapturing = true
         if updateStatus {
             pageStatus = "正在按页面顺序读取段落、列表、表格、代码和图片…"
@@ -106,6 +109,23 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         }
         if json.hasPrefix(Self.errorPrefix) {
             throw BrowserArticleCaptureError.pageNotReady(String(json.dropFirst(Self.errorPrefix.count)))
+        }
+        if json.hasPrefix(Self.diagnosticPrefix) {
+            let diagnosticJSON = String(json.dropFirst(Self.diagnosticPrefix.count))
+            guard let diagnostic = try? JSONDecoder().decode(
+                BrowserArticlePageDiagnostic.self,
+                from: Data(diagnosticJSON.utf8)
+            ) else {
+                throw BrowserArticleCaptureError.pageNotReady("页面访问状态无法识别，请重新加载后再试")
+            }
+            if BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic) {
+                let creatorHandle = HandleParser.normalize(diagnostic.authorHandle ?? "")
+                    ?? HandleParser.normalize(expectedCreatorHandle ?? "")
+                throw BrowserArticleCaptureError.subscriptionRequired(creatorHandle: creatorHandle)
+            }
+            throw BrowserArticleCaptureError.pageNotReady(
+                "未找到完整的 X Article 正文。请确认已登录、当前链接是 Article，并等待页面加载完成。"
+            )
         }
         let payload = try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
         let imageCount = payload.blocks.filter { $0.kind == .image }.count
@@ -149,7 +169,10 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             try Task.checkCancellation()
             if !isLoading {
                 do {
-                    let payload = try await capture(updateStatus: false)
+                    let payload = try await capture(
+                        updateStatus: false,
+                        expectedCreatorHandle: request.creator.username
+                    )
                     if payload == previousPayload {
                         stableMatches += 1
                     } else {
@@ -241,6 +264,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     }
 
     private static let errorPrefix = "__X_CAPTURE_ERROR__:"
+    private static let diagnosticPrefix = "__X_CAPTURE_DIAGNOSTIC__:"
     private var currentArticleURL: URL?
 
     /// X currently renders published Articles as DraftJS blocks below
@@ -250,11 +274,26 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     private static let extractionScript = #"""
     (() => {
       const ERROR = "__X_CAPTURE_ERROR__:";
+      const DIAGNOSTIC = "__X_CAPTURE_DIAGNOSTIC__:";
       const articleView = document.querySelector('[data-testid="twitterArticleReadView"]');
       const richRoot = articleView?.querySelector('[data-testid="longformRichTextComponent"]')
         || articleView?.querySelector('[data-testid="twitterArticleRichTextView"]');
       if (!articleView || !richRoot) {
-        return ERROR + "未找到完整的 X Article 正文。请确认已登录、当前链接是 Article，并等待页面加载完成。";
+        const diagnosticRoot = document.querySelector('main') || document.body;
+        const authorHandle = location.pathname
+          .match(/^\/([A-Za-z0-9_]{1,15})\/(?:status|article)\//i)?.[1] || null;
+        const visibleText = (diagnosticRoot?.innerText || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 12000);
+        const linkURLs = [...(diagnosticRoot?.querySelectorAll('a[href]') || [])]
+          .map(anchor => {
+            try { return new URL(anchor.getAttribute('href') || '', location.href).href; }
+            catch (_) { return null; }
+          })
+          .filter(Boolean)
+          .slice(0, 300);
+        return DIAGNOSTIC + JSON.stringify({ visibleText, linkURLs, authorHandle });
       }
 
       const pathMatch = location.pathname.match(/\/(?:status|article)\/(\d{1,19})(?:\/|$)/i);
@@ -785,7 +824,7 @@ struct BrowserArticleCaptureView: View {
                 Text(model.isRunning ? model.progress.stage : controller.pageStatus)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text("保存 \(model.progress.completedArticles) · 跳过 \(model.progress.skippedArticles) · 失败 \(model.progress.failedArticles) · 图片 \(model.progress.uploadedImages) · 视频 \(model.progress.uploadedVideos)")
+                Text("保存 \(model.progress.completedArticles) · 跳过 \(model.progress.skippedArticles) · 需订阅 \(model.browserCaptureSubscriptionRequiredCount) · 失败 \(model.progress.failedArticles) · 图片 \(model.progress.uploadedImages) · 视频 \(model.progress.uploadedVideos)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -893,6 +932,7 @@ struct BrowserArticleCaptureView: View {
         case .queued: .secondary
         case .running: .orange
         case .saved: .green
+        case .subscriptionRequired: .purple
         case .failed: .red
         }
     }

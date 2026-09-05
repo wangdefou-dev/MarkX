@@ -727,6 +727,90 @@ final class XContentDecoderTests: XCTestCase {
     }
 }
 
+final class BrowserArticleAccessGateDetectorTests: XCTestCase {
+    private let subscriptionURL = "https://x.com/dashen_wang/superfollows/subscribe"
+
+    func testDetectsEnglishSubscriberOnlyArticle() {
+        let diagnostic = BrowserArticlePageDiagnostic(
+            visibleText: "Only @dashen_wang's Subscribers can see this post. Subscribe to read.",
+            linkURLs: [subscriptionURL],
+            authorHandle: "dashen_wang"
+        )
+
+        XCTAssertTrue(BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic))
+    }
+
+    func testDetectsChineseSubscriberOnlyArticleWithChangedCopy() {
+        let diagnostic = BrowserArticlePageDiagnostic(
+            visibleText: "订阅 @dashen_wang 后即可查看这篇文章的完整内容",
+            linkURLs: [subscriptionURL],
+            authorHandle: "dashen_wang"
+        )
+
+        XCTAssertTrue(BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic))
+    }
+
+    func testDoesNotTreatGenericCreatorSubscribeButtonAsPaywall() {
+        let diagnostic = BrowserArticlePageDiagnostic(
+            visibleText: "大山AI小课堂 @dashen_wang Subscribe Home Articles Media",
+            linkURLs: [subscriptionURL],
+            authorHandle: "dashen_wang"
+        )
+
+        XCTAssertFalse(BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic))
+    }
+
+    func testDoesNotTreatSlowLoadingPageAsPaywall() {
+        let diagnostic = BrowserArticlePageDiagnostic(
+            visibleText: "Home Explore Notifications Subscribe to read more from creators",
+            linkURLs: [],
+            authorHandle: "dashen_wang"
+        )
+
+        XCTAssertFalse(BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic))
+    }
+
+    func testStillRecognizesLegacyCreatorSubscriptionsRoute() {
+        let diagnostic = BrowserArticlePageDiagnostic(
+            visibleText: "Subscribers only",
+            linkURLs: ["https://x.com/dashen_wang/creator-subscriptions/subscribe"],
+            authorHandle: "dashen_wang"
+        )
+
+        XCTAssertTrue(BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic))
+    }
+
+    func testSubscriptionErrorGivesRecoverableInstruction() {
+        let error = BrowserArticleCaptureError.subscriptionRequired(creatorHandle: "dashen_wang")
+
+        XCTAssertTrue(error.requiresSubscription)
+        XCTAssertTrue(error.localizedDescription.contains("@dashen_wang"))
+        XCTAssertTrue(error.localizedDescription.contains("重新处理"))
+    }
+}
+
+final class XArticleNavigationURLTests: XCTestCase {
+    func testBuildsCanonicalArticleAndCurrentSubscriptionURLs() {
+        XCTAssertEqual(
+            XArticleNavigationURL.articleURL(
+                authorHandle: "@dashen_wang",
+                postID: "2064376603166269831"
+            )?.absoluteString,
+            "https://x.com/dashen_wang/status/2064376603166269831"
+        )
+        XCTAssertEqual(
+            XArticleNavigationURL.subscriptionURL(authorHandle: "@dashen_wang")?.absoluteString,
+            "https://x.com/dashen_wang/superfollows/subscribe"
+        )
+    }
+
+    func testRejectsMalformedNavigationComponents() {
+        XCTAssertNil(XArticleNavigationURL.articleURL(authorHandle: "bad/name", postID: "123"))
+        XCTAssertNil(XArticleNavigationURL.articleURL(authorHandle: "writer", postID: "not-a-post"))
+        XCTAssertNil(XArticleNavigationURL.subscriptionURL(authorHandle: "bad/name"))
+    }
+}
+
 final class BrowserArticleCaptureDecoderTests: XCTestCase {
     private let link = XArticleLink(
         postID: "2094984812251746424",
@@ -1539,15 +1623,16 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
             makeArticle(creatorID: firstCreatorID, state: .committed, lastError: "旧错误"),
             makeArticle(creatorID: firstCreatorID, state: .fetched),
             makeArticle(creatorID: secondCreatorID, state: .discovered, lastError: "等待重试"),
-            makeArticle(creatorID: secondCreatorID, state: .failed)
+            makeArticle(creatorID: secondCreatorID, state: .failed),
+            makeArticle(creatorID: secondCreatorID, state: .subscriptionRequired)
         ]
 
         let statistics = ArchiveSidebarStatistics(articles: articles)
 
-        XCTAssertEqual(statistics.allArticleCount, 5)
+        XCTAssertEqual(statistics.allArticleCount, 6)
         XCTAssertEqual(statistics.waitingArticleCount, 1)
         XCTAssertEqual(statistics.processingArticleCount, statistics.waitingArticleCount)
-        XCTAssertEqual(statistics.needsAttentionArticleCount, 3)
+        XCTAssertEqual(statistics.needsAttentionArticleCount, 4)
         XCTAssertEqual(
             articles.filter(ArchiveSidebarStatistics.isWaiting).count,
             statistics.waitingArticleCount

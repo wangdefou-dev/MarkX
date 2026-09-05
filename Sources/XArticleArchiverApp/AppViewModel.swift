@@ -97,6 +97,7 @@ final class AppViewModel: ObservableObject {
     private var runningTask: Task<Void, Never>?
     private var browserCaptureSavedPostIDs = Set<String>()
     private var browserCaptureFailurePostIDs = Set<String>()
+    private var browserCaptureSubscriptionPostIDs = Set<String>()
     private var browserCaptureFailureDetails: [String] = []
     private var discoveredCreatorArticles: [CreatorArticleListItem] = []
     private var browserCaptureStopRequested = false
@@ -182,6 +183,10 @@ final class AppViewModel: ObservableObject {
 
     var pendingExactCaptureCount: Int {
         pendingExactCaptureArticles.count
+    }
+
+    var browserCaptureSubscriptionRequiredCount: Int {
+        browserCaptureSubscriptionPostIDs.count
     }
 
     var pendingExactCaptureArticles: [ArchivedArticle] {
@@ -1123,7 +1128,8 @@ final class AppViewModel: ObservableObject {
         } else {
             let total = browserCaptureRequests.count
             let completed = browserCaptureSavedPostIDs.count
-            let failed = browserCaptureFailurePostIDs.count
+            let subscriptionRequired = browserCaptureSubscriptionPostIDs.count
+            let failed = max(0, browserCaptureFailurePostIDs.count - subscriptionRequired)
             let accountedPostIDs = browserCaptureSavedPostIDs.union(browserCaptureFailurePostIDs)
             let unaccounted = browserCaptureRequests.lazy.filter {
                 !accountedPostIDs.contains($0.link.postID)
@@ -1148,31 +1154,32 @@ final class AppViewModel: ObservableObject {
             browserCaptureRequests = []
             browserCaptureIndex = 0
             browserCaptureSavedPostIDs.removeAll()
+            browserCaptureSubscriptionPostIDs.removeAll()
             finishDownloadProgressWindow()
             if let creatorCount = activeSyncCreatorCount,
                let articleLimit = activeSyncArticleLimit {
                 let checked = total + skipped
                 progress.stage = hasUnfinishedWork ? "本次同步结束，资料库仍有未完成文章" : "全部博主同步完成"
                 statusMessage = hasUnfinishedWork
-                    ? "本次同步结束：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇；仍有未完成任务"
+                    ? "本次同步结束：保存 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
                     : "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
                         title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(outstandingNote)"
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(outstandingNote)"
                     )
                 }
             } else {
                 progress.stage = hasUnfinishedWork ? "本次队列结束，资料库仍有未完成文章" : "文章下载完成"
                 statusMessage = hasUnfinishedWork
-                    ? "本次队列结束：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 \(failed) 篇；仍有未完成任务"
+                    ? "本次队列结束：成功 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
                     : "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.downloadResultNotice = DownloadResultNotice(
                         title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(outstandingNote)"
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(outstandingNote)"
                     )
                 }
             }
@@ -1180,6 +1187,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func browserCaptureState(for request: BrowserCaptureRequest) -> BackgroundDownloadItemState {
+        if browserCaptureSubscriptionPostIDs.contains(request.link.postID) { return .subscriptionRequired }
         if browserCaptureFailurePostIDs.contains(request.link.postID) { return .failed }
         if browserCaptureSavedPostIDs.contains(request.link.postID) { return .saved }
         guard let index = browserCaptureRequests.firstIndex(where: { $0.id == request.id }) else {
@@ -1197,22 +1205,37 @@ final class AppViewModel: ObservableObject {
     }
 
     func recordBrowserCaptureFailure(_ error: Error, request: BrowserCaptureRequest) async {
+        let requiresSubscription = (error as? BrowserArticleCaptureError)?.requiresSubscription == true
         let isNewFailure = browserCaptureFailurePostIDs.insert(request.link.postID).inserted
-        progress.failedArticles = browserCaptureFailurePostIDs.count
+        if requiresSubscription {
+            browserCaptureSubscriptionPostIDs.insert(request.link.postID)
+        } else {
+            browserCaptureSubscriptionPostIDs.remove(request.link.postID)
+        }
+        progress.failedArticles = max(
+            0,
+            browserCaptureFailurePostIDs.count - browserCaptureSubscriptionPostIDs.count
+        )
         if isNewFailure {
             browserCaptureFailureDetails.append("《\(request.displayTitle)》：\(error.localizedDescription)")
         }
         if let database,
            var failed = try? await database.article(sourcePostID: request.link.postID) {
-            failed.pipelineState = .failed
+            failed.pipelineState = requiresSubscription ? .subscriptionRequired : .failed
             failed.lastError = error.localizedDescription
             failed.lastSyncedAt = Date()
             failed.warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
-            failed.appendProcessingLog("处理失败：\(error.localizedDescription)")
+            failed.appendProcessingLog(
+                requiresSubscription
+                    ? "检测到订阅访问限制：\(error.localizedDescription)"
+                    : "处理失败：\(error.localizedDescription)"
+            )
             try? await database.upsertArticle(failed)
             try? await reload()
         }
-        statusMessage = "《\(request.displayTitle)》未完成，正在继续下一篇"
+        statusMessage = requiresSubscription
+            ? "《\(request.displayTitle)》需要订阅，已保留任务并继续下一篇"
+            : "《\(request.displayTitle)》未完成，正在继续下一篇"
     }
 
     func closeBrowserCapture() {
@@ -1329,7 +1352,11 @@ final class AppViewModel: ObservableObject {
             progress.uploadedImages += document.media.count
             progress.uploadedVideos += document.videos?.count ?? 0
             browserCaptureFailurePostIDs.remove(request.link.postID)
-            progress.failedArticles = browserCaptureFailurePostIDs.count
+            browserCaptureSubscriptionPostIDs.remove(request.link.postID)
+            progress.failedArticles = max(
+                0,
+                browserCaptureFailurePostIDs.count - browserCaptureSubscriptionPostIDs.count
+            )
             try await reload()
             selectedArticleID = archived.id
             statusMessage = "已保存完整排版：\(document.title)"
@@ -1595,8 +1622,49 @@ final class AppViewModel: ObservableObject {
     }
 
     func openSource() {
-        guard let sourceURL = selectedArticle?.sourceURL else { return }
-        NSWorkspace.shared.open(sourceURL)
+        guard let article = selectedArticle else { return }
+        let sourceURL = XArticleNavigationURL.articleURL(
+            authorHandle: article.authorHandle,
+            postID: article.sourcePostID
+        ) ?? article.sourceURL
+        if article.pipelineState == .subscriptionRequired {
+            openInChrome(
+                sourceURL,
+                successMessage: "已在 Chrome 打开《\(article.title)》原文"
+            )
+        } else {
+            NSWorkspace.shared.open(sourceURL)
+        }
+    }
+
+    func openSubscriptionPage(for article: ArchivedArticle) {
+        guard let handle = HandleParser.normalize(article.authorHandle),
+              let subscriptionURL = XArticleNavigationURL.subscriptionURL(
+                authorHandle: handle
+              ) else { return }
+        openInChrome(
+            subscriptionURL,
+            successMessage: "已在 Chrome 打开 @\(handle) 的订阅页面"
+        )
+    }
+
+    private func openInChrome(_ url: URL, successMessage: String) {
+        guard let chromeURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.google.Chrome"
+        ) else {
+            NSWorkspace.shared.open(url)
+            statusMessage = "未检测到 Google Chrome，已在默认浏览器打开"
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open(
+            [url],
+            withApplicationAt: chromeURL,
+            configuration: configuration,
+            completionHandler: nil
+        )
+        statusMessage = successMessage
     }
 
     func openCreatorProfile(_ creator: Creator) {
@@ -1821,6 +1889,7 @@ final class AppViewModel: ObservableObject {
         reactivateExactCaptureTasks(for: browserCaptureRequests)
         browserCaptureSavedPostIDs.removeAll()
         browserCaptureFailurePostIDs.removeAll()
+        browserCaptureSubscriptionPostIDs.removeAll()
         browserCaptureFailureDetails.removeAll()
         progress.skippedArticles = skippedCount
         progress.completedArticles = 0
