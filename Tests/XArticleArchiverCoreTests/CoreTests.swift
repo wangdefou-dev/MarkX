@@ -1415,7 +1415,8 @@ final class ArchiveDatabaseTests: XCTestCase {
             publishedAt: Date(timeIntervalSince1970: 0),
             sourceChecksum: "abc",
             videoCount: 2,
-            pipelineState: .committed
+            pipelineState: .committed,
+            processingLog: ["2026-09-05T07:00:00Z  开始处理", "2026-09-05T07:00:01Z  处理完成"]
         )
         try await database.upsertArticle(article)
         let loadedCreators = try await database.loadCreators()
@@ -1424,6 +1425,7 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(loaded.count, 1)
         XCTAssertEqual(loaded.first?.stableSourceKey, "a1")
         XCTAssertEqual(loaded.first?.videoCount, 2)
+        XCTAssertEqual(loaded.first?.processingLog, article.processingLog)
     }
 
     func testDeletesOnlyTheRequestedArticle() async throws {
@@ -1669,6 +1671,23 @@ private struct NoopImageHost: ImageHostAdapter {
     func verify(remoteURL: URL) async throws {}
 }
 
+private struct DeterministicRemoteImageHost: ImageHostAdapter {
+    var displayName: String { "测试图床" }
+    func probe() async -> ImageHostCapability {
+        ImageHostCapability(name: displayName, version: "1", isAvailable: true, detail: "ready")
+    }
+    func upload(fileURLs: [URL]) async throws -> [UploadResult] {
+        fileURLs.map {
+            UploadResult(
+                localPath: $0.path,
+                remoteURL: URL(string: "https://cdn.example.test/\($0.lastPathComponent)")!
+            )
+        }
+    }
+    func verify(remoteURL: URL) async throws {}
+    func verifyVideo(remoteURL: URL) async throws {}
+}
+
 final class SyncProgressTests: XCTestCase {
     func testSyncAllCreatorPolicyKeepsMoreThanOneHundredEnabledCreatorsWithoutTruncation() {
         var creators = (1...137).map { index in
@@ -1776,13 +1795,73 @@ final class ArchiveIndexWriterTests: XCTestCase {
 
         try ArchiveIndexWriter.rebuild(root: root, creator: creator)
 
-        let directory = root.appending(path: SafeFileName.creatorDirectory(
-            handle: creator.username,
-            displayName: creator.displayName
-        ))
+        let directory = ArchiveLayout.creatorDirectory(in: root, creator: creator)
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appending(path: "articles").path))
         let index = try String(contentsOf: directory.appending(path: "index.md"), encoding: .utf8)
         XCTAssertTrue(index.contains("共 0 篇本地长文"))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: ArchiveLayout.bloggersDirectory(in: root).appending(path: "index.md").path
+        ))
+    }
+}
+
+final class ArchiveLayoutTests: XCTestCase {
+    func testMovesEveryLegacyCreatorBelowBloggerAndKeepsOnlyTwoVisibleRootFolders() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "x-archive-layout-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let article = root.appending(path: "@writer - 作者/articles/article.md")
+        try FileManager.default.createDirectory(at: article.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let unsigned = "---\nexporter_version: 1\n---\n\n# article\n\n![图](../../media/images/a.png)\n"
+        let original = MarkdownRenderer.addingExportChecksum(to: unsigned)
+        try Data(original.utf8).write(to: article)
+        try Data("# old index".utf8).write(to: root.appending(path: "index.md"))
+
+        let result = try ArchiveLayout.migrateLegacyLayout(in: root)
+
+        XCTAssertEqual(result.movedCreatorDirectories, ["@writer - 作者"])
+        XCTAssertTrue(result.movedRootIndex)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: article.path))
+        let migrated = root.appending(path: "Blogger/@writer - 作者/articles/article.md")
+        let migratedMarkdown = try String(contentsOf: migrated, encoding: .utf8)
+        XCTAssertTrue(migratedMarkdown.contains("![图](../../../media/images/a.png)"))
+        XCTAssertTrue(MarkdownRenderer.isUnmodifiedExport(migratedMarkdown))
+        XCTAssertEqual(ArchiveLayout.migratedMarkdownPath(article.path, in: root), migrated.path)
+        let visible = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).map(\.lastPathComponent).sorted()
+        XCTAssertEqual(visible, ["Blogger", "media"])
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: root.appending(path: ".x-article-archiver/legacy-root-index-before-blogger-layout.md").path
+        ))
+        XCTAssertEqual(result.rebasedMarkdownFiles, ["@writer - 作者/articles/article.md"])
+        XCTAssertEqual(
+            try String(
+                contentsOf: root.appending(
+                    path: ".x-article-archiver/layout-link-backups/@writer - 作者/articles/article.md"
+                ),
+                encoding: .utf8
+            ),
+            original
+        )
+    }
+
+    func testConflictStopsBeforeMovingLegacyCreator() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "x-archive-layout-conflict-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oldFile = root.appending(path: "@writer/articles/article.md")
+        let newFile = root.appending(path: "Blogger/@writer/articles/article.md")
+        try FileManager.default.createDirectory(at: oldFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: newFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: oldFile)
+        try Data("different".utf8).write(to: newFile)
+
+        XCTAssertThrowsError(try ArchiveLayout.migrateLegacyLayout(in: root))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldFile.path))
+        XCTAssertEqual(try String(contentsOf: newFile, encoding: .utf8), "different")
     }
 }
 
@@ -1852,9 +1931,9 @@ final class ArchivePipelineTests: XCTestCase {
         let markdownPath = try XCTUnwrap(archived.markdownPath)
         let markdown = try String(contentsOfFile: markdownPath, encoding: .utf8)
 
-        XCTAssertTrue(markdown.contains("![本地图片](../../media/images/"))
-        XCTAssertTrue(markdown.contains("<video controls preload=\"metadata\" src=\"../../media/videos/"))
-        XCTAssertTrue(markdown.contains("[打开或下载视频](../../media/videos/"))
+        XCTAssertTrue(markdown.contains("![本地图片](../../../media/images/"))
+        XCTAssertTrue(markdown.contains("<video controls preload=\"metadata\" src=\"../../../media/videos/"))
+        XCTAssertTrue(markdown.contains("[打开或下载视频](../../../media/videos/"))
         XCTAssertFalse(markdown.contains(imageCache.path))
         XCTAssertFalse(markdown.contains(videoCache.path))
 
@@ -1880,6 +1959,68 @@ final class ArchivePipelineTests: XCTestCase {
         let snapshot = try decoder.decode(CanonicalDocument.self, from: snapshotData)
         XCTAssertTrue(snapshot.media[0].remoteURL?.relativeString.hasPrefix("media/images/") == true)
         XCTAssertTrue(snapshot.videos?[0].remoteURL?.relativeString.hasPrefix("media/videos/") == true)
+        XCTAssertTrue(snapshot.media[0].localCachePath?.hasPrefix(root.appending(path: "media/images").path) == true)
+        XCTAssertTrue(snapshot.videos?[0].localCachePath?.hasPrefix(root.appending(path: "media/videos").path) == true)
+        XCTAssertTrue(archived.processingLog.contains(where: { $0.contains("本地备份已校验") }))
+    }
+
+    func testMirroredStorageUsesRemoteMarkdownAndKeepsVerifiedLocalBackups() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "x-archive-mirrored-media-test-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        let staging = root.appending(path: "capture-cache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let image = staging.appending(path: "source.png")
+        try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!.write(to: image)
+
+        let database = try ArchiveDatabase(url: root.appending(path: ".x-article-archiver/archive.sqlite"))
+        let creator = Creator(xUserID: "mirror-user", username: "writer", displayName: "作者")
+        try await database.upsertCreator(creator)
+        let document = CanonicalDocument(
+            title: "双存储",
+            authorName: creator.displayName,
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/299")!,
+            sourcePostID: "299",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [CanonicalBlock(kind: .image, mediaID: "image-1")],
+            media: [MediaAsset(
+                id: "image-1",
+                sourceURL: URL(string: "https://pbs.twimg.com/media/source.png")!,
+                altText: "双存储图片",
+                position: 0,
+                localCachePath: image.path
+            )],
+            sourceMediaIDs: ["image-1"],
+            layoutFidelity: .renderedPageVerified
+        )
+        let adapter = MirroredMediaHostAdapter(
+            primary: DeterministicRemoteImageHost(),
+            archiveRoot: root
+        )
+        let archived = try await ArchivePipeline(database: database, imageHost: adapter)
+            .archive(document: document, creator: creator, root: root)
+        let markdown = try String(contentsOfFile: XCTUnwrap(archived.markdownPath), encoding: .utf8)
+
+        XCTAssertTrue(markdown.contains("![双存储图片](https://cdn.example.test/source.png)"))
+        XCTAssertFalse(markdown.contains("media/images"))
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: root.appending(path: "media/images"),
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(backups.count, 1)
+        let snapshotData = try Data(contentsOf: root.appending(path: ".x-article-archiver/source-snapshots/299.json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshot = try decoder.decode(CanonicalDocument.self, from: snapshotData)
+        XCTAssertEqual(snapshot.media[0].remoteURL?.host, "cdn.example.test")
+        XCTAssertEqual(
+            snapshot.media[0].localCachePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
+            backups[0].resolvingSymlinksInPath().path
+        )
     }
 
     func testPipelineIsIdempotentAndDoesNotMistakeOwnChecksumForLocalEdit() async throws {
@@ -1924,11 +2065,17 @@ final class ArchivePipelineTests: XCTestCase {
         let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
         let file = directory.appending(path: "X长文归档器-uPic联调.png")
         try png.write(to: file)
-        let adapter = UPicAdapter()
-        let capability = await adapter.probe()
+        let primary = UPicAdapter()
+        let capability = await primary.probe()
         XCTAssertTrue(capability.isAvailable)
+        let adapter = MirroredMediaHostAdapter(primary: primary, archiveRoot: directory)
         let results = try await adapter.upload(fileURLs: [file])
         XCTAssertEqual(results.count, 1)
         try await adapter.verify(remoteURL: results[0].remoteURL)
+        let backupURL = try XCTUnwrap(results[0].localBackupURL)
+        try await LocalMediaHostAdapter(archiveRoot: directory).verify(remoteURL: backupURL)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: directory.appending(path: backupURL.relativeString).path
+        ))
     }
 }

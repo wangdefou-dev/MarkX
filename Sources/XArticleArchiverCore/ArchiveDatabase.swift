@@ -141,11 +141,13 @@ public actor ArchiveDatabase {
     public func upsertArticle(_ article: ArchivedArticle) throws {
         let warningsData = try JSONEncoder().encode(article.warnings)
         let warnings = String(data: warningsData, encoding: .utf8) ?? "[]"
+        let processingLogData = try JSONEncoder().encode(article.processingLog)
+        let processingLog = String(data: processingLogData, encoding: .utf8) ?? "[]"
         let sql = """
         INSERT INTO articles
           (id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id,
-           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(stable_source_key) DO UPDATE SET
           creator_id=excluded.creator_id,
           title=excluded.title,
@@ -163,7 +165,8 @@ public actor ArchiveDatabase {
           video_count=excluded.video_count,
           pipeline_state=excluded.pipeline_state,
           warnings=excluded.warnings,
-          last_error=excluded.last_error;
+          last_error=excluded.last_error,
+          processing_log=excluded.processing_log;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -187,11 +190,12 @@ public actor ArchiveDatabase {
         bind(article.pipelineState.rawValue, to: 18, in: statement)
         bind(warnings, to: 19, in: statement)
         bind(article.lastError, to: 20, in: statement)
+        bind(processingLog, to: 21, in: statement)
         try step(statement)
     }
 
     public func loadArticles() throws -> [ArchivedArticle] {
-        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error FROM articles ORDER BY published_at DESC;"
+        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log FROM articles ORDER BY published_at DESC;"
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
         var output: [ArchivedArticle] = []
@@ -213,6 +217,8 @@ public actor ArchiveDatabase {
                   let pipeline = PipelineState(rawValue: text(statement, 17) ?? "") else { continue }
             let warningData = Data((text(statement, 18) ?? "[]").utf8)
             let warnings = (try? JSONDecoder().decode([String].self, from: warningData)) ?? []
+            let processingLogData = Data((text(statement, 20) ?? "[]").utf8)
+            let processingLog = (try? JSONDecoder().decode([String].self, from: processingLogData)) ?? []
             output.append(ArchivedArticle(
                 id: id,
                 stableSourceKey: stableKey,
@@ -233,7 +239,8 @@ public actor ArchiveDatabase {
                 videoCount: Int(sqlite3_column_int(statement, 16)),
                 pipelineState: pipeline,
                 warnings: warnings,
-                lastError: text(statement, 19)
+                lastError: text(statement, 19),
+                processingLog: processingLog
             ))
         }
         return output
@@ -308,17 +315,21 @@ public actor ArchiveDatabase {
           pipeline_state TEXT NOT NULL,
           warnings TEXT NOT NULL DEFAULT '[]',
           last_error TEXT,
+          processing_log TEXT NOT NULL DEFAULT '[]',
           FOREIGN KEY (creator_id) REFERENCES creators(id)
         );
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_creator_id ON articles(creator_id);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
-        PRAGMA user_version=2;
+        PRAGMA user_version=3;
         """)
         if !columnExists(on: database, table: "articles", column: "video_count") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
         }
-        try execute(on: database, sql: "PRAGMA user_version=2;")
+        if !columnExists(on: database, table: "articles", column: "processing_log") {
+            try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN processing_log TEXT NOT NULL DEFAULT '[]';")
+        }
+        try execute(on: database, sql: "PRAGMA user_version=3;")
     }
 
     private static func columnExists(on database: OpaquePointer?, table: String, column: String) -> Bool {

@@ -30,7 +30,7 @@ final class AppViewModel: ObservableObject {
         var displayName: String {
             switch self {
             case .local: "本地存储"
-            case .uPic: "uPic 图床"
+            case .uPic: "本地 + uPic"
             case .s3: "原生 S3 / R2"
             }
         }
@@ -222,7 +222,7 @@ final class AppViewModel: ObservableObject {
         if imageHostVerified {
             switch imageHostChoice {
             case .local: return "默认本地保存：图片 media/images，视频 media/videos"
-            case .uPic: return "uPic 图床已通过真实上传验证"
+            case .uPic: return "uPic 已验证；Markdown 使用图床链接，media 保留本地备份"
             case .s3: return "原生 S3/R2 真实上传验证通过"
             }
         }
@@ -240,8 +240,17 @@ final class AppViewModel: ObservableObject {
         if let archiveRoot {
             do {
                 try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
-                database = try ArchiveDatabase(url: Self.databaseURL(for: archiveRoot))
+                let migration = try ArchiveLayout.migrateLegacyLayout(in: archiveRoot)
+                let openedDatabase = try ArchiveDatabase(url: Self.databaseURL(for: archiveRoot))
+                database = openedDatabase
+                try await migrateArticlePathsAndRebuildIndexes(
+                    at: archiveRoot,
+                    database: openedDatabase
+                )
                 try await reload()
+                if migration.didChange {
+                    statusMessage = "已把旧版博主目录安全迁移到 Blogger"
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -253,7 +262,7 @@ final class AppViewModel: ObservableObject {
         } else if !upicCapability.isAvailable, imageHostChoice == .uPic {
             setImageHostVerified(false)
         } else if imageHostChoice == .uPic, imageHostVerified {
-            upicCapability.detail = "uPic 图床已通过真实上传验证"
+            upicCapability.detail = "uPic 已验证；远程链接为主，本地 media 同步备份"
         }
     }
 
@@ -561,6 +570,7 @@ final class AppViewModel: ObservableObject {
                 try Task.checkCancellation()
 
                 progress.stage = "正在校验新目录并更新文章路径"
+                try ArchiveLayout.migrateLegacyLayout(in: destination)
                 let destinationDatabase = try ArchiveDatabase(url: Self.databaseURL(for: destination))
                 let copiedArticles = try await destinationDatabase.loadArticles()
                 for var article in copiedArticles {
@@ -578,6 +588,10 @@ final class AppViewModel: ObservableObject {
                     article.markdownPath = rebasedPath
                     try await destinationDatabase.upsertArticle(article)
                 }
+                try await migrateArticlePathsAndRebuildIndexes(
+                    at: destination,
+                    database: destinationDatabase
+                )
 
                 database = destinationDatabase
                 archiveRoot = destination
@@ -700,9 +714,9 @@ final class AppViewModel: ObservableObject {
                     directoryHint: .isDirectory
                 )
             )
-            upicCapability.detail = "已验证 uPic 图床：\(remote.host ?? "远程图床")"
+            upicCapability.detail = "已验证 uPic：\(remote.host ?? "远程图床")；文章媒体将同时保存到本地"
             setImageHostVerified(true)
-            statusMessage = "uPic 图床测试通过：\(remote.host ?? "远程图床")"
+            statusMessage = "uPic 测试通过：Markdown 用远程链接，本地保留备份"
             return true
         } catch {
             setImageHostVerified(false)
@@ -1035,6 +1049,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func captureSelectedArticleExactly() {
+        guard !isRunning else { return }
         guard let article = selectedArticle,
               let link = XArticleURLParser.parse(article.sourceURL.absoluteString).first else {
             errorMessage = "这篇文章没有可用的 X status 链接"
@@ -1171,6 +1186,7 @@ final class AppViewModel: ObservableObject {
             failed.lastError = error.localizedDescription
             failed.lastSyncedAt = Date()
             failed.warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
+            failed.appendProcessingLog("处理失败：\(error.localizedDescription)")
             try? await database.upsertArticle(failed)
             try? await reload()
         }
@@ -1178,6 +1194,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func closeBrowserCapture() {
+        let stoppedRequest = currentBrowserCaptureRequest
         browserCaptureStopRequested = true
         showingBrowserCapture = false
         browserCaptureRequests = []
@@ -1186,6 +1203,17 @@ final class AppViewModel: ObservableObject {
         statusMessage = isSyncingTrackedCreators
             ? "已停止同步；已完成归档保留，未完成任务可继续"
             : "已停止精确排版采集；未完成任务已保留"
+        guard let stoppedRequest, let database else { return }
+        Task {
+            if var stopped = try? await database.article(sourcePostID: stoppedRequest.link.postID) {
+                stopped.pipelineState = .cancelled
+                stopped.lastError = nil
+                stopped.lastSyncedAt = Date()
+                stopped.appendProcessingLog("用户停止处理；已完成步骤和本地媒体均保留")
+                try? await database.upsertArticle(stopped)
+                try? await reload()
+            }
+        }
     }
 
     func archiveBrowserCapture(
@@ -1202,6 +1230,13 @@ final class AppViewModel: ObservableObject {
         defer { isRunning = false }
 
         do {
+            if var restarting = try await database.article(sourcePostID: request.link.postID) {
+                restarting.pipelineState = .parsed
+                restarting.lastError = nil
+                restarting.lastSyncedAt = Date()
+                restarting.appendProcessingLog("X 页面读取完成，开始保存正文和媒体")
+                try await database.upsertArticle(restarting)
+            }
             let imageHost = try await configuredImageHost()
             let capturedHandle = HandleParser.normalize(payload.authorHandle ?? "")
                 ?? request.creator.username
@@ -1284,6 +1319,7 @@ final class AppViewModel: ObservableObject {
                 failed.lastError = error.localizedDescription
                 failed.lastSyncedAt = Date()
                 failed.warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
+                failed.appendProcessingLog("处理失败：\(error.localizedDescription)")
                 try? await database.upsertArticle(failed)
                 try? await reload()
             }
@@ -1303,6 +1339,21 @@ final class AppViewModel: ObservableObject {
         }
         runningTask?.cancel()
         statusMessage = "正在安全停止…"
+    }
+
+    func isArticleActivelyProcessing(_ article: ArchivedArticle) -> Bool {
+        showingBrowserCapture && currentBrowserCaptureRequest?.link.postID == article.sourcePostID
+    }
+
+    func restartProcessing(_ article: ArchivedArticle) {
+        guard !isRunning else { return }
+        selectedArticleID = article.id
+        captureSelectedArticleExactly()
+    }
+
+    func stopProcessing(_ article: ArchivedArticle) {
+        guard isArticleActivelyProcessing(article) else { return }
+        closeBrowserCapture()
     }
 
     func requestDeleteArticle(_ article: ArchivedArticle) {
@@ -1559,6 +1610,10 @@ final class AppViewModel: ObservableObject {
         decoder.dateDecodingStrategy = .iso8601
         guard var document = try? decoder.decode(CanonicalDocument.self, from: data) else { return nil }
         for index in document.media.indices {
+            document.media[index].localCachePath = Self.previewLocalMediaPath(
+                document.media[index].localCachePath,
+                root: archiveRoot
+            )
             document.media[index].remoteURL = Self.previewMediaURL(
                 document.media[index].remoteURL,
                 root: archiveRoot
@@ -1566,6 +1621,10 @@ final class AppViewModel: ObservableObject {
         }
         if document.videos != nil {
             for index in document.videos!.indices {
+                document.videos![index].localCachePath = Self.previewLocalMediaPath(
+                    document.videos![index].localCachePath,
+                    root: archiveRoot
+                )
                 document.videos![index].remoteURL = Self.previewMediaURL(
                     document.videos![index].remoteURL,
                     root: archiveRoot
@@ -1591,6 +1650,22 @@ final class AppViewModel: ObservableObject {
         let resolved = root.appending(path: relativePath).standardizedFileURL
         guard isContained(resolved, in: root) else { return nil }
         return resolved
+    }
+
+    private static func previewLocalMediaPath(_ storedPath: String?, root: URL) -> String? {
+        guard let storedPath else { return nil }
+        let storedURL = URL(fileURLWithPath: storedPath).standardizedFileURL
+        if FileManager.default.fileExists(atPath: storedURL.path) { return storedURL.path }
+        for marker in ["/media/", "/.x-article-archiver/"] {
+            guard let range = storedURL.path.range(of: marker) else { continue }
+            let relative = String(storedURL.path[range.lowerBound...]).dropFirst()
+            let rebased = root.appending(path: String(relative)).standardizedFileURL
+            guard isContained(rebased, in: root), FileManager.default.fileExists(atPath: rebased.path) else {
+                continue
+            }
+            return rebased.path
+        }
+        return nil
     }
 
     private func prepareDirectBrowserCapture(
@@ -1715,7 +1790,8 @@ final class AppViewModel: ObservableObject {
             publishedAt: publishedAt,
             sourceChecksum: "pending-rendered-page-capture",
             pipelineState: .discovered,
-            warnings: ["等待在应用内打开 X Article 并保存精确排版"]
+            warnings: ["等待在应用内打开 X Article 并保存精确排版"],
+            processingLog: ["\(ISO8601DateFormatter().string(from: Date()))  已建立文章处理任务"]
         )
         try await database.upsertArticle(record)
     }
@@ -1745,11 +1821,12 @@ final class AppViewModel: ObservableObject {
         let postIDs = Set(requests.map(\.link.postID))
         var changed: [ArchivedArticle] = []
         for index in articles.indices where postIDs.contains(articles[index].sourcePostID) {
-            let originalCount = articles[index].warnings.count
             articles[index].warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
-            if articles[index].warnings.count != originalCount {
-                changed.append(articles[index])
-            }
+            articles[index].pipelineState = .discovered
+            articles[index].lastError = nil
+            articles[index].lastSyncedAt = Date()
+            articles[index].appendProcessingLog("重新开始处理")
+            changed.append(articles[index])
         }
         guard !changed.isEmpty, let database else { return }
         Task {
@@ -1813,11 +1890,34 @@ final class AppViewModel: ObservableObject {
     private func configureDatabase(at root: URL) async {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            database = try ArchiveDatabase(url: Self.databaseURL(for: root))
+            let migration = try ArchiveLayout.migrateLegacyLayout(in: root)
+            let openedDatabase = try ArchiveDatabase(url: Self.databaseURL(for: root))
+            database = openedDatabase
+            try await migrateArticlePathsAndRebuildIndexes(at: root, database: openedDatabase)
             try await reload()
-            statusMessage = "归档目录已就绪"
+            statusMessage = migration.didChange ? "已迁移旧目录，归档目录已就绪" : "归档目录已就绪"
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func migrateArticlePathsAndRebuildIndexes(
+        at root: URL,
+        database: ArchiveDatabase
+    ) async throws {
+        let storedArticles = try await database.loadArticles()
+        for var article in storedArticles {
+            guard let currentPath = article.markdownPath,
+                  let migratedPath = ArchiveLayout.migratedMarkdownPath(currentPath, in: root)
+            else { continue }
+            guard FileManager.default.fileExists(atPath: migratedPath) else {
+                throw ArchiveLayoutError.invalidLegacyPath(migratedPath)
+            }
+            article.markdownPath = migratedPath
+            try await database.upsertArticle(article)
+        }
+        for creator in try await database.loadCreators() {
+            try ArchiveIndexWriter.rebuild(root: root, creator: creator)
         }
     }
 
@@ -1922,13 +2022,16 @@ final class AppViewModel: ObservableObject {
             }
             return LocalMediaHostAdapter(archiveRoot: archiveRoot)
         case .uPic:
+            guard let archiveRoot else {
+                throw ImagePipelineError.hostUnavailable("请先选择本地归档目录")
+            }
             let adapter = UPicAdapter()
             let capability = await adapter.probe()
             guard capability.isAvailable else {
                 setImageHostVerified(false)
                 throw ImagePipelineError.hostUnavailable(capability.detail)
             }
-            return adapter
+            return MirroredMediaHostAdapter(primary: adapter, archiveRoot: archiveRoot)
         case .s3:
             let credentials = try await Task.detached(priority: .userInitiated) {
                 (

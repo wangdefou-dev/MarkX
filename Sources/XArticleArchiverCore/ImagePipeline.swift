@@ -18,15 +18,18 @@ public struct ImageHostCapability: Sendable {
 public struct UploadResult: Sendable, Hashable {
     public var localPath: String
     public var remoteURL: URL
+    public var localBackupURL: URL?
 
-    public init(localPath: String, remoteURL: URL) {
+    public init(localPath: String, remoteURL: URL, localBackupURL: URL? = nil) {
         self.localPath = localPath
         self.remoteURL = remoteURL
+        self.localBackupURL = localBackupURL
     }
 }
 
 public protocol ImageHostAdapter: Sendable {
     var displayName: String { get }
+    var storesLocalBackup: Bool { get }
     func probe() async -> ImageHostCapability
     func upload(fileURLs: [URL]) async throws -> [UploadResult]
     func verify(remoteURL: URL) async throws
@@ -34,6 +37,8 @@ public protocol ImageHostAdapter: Sendable {
 }
 
 public extension ImageHostAdapter {
+    var storesLocalBackup: Bool { false }
+
     func verifyVideo(remoteURL: URL) async throws {
         guard remoteURL.scheme?.lowercased() == "https", let host = remoteURL.host, !host.isEmpty,
               host != "localhost", host != "127.0.0.1", host != "::1" else {
@@ -63,6 +68,7 @@ public extension ImageHostAdapter {
 /// archive directory is moved to another disk or Mac.
 public struct LocalMediaHostAdapter: ImageHostAdapter {
     public let displayName = "本地存储"
+    public let storesLocalBackup = true
     public let archiveRoot: URL
 
     public init(archiveRoot: URL) {
@@ -125,7 +131,11 @@ public struct LocalMediaHostAdapter: ImageHostAdapter {
             guard let relativeURL = URL(string: relativePath) else {
                 throw ImagePipelineError.invalidLocalPath(relativePath)
             }
-            results.append(UploadResult(localPath: source.path, remoteURL: relativeURL))
+            results.append(UploadResult(
+                localPath: source.path,
+                remoteURL: relativeURL,
+                localBackupURL: relativeURL
+            ))
         }
         return results
     }
@@ -191,6 +201,77 @@ public struct LocalMediaHostAdapter: ImageHostAdapter {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         return try handle.read(upToCount: 16) ?? Data()
+    }
+}
+
+/// Saves every asset below the archive root before uploading it to the selected
+/// remote image host. The returned primary URL is the remote URL used by
+/// Markdown, while `localBackupURL` keeps the verified portable backup path.
+public struct MirroredMediaHostAdapter<Primary: ImageHostAdapter>: ImageHostAdapter {
+    public var displayName: String { "\(primary.displayName) + 本地备份" }
+    public let storesLocalBackup = true
+    public var primary: Primary
+    public var local: LocalMediaHostAdapter
+
+    public init(primary: Primary, archiveRoot: URL) {
+        self.primary = primary
+        self.local = LocalMediaHostAdapter(archiveRoot: archiveRoot)
+    }
+
+    public func probe() async -> ImageHostCapability {
+        let localCapability = await local.probe()
+        let primaryCapability = await primary.probe()
+        return ImageHostCapability(
+            name: displayName,
+            version: primaryCapability.version,
+            isAvailable: localCapability.isAvailable && primaryCapability.isAvailable,
+            detail: primaryCapability.isAvailable
+                ? "远程图床可用；图片和视频同时保存在本地 media 目录"
+                : primaryCapability.detail
+        )
+    }
+
+    public func upload(fileURLs: [URL]) async throws -> [UploadResult] {
+        guard !fileURLs.isEmpty else { return [] }
+        let localResults = try await local.upload(fileURLs: fileURLs)
+        for result in localResults {
+            let ext = URL(fileURLWithPath: result.localPath).pathExtension.lowercased()
+            if ext == "mp4" || ext == "m4v" {
+                try await local.verifyVideo(remoteURL: result.remoteURL)
+            } else {
+                try await local.verify(remoteURL: result.remoteURL)
+            }
+        }
+
+        let primaryResults = try await primary.upload(fileURLs: fileURLs)
+        guard primaryResults.count == localResults.count else {
+            throw ImagePipelineError.outputCountMismatch(
+                expected: localResults.count,
+                actual: primaryResults.count
+            )
+        }
+        let localByPath = Dictionary(uniqueKeysWithValues: localResults.map { ($0.localPath, $0) })
+        return try primaryResults.map { result in
+            guard let localResult = localByPath[result.localPath] else {
+                throw ImagePipelineError.outputCountMismatch(
+                    expected: localResults.count,
+                    actual: primaryResults.count
+                )
+            }
+            return UploadResult(
+                localPath: result.localPath,
+                remoteURL: result.remoteURL,
+                localBackupURL: localResult.remoteURL
+            )
+        }
+    }
+
+    public func verify(remoteURL: URL) async throws {
+        try await primary.verify(remoteURL: remoteURL)
+    }
+
+    public func verifyVideo(remoteURL: URL) async throws {
+        try await primary.verifyVideo(remoteURL: remoteURL)
     }
 }
 

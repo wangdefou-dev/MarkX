@@ -144,7 +144,7 @@ struct RootView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(model.isRunning)
+                .disabled(model.isRunning || model.hasActiveDownloadProgress)
                 .help("输入博主主页或一个及多个 X Article 链接开始下载")
             }
             Section("资料库") {
@@ -160,13 +160,13 @@ struct RootView: View {
                     } label: {
                         Label("开始下载文章…", systemImage: "square.and.arrow.down")
                     }
-                    .disabled(model.isRunning)
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
                     Button {
                         model.requestSyncAll()
                     } label: {
                         Label("同步所有博主文章…", systemImage: SyncVisualStyle.symbolName)
                     }
-                    .disabled(model.isRunning || model.enabledCreatorCount == 0)
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress || model.enabledCreatorCount == 0)
                 }
 
                 SidebarCountRow(
@@ -187,7 +187,13 @@ struct RootView: View {
                     } label: {
                         Label("安全停止", systemImage: "stop.circle")
                     }
-                    .disabled(!model.isRunning)
+                    .disabled(!model.hasActiveDownloadProgress)
+                    Button {
+                        model.resumePendingBrowserCaptures()
+                    } label: {
+                        Label("重新开始未完成文章", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(model.hasActiveDownloadProgress || model.pendingExactCaptureCount == 0)
                 }
 
                 SidebarCountRow(
@@ -202,7 +208,7 @@ struct RootView: View {
                     } label: {
                         Label("重新处理", systemImage: "arrow.clockwise")
                     }
-                    .disabled(model.isRunning || model.pendingExactCaptureCount == 0)
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress || model.pendingExactCaptureCount == 0)
                     Divider()
                     Button(role: .destructive) {
                         model.requestDeleteAllExactCaptureTasks()
@@ -239,7 +245,7 @@ struct RootView: View {
                         } label: {
                             Label("重新拉取文章…", systemImage: "arrow.clockwise")
                         }
-                        .disabled(model.isRunning)
+                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
                         .help("重新选择数量并拉取 @\(creator.username) 的 X Article")
                         Divider()
                         Button(role: .destructive) {
@@ -247,7 +253,7 @@ struct RootView: View {
                         } label: {
                             Label("删除博主…", systemImage: "trash")
                         }
-                        .disabled(model.isRunning)
+                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
                         .help("从博主列表移除 @\(creator.username)，已归档文章保留")
                     }
                 }
@@ -280,14 +286,21 @@ struct RootView: View {
                             ArticleRow(article: article)
                                 .tag(article.id)
                                 .contextMenu {
-                                    Button {
-                                        model.selectedArticleID = article.id
-                                        model.captureSelectedArticleExactly()
-                                    } label: {
-                                        Label("重新处理", systemImage: "arrow.clockwise")
+                                    if model.isArticleActivelyProcessing(article) {
+                                        Button(role: .cancel) {
+                                            model.stopProcessing(article)
+                                        } label: {
+                                            Label("停止处理", systemImage: "stop.circle")
+                                        }
+                                    } else {
+                                        Button {
+                                            model.restartProcessing(article)
+                                        } label: {
+                                            Label("重新处理", systemImage: "arrow.clockwise")
+                                        }
+                                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                                        .help("重新打开 X Article 页面并严格校验完整排版")
                                     }
-                                    .disabled(model.isRunning)
-                                    .help("重新打开 X Article 页面并严格校验完整排版")
                                     if ExactCaptureQueuePolicy.needsCapture(article) {
                                         Button(role: .destructive) {
                                             model.requestDeleteExactCaptureTask(article)
@@ -302,7 +315,7 @@ struct RootView: View {
                                     } label: {
                                         Label("删除文章…", systemImage: "trash")
                                     }
-                                    .disabled(model.isRunning)
+                                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
                                     .help("删除这篇文章的本地归档；远程图片和视频不删除")
                                 }
                         }
@@ -409,7 +422,7 @@ struct RootView: View {
                             .help("在默认浏览器打开当前 X Article 原页")
                             if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
                                 FixedReprocessButton(
-                                    isDisabled: model.isRunning,
+                                    isDisabled: model.isRunning || model.hasActiveDownloadProgress,
                                     help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
                                 ) {
                                     model.captureSelectedArticleExactly()
@@ -465,8 +478,13 @@ struct RootView: View {
                             Divider()
                             Button("访问原文") { model.openSource() }
                                 .help("在默认浏览器打开当前 X Article 原页")
-                            Button("重新处理") { model.captureSelectedArticleExactly() }
-                                .help("重新打开原页并严格校验完整排版")
+                            if model.isArticleActivelyProcessing(article) {
+                                Button("停止处理", role: .cancel) { model.stopProcessing(article) }
+                            } else {
+                                Button("重新处理") { model.restartProcessing(article) }
+                                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                                    .help("重新打开原页并严格校验完整排版")
+                            }
                         } label: {
                             Image(systemName: "ellipsis.circle").font(.title2)
                         }
@@ -476,22 +494,47 @@ struct RootView: View {
                 }
                 .padding(22)
                 Divider()
+                if article.pipelineState != .committed || article.lastError != nil {
+                    ArticleProcessingPanel(
+                        article: article,
+                        isActive: model.isArticleActivelyProcessing(article),
+                        isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                        stop: { model.stopProcessing(article) },
+                        restart: { model.restartProcessing(article) }
+                    )
+                    Divider()
+                }
                 ScrollView {
                     if let document = model.previewDocument(for: article) {
                         ArticleDocumentPreview(document: document, textScale: previewTextScale)
                             .padding(.horizontal, 30)
                             .padding(.vertical, 26 * previewTextScale)
+                    } else if article.pipelineState != .committed || article.lastError != nil {
+                        if article.markdownPath != nil {
+                            Text(model.markdownPreview(for: article))
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .padding(24)
+                        } else {
+                            ContentUnavailableView(
+                                "正文尚未生成",
+                                systemImage: "doc.badge.clock",
+                                description: Text("当前状态、错误原因和处理日志已显示在上方。")
+                            )
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                        }
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
-                            Label("这是旧版本留下的不完整记录", systemImage: "exclamationmark.triangle")
+                            Label("文章预览不可用", systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
-                            Text("请用应用内 X 页面重新读取这篇 Article。只有段落、列表、表格、代码和图片的真实顺序通过校验后才会覆盖。")
+                            Text("当前记录缺少可用于应用内预览的完整来源快照；本地 Markdown 仍显示在下方，可以重新处理以恢复预览。")
                                 .foregroundStyle(.secondary)
                             FixedReprocessButton(
-                                isDisabled: model.isRunning,
-                                help: "重新打开这篇 X Article 并保存完整排版"
+                                isDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                                help: "重新打开这篇 X Article 并恢复完整预览"
                             ) {
-                                model.captureSelectedArticleExactly()
+                                model.restartProcessing(article)
                             }
                             Text(model.markdownPreview(for: article))
                                 .font(.system(.body, design: .monospaced))
@@ -535,7 +578,7 @@ struct RootView: View {
             } label: {
                 Label("开始下载文章", systemImage: "square.and.arrow.down")
             }
-            .disabled(model.isRunning)
+            .disabled(model.isRunning || model.hasActiveDownloadProgress)
             .help("输入博主主页或 X Article 链接开始下载")
 
             Button {
@@ -543,10 +586,10 @@ struct RootView: View {
             } label: {
                 Label("同步所有博主文章", systemImage: SyncVisualStyle.symbolName)
             }
-            .disabled(model.isRunning || model.enabledCreatorCount == 0)
+            .disabled(model.isRunning || model.hasActiveDownloadProgress || model.enabledCreatorCount == 0)
             .help("选择每位博主要检查的最近文章数量，并在后台同步所有已跟踪博主")
 
-            if model.isRunning {
+            if model.isRunning || model.hasActiveDownloadProgress {
                 Button(role: .cancel) { model.cancelCurrentTask() } label: {
                     Label("安全停止", systemImage: "stop.circle")
                 }
@@ -866,6 +909,14 @@ private struct ArticleBlockView: View {
 
     private var typography: ArticleTypography { ArticleTypography(textScale) }
 
+    private var preferredVideoURL: URL? {
+        if let localPath = video?.localCachePath,
+           FileManager.default.fileExists(atPath: localPath) {
+            return URL(fileURLWithPath: localPath)
+        }
+        return video?.remoteURL
+    }
+
     @ViewBuilder
     var body: some View {
         switch block.kind {
@@ -952,8 +1003,8 @@ private struct ArticleBlockView: View {
         case .image:
             articleImage
         case .video:
-            if let remoteURL = video?.remoteURL {
-                ArchivedVideoPlayer(url: remoteURL)
+            if let playbackURL = preferredVideoURL {
+                ArchivedVideoPlayer(url: playbackURL)
             } else {
                 Label("视频尚未下载并验证", systemImage: "exclamationmark.triangle")
                     .font(bodyFont)
@@ -1258,6 +1309,114 @@ private struct FixedReprocessButton: View {
         .disabled(isDisabled)
         .help(help)
         .accessibilityLabel("重新处理")
+    }
+}
+
+private struct ArticleProcessingPanel: View {
+    let article: ArchivedArticle
+    let isActive: Bool
+    let isActionDisabled: Bool
+    let stop: () -> Void
+    let restart: () -> Void
+
+    private var title: String {
+        if article.pipelineState == .failed || article.lastError != nil { return "文章处理失败" }
+        if article.pipelineState == .cancelled { return "文章处理已停止" }
+        if isActive { return "文章正在处理中" }
+        return "文章等待继续处理"
+    }
+
+    private var detail: String {
+        if article.pipelineState == .failed || article.lastError != nil {
+            return "错误原因和处理日志已保存在资料库；本地已完成的媒体不会被删除。"
+        }
+        if article.pipelineState == .cancelled {
+            return "已安全停止；已完成步骤和本地媒体均保留，可以从当前文章重新开始。"
+        }
+        if isActive { return "正在读取 X 页面并保存正文、图片和视频。" }
+        return "任务尚未完成，可以重新开始处理。"
+    }
+
+    private var color: Color {
+        article.pipelineState == .failed || article.lastError != nil ? .red : .orange
+    }
+
+    private var icon: String {
+        article.pipelineState == .failed || article.lastError != nil
+            ? "xmark.octagon.fill"
+            : article.pipelineState == .cancelled ? "stop.circle.fill" : "clock.arrow.circlepath"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(color)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isActive {
+                    Button("停止处理", role: .cancel, action: stop)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                } else {
+                    FixedReprocessButton(
+                        isDisabled: isActionDisabled,
+                        help: "从当前文章重新开始读取、存储和校验"
+                    ) {
+                        restart()
+                    }
+                }
+            }
+
+            if let lastError = article.lastError, !lastError.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("错误原因").font(.caption.weight(.semibold)).foregroundStyle(.red)
+                    Text(lastError)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.red.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("处理日志").font(.caption.weight(.semibold))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if article.processingLog.isEmpty {
+                            Text("尚无详细日志；当前状态：\(article.pipelineState.displayName)")
+                        } else {
+                            ForEach(Array(article.processingLog.suffix(30).enumerated()), id: \.offset) { _, line in
+                                Text(line)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
+            .padding(10)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .background(color.opacity(0.035))
+        .contextMenu {
+            if isActive {
+                Button("停止处理", role: .cancel, action: stop)
+            } else {
+                Button("重新处理", action: restart)
+                    .disabled(isActionDisabled)
+            }
+        }
     }
 }
 

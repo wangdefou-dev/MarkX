@@ -93,13 +93,13 @@ public enum PipelineState: String, Codable, Sendable {
         case .discovered: "已发现"
         case .fetched: "已获取"
         case .parsed: "已解析"
-        case .mediaCached: "图片已缓存"
-        case .mediaUploaded: "图片已上传"
+        case .mediaCached: "媒体已缓存"
+        case .mediaUploaded: "媒体已存储"
         case .rendered: "已生成"
         case .verified: "已校验"
         case .committed: "已完成"
         case .failed: "失败"
-        case .cancelled: "已取消"
+        case .cancelled: "已停止"
         }
     }
 }
@@ -439,6 +439,7 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
     public var pipelineState: PipelineState
     public var warnings: [String]
     public var lastError: String?
+    public var processingLog: [String]
 
     public init(
         id: UUID = UUID(),
@@ -460,7 +461,8 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
         videoCount: Int = 0,
         pipelineState: PipelineState = .discovered,
         warnings: [String] = [],
-        lastError: String? = nil
+        lastError: String? = nil,
+        processingLog: [String] = []
     ) {
         self.id = id
         self.stableSourceKey = stableSourceKey
@@ -482,6 +484,15 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
         self.pipelineState = pipelineState
         self.warnings = warnings
         self.lastError = lastError
+        self.processingLog = processingLog
+    }
+
+    public mutating func appendProcessingLog(_ message: String, at date: Date = Date()) {
+        let timestamp = ISO8601DateFormatter().string(from: date)
+        processingLog.append("\(timestamp)  \(message)")
+        if processingLog.count > 120 {
+            processingLog.removeFirst(processingLog.count - 120)
+        }
     }
 }
 

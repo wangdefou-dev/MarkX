@@ -69,8 +69,11 @@ public actor ArchivePipeline {
             imageCount: document.media.count,
             videoCount: document.videos?.count ?? 0,
             pipelineState: .parsed,
-            warnings: document.warnings
+            warnings: document.warnings,
+            processingLog: existing?.processingLog ?? []
         )
+        record.lastError = nil
+        record.appendProcessingLog("开始处理文章：\(document.title)")
         try await database.upsertArticle(record)
 
         let internalRoot = root.appending(path: ".x-article-archiver", directoryHint: .isDirectory)
@@ -90,26 +93,35 @@ public actor ArchivePipeline {
                 document.media[index] = try await downloader.cache(document.media[index], in: cache)
             }
             record.pipelineState = .mediaCached
+            record.appendProcessingLog("已缓存 \(document.media.count) 张原图")
             try await database.upsertArticle(record)
 
-            await progress?(imageHost is LocalMediaHostAdapter
-                ? "正在保存 \(document.media.count) 张图片到本地媒体目录"
+            await progress?(imageHost.storesLocalBackup
+                ? "正在保存本地图片并写入 \(imageHost.displayName)"
                 : "正在上传 \(document.media.count) 张图片到 \(imageHost.displayName)")
-            let pendingMedia = document.media.filter { $0.remoteURL == nil }
+            let pendingMedia = document.media.filter {
+                $0.remoteURL == nil || (imageHost.storesLocalBackup && !Self.isMediaBackupPath($0.localCachePath, root: root))
+            }
             let localURLs = try pendingMedia.map { media -> URL in
                 guard let path = media.localCachePath else { throw ArchivePipelineError.missingLocalImage(media.id) }
                 return URL(fileURLWithPath: path)
             }
             let uploadResults = try await imageHost.upload(fileURLs: localURLs)
-            let remoteByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0.remoteURL) })
-            for index in document.media.indices where document.media[index].remoteURL == nil {
-                guard let path = document.media[index].localCachePath, let remoteURL = remoteByPath[path] else {
-                    throw ImagePipelineError.outputCountMismatch(expected: localURLs.count, actual: remoteByPath.count)
+            let resultByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0) })
+            for index in document.media.indices {
+                guard let path = document.media[index].localCachePath,
+                      pendingMedia.contains(where: { $0.localCachePath == path }) else { continue }
+                guard let result = resultByPath[path] else {
+                    throw ImagePipelineError.outputCountMismatch(expected: localURLs.count, actual: resultByPath.count)
                 }
-                try await imageHost.verify(remoteURL: remoteURL)
-                document.media[index].remoteURL = remoteURL
+                try await imageHost.verify(remoteURL: result.remoteURL)
+                document.media[index].remoteURL = result.remoteURL
+                if let backup = Self.localBackupPath(result.localBackupURL, root: root) {
+                    document.media[index].localCachePath = backup
+                }
             }
             record.pipelineState = .mediaUploaded
+            record.appendProcessingLog("图片处理完成：\(document.media.count) 张；本地备份已校验")
             try await database.upsertArticle(record)
         }
 
@@ -122,12 +134,15 @@ public actor ArchivePipeline {
             }
             document.videos = videos
             record.pipelineState = .mediaCached
+            record.appendProcessingLog("已缓存 \(videos.count) 个视频原文件")
             try await database.upsertArticle(record)
 
-            await progress?(imageHost is LocalMediaHostAdapter
-                ? "正在保存 \(videos.count) 个视频到本地媒体目录"
+            await progress?(imageHost.storesLocalBackup
+                ? "正在保存本地视频并写入 \(imageHost.displayName)"
                 : "正在上传 \(videos.count) 个视频到 \(imageHost.displayName)")
-            let pendingVideos = videos.filter { $0.remoteURL == nil }
+            let pendingVideos = videos.filter {
+                $0.remoteURL == nil || (imageHost.storesLocalBackup && !Self.isMediaBackupPath($0.localCachePath, root: root))
+            }
             let localURLs = try pendingVideos.map { video -> URL in
                 guard let path = video.localCachePath else {
                     throw ArchivePipelineError.missingLocalVideo(video.id)
@@ -135,24 +150,29 @@ public actor ArchivePipeline {
                 return URL(fileURLWithPath: path)
             }
             let uploadResults = try await imageHost.upload(fileURLs: localURLs)
-            let remoteByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0.remoteURL) })
-            for index in videos.indices where videos[index].remoteURL == nil {
+            let resultByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0) })
+            for index in videos.indices {
                 guard let path = videos[index].localCachePath,
-                      let remoteURL = remoteByPath[path] else {
+                      pendingVideos.contains(where: { $0.localCachePath == path }) else { continue }
+                guard let result = resultByPath[path] else {
                     throw ImagePipelineError.outputCountMismatch(
                         expected: localURLs.count,
-                        actual: remoteByPath.count
+                        actual: resultByPath.count
                     )
                 }
-                try await imageHost.verifyVideo(remoteURL: remoteURL)
-                videos[index].remoteURL = remoteURL
+                try await imageHost.verifyVideo(remoteURL: result.remoteURL)
+                videos[index].remoteURL = result.remoteURL
+                if let backup = Self.localBackupPath(result.localBackupURL, root: root) {
+                    videos[index].localCachePath = backup
+                }
             }
             document.videos = videos
             record.pipelineState = .mediaUploaded
+            record.appendProcessingLog("视频处理完成：\(videos.count) 个；本地备份已校验")
             try await database.upsertArticle(record)
         }
 
-        let creatorDirectory = root.appending(path: SafeFileName.creatorDirectory(handle: creator.username, displayName: creator.displayName), directoryHint: .isDirectory)
+        let creatorDirectory = ArchiveLayout.creatorDirectory(in: root, creator: creator)
         let articlesDirectory = creatorDirectory.appending(path: "articles", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: articlesDirectory, withIntermediateDirectories: true)
         let fileName = SafeFileName.articleFileName(title: document.title, publishedAt: document.publishedAt, postID: document.sourcePostID)
@@ -171,6 +191,7 @@ public actor ArchivePipeline {
             markdownDirectory: articlesDirectory
         )
         record.pipelineState = .verified
+        record.appendProcessingLog("Markdown 内容与媒体顺序校验通过")
         try await database.upsertArticle(record)
 
         var obsoleteCleanFile: URL?
@@ -207,17 +228,36 @@ public actor ArchivePipeline {
         record.pipelineState = .committed
         record.lastSyncedAt = Date()
         record.warnings = document.warnings
+        record.appendProcessingLog("处理完成，Markdown 已保存")
         try await database.upsertArticle(record)
         try ArchiveIndexWriter.rebuild(root: root, creator: creator)
         await progress?("已完成：\(document.title)")
         return record
     }
 
+    private static func localBackupPath(_ relativeURL: URL?, root: URL) -> String? {
+        guard let relativeURL, relativeURL.scheme == nil else { return nil }
+        let relativePath = relativeURL.relativeString.removingPercentEncoding ?? relativeURL.relativeString
+        let parts = NSString(string: relativePath).pathComponents
+        guard relativePath.hasPrefix("media/"), !relativePath.hasPrefix("/"), !parts.contains("..") else {
+            return nil
+        }
+        let resolved = root.appending(path: relativePath).standardizedFileURL
+        guard resolved.path.hasPrefix(root.standardizedFileURL.path + "/") else { return nil }
+        return resolved.path
+    }
+
+    private static func isMediaBackupPath(_ path: String?, root: URL) -> Bool {
+        guard let path else { return false }
+        let mediaRoot = root.appending(path: ArchiveLayout.mediaDirectoryName).standardizedFileURL.path
+        return URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(mediaRoot + "/")
+    }
+
 }
 
 public enum ArchiveIndexWriter {
     public static func rebuild(root: URL, creator: Creator) throws {
-        let creatorDirectory = root.appending(path: SafeFileName.creatorDirectory(handle: creator.username, displayName: creator.displayName), directoryHint: .isDirectory)
+        let creatorDirectory = ArchiveLayout.creatorDirectory(in: root, creator: creator)
         let articlesDirectory = creatorDirectory.appending(path: "articles", directoryHint: .isDirectory)
         // A pending Article may be deleted before its first Markdown exists.
         // Rebuilding an empty creator index must still succeed so no ghost row
@@ -233,9 +273,11 @@ public enum ArchiveIndexWriter {
         }
         try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: creatorIndex, options: .atomic)
 
-        let rootIndex = root.appending(path: "index.md")
+        let bloggersDirectory = ArchiveLayout.bloggersDirectory(in: root)
+        try FileManager.default.createDirectory(at: bloggersDirectory, withIntermediateDirectories: true)
+        let rootIndex = bloggersDirectory.appending(path: "index.md")
         var rootLines = ["# X 长文归档", "", "最后更新：\(Date().formatted(date: .numeric, time: .standard))", ""]
-        let creatorDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
+        let creatorDirectories = try FileManager.default.contentsOfDirectory(at: bloggersDirectory, includingPropertiesForKeys: [.isDirectoryKey])
             .filter { $0.lastPathComponent.hasPrefix("@") }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         for directory in creatorDirectories {

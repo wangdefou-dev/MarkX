@@ -500,7 +500,7 @@ struct ConnectionSetupView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .help("默认保存在归档目录，也可切换为 uPic 或 S3/R2 图床")
+            .help("默认只保存在归档目录；选择 uPic 时会同时保存本地备份与远程副本")
 
             if model.imageHostChoice == .local {
                 Label("无需额外配置，已可用", systemImage: "externaldrive.fill.badge.checkmark")
@@ -511,7 +511,7 @@ struct ConnectionSetupView: View {
             } else if model.imageHostChoice == .uPic {
                 Label(model.upicCapability.detail, systemImage: model.upicCapability.isAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(model.upicCapability.isAvailable ? .green : .orange)
-                Text("会让 uPic 使用它当前的默认图床上传一张 1×1 无隐私测试图，再由本应用验证返回的 HTTPS 图片。")
+                Text("会让 uPic 使用当前默认图床上传一张 1×1 无隐私测试图，再由本应用验证返回的 HTTPS 图片。验证后，每张图片和视频都会先保存到本地 media，再上传 uPic。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button(isTestingUPic ? "正在测试…" : "验证 uPic 默认图床") {
@@ -523,7 +523,7 @@ struct ConnectionSetupView: View {
                 }
                 .disabled(!model.upicCapability.isAvailable || isTestingUPic || isTestingS3)
                 .help("上传一张无隐私测试图，验证 uPic 当前默认图床能返回可访问的 HTTPS 地址")
-                Text("本应用不读取、复制或记录 uPic 的密钥；文章媒体交给 uPic 上传，上传结果再经 HTTPS 回读校验。")
+                Text("Markdown 默认写入 uPic 的 HTTPS 链接，本地 media 文件作为备份和应用内预览来源。本应用不读取、复制或记录 uPic 的密钥。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
