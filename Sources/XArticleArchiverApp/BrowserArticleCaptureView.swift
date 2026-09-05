@@ -323,6 +323,69 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         const card = element.closest('article, [data-testid="tweet"]');
         return Boolean(card && richRoot.contains(card));
       };
+      const embeddedMediaID = element => {
+        const values = [
+          element.getAttribute('poster') || '',
+          element.currentSrc || '',
+          element.getAttribute('src') || ''
+        ];
+        for (const value of values) {
+          const match = value.match(/\/(?:amplify_video(?:_thumb)?|ext_tw_video(?:_thumb)?|tweet_video)\/(\d{1,19})(?:\/|\.)/);
+          if (match) return match[1];
+        }
+        return null;
+      };
+      const downloadableVideoURLs = (video, block) => {
+        const output = new Set();
+        const add = value => {
+          if (typeof value !== 'string' || !value.includes('video.twimg.com')) return;
+          try {
+            const parsed = new URL(value, location.href);
+            if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'video.twimg.com') return;
+            if (!/\.(?:mp4|m3u8)$/i.test(parsed.pathname)) return;
+            output.add(parsed.href);
+          } catch (_) {}
+        };
+        add(video.currentSrc || '');
+        add(video.getAttribute('src') || '');
+        [...video.querySelectorAll('source[src]')].forEach(source => add(source.getAttribute('src') || ''));
+
+        // X plays HLS through a blob: URL, while the progressive MP4 variants
+        // remain in the React media payload attached to the rendered player.
+        // Read only video.twimg.com URL strings from that local component data;
+        // no cookies, headers, or unrelated page state leave the web view.
+        const seen = new WeakSet();
+        let remaining = 25000;
+        const visit = (value, depth) => {
+          if (--remaining < 0 || depth > 8 || value == null) return;
+          if (typeof value === 'string') { add(value); return; }
+          if ((typeof value !== 'object' && typeof value !== 'function') || seen.has(value)) return;
+          seen.add(value);
+          let keys = [];
+          try { keys = Object.keys(value); } catch (_) { return; }
+          for (const key of keys.slice(0, 200)) {
+            try { visit(value[key], depth + 1); } catch (_) {}
+          }
+        };
+        let current = video;
+        while (current) {
+          const reactKeys = Object.keys(current).filter(key => key.startsWith('__react'));
+          for (const key of reactKeys) {
+            try { visit(current[key], 0); } catch (_) {}
+          }
+          if (current === block) break;
+          current = current.parentElement;
+        }
+
+        const id = embeddedMediaID(video);
+        if (id) {
+          performance.getEntriesByType('resource')
+            .map(entry => entry.name)
+            .filter(value => value.includes(`/${id}/`))
+            .forEach(add);
+        }
+        return [...output];
+      };
 
       const mergeRanges = ranges => {
         const sorted = ranges
@@ -473,10 +536,9 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
           }
           const embedded = node.querySelector('iframe, video, audio');
           if (embedded) {
-            // Video/audio files are outside the v1 archive scope, but their
-            // presence must not make the complete surrounding article fail.
-            // Preserve a real poster image when X exposes one as Article
-            // media, then leave a visible, source-linked marker in place.
+            // Preserve an Article image when X exposes one separately from
+            // the player. Videos continue through the verified MP4 pipeline;
+            // audio and other embeds keep a visible source-linked marker.
             const posterImage = node.querySelector('[data-testid="tweetPhoto"] img, img');
             if (posterImage) {
               const capturedPoster = imageBlock(posterImage);
@@ -487,11 +549,29 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
               : (embedded.tagName.toLowerCase() === 'audio' ? 'audio' : 'embedded-media');
             const sourceURL = canonicalXContentURL(location.href);
             const detail = (node.innerText || '').trim().slice(0, 200);
+            const mediaURLs = mediaType === 'video'
+              ? downloadableVideoURLs(embedded, node)
+              : [];
+            const hasProgressiveMP4 = mediaURLs.some(value => {
+              try {
+                const path = new URL(value).pathname;
+                return /\/(?:avc1|vp9)\/\d+x\d+\/[^/]+\.mp4$/i.test(path)
+                  || /\/tweet_video\/[^/]+\.mp4$/i.test(path);
+              } catch (_) { return false; }
+            });
+            if (mediaType === 'video' && !hasProgressiveMP4)
+              return ERROR + "视频正在解析真实 MP4 地址。";
             blocks.push({
               kind:'embedded_media', text:detail, level:0, depth:0, styles:[],
               links:sourceURL ? [{offset:0, length:detail.length, url:sourceURL}] : [],
               imageURL:null, imageID:null, altText:null, language:null,
-              embeddedMediaType:mediaType
+              embeddedMediaType:mediaType,
+              embeddedMediaID:embeddedMediaID(embedded),
+              embeddedMediaURLs:mediaURLs,
+              posterURL:absoluteURL(embedded.getAttribute('poster') || ''),
+              durationSeconds:Number.isFinite(embedded.duration) && embedded.duration > 0
+                ? embedded.duration
+                : null
             });
             continue;
           }
@@ -664,8 +744,8 @@ struct BrowserArticleCaptureView: View {
                 Text(model.isSyncingTrackedCreators ? "正在后台同步 X Article" : "正在后台下载 X Article")
                     .font(.title3.weight(.semibold))
                 Text(model.isSyncingTrackedCreators
-                     ? "已同步文章自动跳过，新文章会保留文字、图片和原始顺序"
-                     : "自动使用 Chrome 登录态并保存文字、图片和原始顺序")
+                     ? "已同步文章自动跳过，新文章会保留文字、图片、视频和原始顺序"
+                     : "自动使用 Chrome 登录态并保存文字、图片、视频和原始顺序")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -694,7 +774,7 @@ struct BrowserArticleCaptureView: View {
                 Text(model.isRunning ? model.progress.stage : controller.pageStatus)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text("保存 \(model.progress.completedArticles) · 跳过 \(model.progress.skippedArticles) · 失败 \(model.progress.failedArticles) · 图片 \(model.progress.uploadedImages)")
+                Text("保存 \(model.progress.completedArticles) · 跳过 \(model.progress.skippedArticles) · 失败 \(model.progress.failedArticles) · 图片 \(model.progress.uploadedImages) · 视频 \(model.progress.uploadedVideos)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }

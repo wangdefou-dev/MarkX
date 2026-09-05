@@ -30,6 +30,31 @@ public protocol ImageHostAdapter: Sendable {
     func probe() async -> ImageHostCapability
     func upload(fileURLs: [URL]) async throws -> [UploadResult]
     func verify(remoteURL: URL) async throws
+    func verifyVideo(remoteURL: URL) async throws
+}
+
+public extension ImageHostAdapter {
+    func verifyVideo(remoteURL: URL) async throws {
+        guard remoteURL.scheme?.lowercased() == "https", let host = remoteURL.host, !host.isEmpty,
+              host != "localhost", host != "127.0.0.1", host != "::1" else {
+            throw VideoPipelineError.insecureURL(remoteURL.absoluteString)
+        }
+        var request = URLRequest(url: remoteURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw VideoPipelineError.invalidHTTPStatus(0)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw VideoPipelineError.invalidHTTPStatus(http.statusCode)
+        }
+        let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
+        guard mime?.hasPrefix("video/") == true || mime == "application/octet-stream" else {
+            throw VideoPipelineError.invalidMIME(mime)
+        }
+    }
 }
 
 public enum ImagePipelineError: LocalizedError, Sendable {
@@ -55,6 +80,101 @@ public enum ImagePipelineError: LocalizedError, Sendable {
         case .fileTooLarge(let bytes): "图片超过 50 MB 限制（\(bytes) bytes）"
         case .emptyFile: "图片文件为空"
         }
+    }
+}
+
+public enum VideoPipelineError: LocalizedError, Sendable {
+    case insecureURL(String)
+    case invalidHTTPStatus(Int)
+    case invalidMIME(String?)
+    case invalidMP4
+    case fileTooLarge(Int64)
+    case emptyFile
+
+    public var errorDescription: String? {
+        switch self {
+        case .insecureURL(let value): "视频地址不安全或无效：\(value)"
+        case .invalidHTTPStatus(let code): "视频下载或回读失败（HTTP \(code)）"
+        case .invalidMIME(let mime): "返回内容不是可识别视频（\(mime ?? "无 MIME")）"
+        case .invalidMP4: "下载结果不是有效的 MP4 视频"
+        case .fileTooLarge(let bytes): "视频超过 2 GB 限制（\(bytes) bytes）"
+        case .emptyFile: "视频文件为空"
+        }
+    }
+}
+
+public struct VideoDownloader: Sendable {
+    private let session: URLSession
+    public var maximumBytes: Int64
+
+    public init(session: URLSession = .shared, maximumBytes: Int64 = 2 * 1_024 * 1_024 * 1_024) {
+        self.session = session
+        self.maximumBytes = maximumBytes
+    }
+
+    public func cache(_ video: VideoAsset, in cacheDirectory: URL) async throws -> VideoAsset {
+        var mostRecentError: Error?
+        for attempt in 0..<3 {
+            try Task.checkCancellation()
+            do {
+                return try await cacheOnce(video, in: cacheDirectory)
+            } catch {
+                mostRecentError = error
+                guard attempt < 2 else { throw error }
+                try await Task.sleep(for: .milliseconds(attempt == 0 ? 700 : 1_800))
+            }
+        }
+        throw mostRecentError ?? VideoPipelineError.emptyFile
+    }
+
+    private func cacheOnce(_ video: VideoAsset, in cacheDirectory: URL) async throws -> VideoAsset {
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        var request = URLRequest(url: video.sourceURL)
+        request.timeoutInterval = 180
+        let (temporaryURL, response) = try await session.download(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw VideoPipelineError.invalidHTTPStatus(0)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw VideoPipelineError.invalidHTTPStatus(http.statusCode)
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: temporaryURL.path)
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        guard size > 0 else { throw VideoPipelineError.emptyFile }
+        guard size <= maximumBytes else { throw VideoPipelineError.fileTooLarge(size) }
+        let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
+        guard mime?.hasPrefix("video/") == true || mime == "application/octet-stream" else {
+            throw VideoPipelineError.invalidMIME(mime)
+        }
+
+        let prefix = try Data(contentsOf: temporaryURL, options: .mappedIfSafe).prefix(16)
+        guard prefix.count >= 8,
+              String(data: Data(prefix.dropFirst(4).prefix(4)), encoding: .ascii) == "ftyp" else {
+            throw VideoPipelineError.invalidMP4
+        }
+        let digest = try hashVideoFile(temporaryURL)
+        let destination = cacheDirectory.appending(path: "\(digest).mp4")
+        if !FileManager.default.fileExists(atPath: destination.path) {
+            let staging = cacheDirectory.appending(path: ".\(UUID().uuidString).tmp")
+            try FileManager.default.copyItem(at: temporaryURL, to: staging)
+            try FileManager.default.moveItem(at: staging, to: destination)
+        }
+        var updated = video
+        updated.localCachePath = destination.path
+        updated.sha256 = digest
+        return updated
+    }
+
+    private func hashVideoFile(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let data = try handle.read(upToCount: 1_048_576) ?? Data()
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
 

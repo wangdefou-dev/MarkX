@@ -208,20 +208,10 @@ final class AppViewModel: ObservableObject {
         }
 
         upicCapability = await UPicAdapter().probe()
-        if upicCapability.isAvailable {
-            do {
-                let profile = try await Task.detached(priority: .utility) {
-                    try UPicConfigurationReader.readDefaultS3()
-                }.value
-                upicCapability.detail = "已读取 uPic 当前默认配置：\(profile.name)"
-                if imageHostChoice == .uPic,
-                   defaults.string(forKey: "uPicProfileFingerprint") != Self.fingerprint(for: profile) {
-                    setImageHostVerified(false)
-                }
-            } catch {
-                upicCapability.detail = error.localizedDescription
-                if imageHostChoice == .uPic { setImageHostVerified(false) }
-            }
+        if !upicCapability.isAvailable, imageHostChoice == .uPic {
+            setImageHostVerified(false)
+        } else if imageHostChoice == .uPic, imageHostVerified {
+            upicCapability.detail = "uPic 当前默认图床已通过真实上传验证"
         }
     }
 
@@ -579,18 +569,23 @@ final class AppViewModel: ObservableObject {
             return false
         }
         do {
-            let profile = try await Task.detached(priority: .userInitiated) {
-                try UPicConfigurationReader.readDefaultS3()
-            }.value
-            let adapter = S3ImageHostAdapter(
-                configuration: profile.configuration,
-                accessKey: profile.accessKey,
-                secretKey: profile.secretKey
-            )
+            let adapter = UPicAdapter()
+            guard let archiveRoot else {
+                throw ImagePipelineError.hostUnavailable("请先选择本地归档目录")
+            }
             statusMessage = "正在通过 uPic 默认图床上传无隐私测试图…"
-            let remote = try await uploadSyntheticTestImage(using: adapter)
-            defaults.set(Self.fingerprint(for: profile), forKey: "uPicProfileFingerprint")
-            upicCapability.detail = "已验证 \(profile.name)：\(remote.host ?? "远程图床")"
+            // The App Store build of uPic is sandboxed. Staging the probe inside
+            // the selected archive root verifies the exact filesystem scope that
+            // will later contain image/video cache files; another app's private
+            // temporary directory is intentionally not readable by uPic.
+            let remote = try await uploadSyntheticTestImage(
+                using: adapter,
+                stagingRoot: archiveRoot.appending(
+                    path: ".x-article-archiver/uPic-connection-tests",
+                    directoryHint: .isDirectory
+                )
+            )
+            upicCapability.detail = "已验证 uPic 当前默认图床：\(remote.host ?? "远程图床")"
             setImageHostVerified(true)
             statusMessage = "uPic 默认图床测试通过：\(remote.host ?? "远程图床")"
             return true
@@ -645,25 +640,6 @@ final class AppViewModel: ObservableObject {
             setImageHostVerified(false)
             errorMessage = error.localizedDescription
             statusMessage = "S3/R2 图床测试失败"
-            return false
-        }
-    }
-
-    func importAndTestCurrentUPicS3() async -> Bool {
-        do {
-            statusMessage = "正在读取 uPic 当前默认 S3/R2 配置…"
-            let imported = try await Task.detached(priority: .userInitiated) {
-                try UPicConfigurationReader.readDefaultS3()
-            }.value
-            s3Endpoint = imported.configuration.endpoint.absoluteString
-            s3Bucket = imported.configuration.bucket
-            s3PublicBaseURL = imported.configuration.publicBaseURL.absoluteString
-            s3Region = imported.configuration.region
-            s3KeyPrefix = imported.configuration.keyPrefix
-            return await saveAndTestS3(accessKey: imported.accessKey, secretKey: imported.secretKey)
-        } catch {
-            setImageHostVerified(false)
-            errorMessage = error.localizedDescription
             return false
         }
     }
@@ -1000,6 +976,7 @@ final class AppViewModel: ObservableObject {
             let failed = browserCaptureFailurePostIDs.count
             let skipped = progress.skippedArticles
             let images = progress.uploadedImages
+            let videos = progress.uploadedVideos
             let failureNote = browserCaptureFailureDetails.isEmpty
                 ? ""
                 : "\n\n未完成：\(browserCaptureFailureDetails.prefix(3).joined(separator: "；"))"
@@ -1015,7 +992,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
                         title: failed == 0 ? "全部博主同步完成" : "同步完成，部分文章失败",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存并上传/复用 \(images) 张图片。\n\n整个同步过程在后台完成，X API 调用为 0。\(failureNote)"
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；保存并上传/复用 \(images) 张图片、\(videos) 个视频。\n\n整个同步过程在后台完成，X API 调用为 0。\(failureNote)"
                     )
                 }
             } else {
@@ -1025,7 +1002,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.downloadResultNotice = DownloadResultNotice(
                         title: failed == 0 ? "文章下载完成" : "下载完成，部分文章失败",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存并上传/复用 \(images) 张图片。\(failureNote)"
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，失败 \(failed) 篇；成功保存并上传/复用 \(images) 张图片、\(videos) 个视频。\(failureNote)"
                     )
                 }
             }
@@ -1152,6 +1129,7 @@ final class AppViewModel: ObservableObject {
             }
             progress.completedArticles += 1
             progress.uploadedImages += document.media.count
+            progress.uploadedVideos += document.videos?.count ?? 0
             browserCaptureFailurePostIDs.remove(request.link.postID)
             progress.failedArticles = browserCaptureFailurePostIDs.count
             try await reload()
@@ -1232,7 +1210,7 @@ final class AppViewModel: ObservableObject {
                 }
                 if selectedArticleID == article.id { selectedArticleID = nil }
                 try await reload()
-                statusMessage = "已将《\(article.title)》移到废纸篓；图床上的远程图片未删除"
+                statusMessage = "已将《\(article.title)》移到废纸篓；远程图片和视频未删除"
             } catch {
                 // If deleting the database row succeeded but refreshing an
                 // index failed, do not leave a stale in-memory ghost article.
@@ -1742,6 +1720,7 @@ final class AppViewModel: ObservableObject {
         progress.skippedArticles = skippedCount
         progress.completedArticles = 0
         progress.uploadedImages = 0
+        progress.uploadedVideos = 0
         progress.failedArticles = 0
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
@@ -1912,18 +1891,13 @@ final class AppViewModel: ObservableObject {
     private func configuredImageHost() async throws -> any ImageHostAdapter {
         switch imageHostChoice {
         case .uPic:
-            let profile = try await Task.detached(priority: .userInitiated) {
-                try UPicConfigurationReader.readDefaultS3()
-            }.value
-            guard defaults.string(forKey: "uPicProfileFingerprint") == Self.fingerprint(for: profile) else {
+            let adapter = UPicAdapter()
+            let capability = await adapter.probe()
+            guard capability.isAvailable else {
                 setImageHostVerified(false)
-                throw S3ImageHostError.invalidConfiguration("uPic 默认图床配置已变更，请重新验证")
+                throw ImagePipelineError.hostUnavailable(capability.detail)
             }
-            return S3ImageHostAdapter(
-                configuration: profile.configuration,
-                accessKey: profile.accessKey,
-                secretKey: profile.secretKey
-            )
+            return adapter
         case .s3:
             let credentials = try await Task.detached(priority: .userInitiated) {
                 (
@@ -1946,8 +1920,14 @@ final class AppViewModel: ObservableObject {
         defaults.set(value, forKey: "imageHostVerified")
     }
 
-    private func uploadSyntheticTestImage(using adapter: any ImageHostAdapter) async throws -> URL {
-        let directory = FileManager.default.temporaryDirectory.appending(path: "x-article-archiver-s3-test-\(UUID().uuidString)", directoryHint: .isDirectory)
+    private func uploadSyntheticTestImage(
+        using adapter: any ImageHostAdapter,
+        stagingRoot: URL = FileManager.default.temporaryDirectory
+    ) async throws -> URL {
+        let directory = stagingRoot.appending(
+            path: "x-article-archiver-host-test-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appending(path: "连接测试.png")
@@ -1956,20 +1936,6 @@ final class AppViewModel: ObservableObject {
         guard let remote = results.first?.remoteURL else { throw ImagePipelineError.invalidOutput("没有返回 URL") }
         try await adapter.verify(remoteURL: remote)
         return remote
-    }
-
-    private static func fingerprint(for profile: UPicS3Profile) -> String {
-        let configuration = profile.configuration
-        let value = [
-            configuration.endpoint.absoluteString,
-            configuration.bucket,
-            configuration.publicBaseURL.absoluteString,
-            configuration.region,
-            configuration.keyPrefix,
-            profile.accessKey,
-            profile.secretKey
-        ].joined(separator: "|")
-        return ContentHasher.sha256(value)
     }
 
     private static let testPNGData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!

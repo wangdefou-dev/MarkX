@@ -9,6 +9,7 @@ public enum BrowserArticleCaptureError: LocalizedError, Sendable {
     case unsupportedRenderedBlocks(Int)
     case sourceTextMismatch
     case invalidImage(String)
+    case missingVideoSource(String)
     case invalidEmbeddedArticleLink(String)
 
     public var errorDescription: String? {
@@ -29,6 +30,8 @@ public enum BrowserArticleCaptureError: LocalizedError, Sendable {
             "页面正文与 API 发现阶段保存的 plain_text 不一致，未覆盖本地文件"
         case .invalidImage(let value):
             "文章图片地址无效：\(value)"
+        case .missingVideoSource(let value):
+            "没有读到可下载的 X 视频 MP4 地址：\(value)"
         case .invalidEmbeddedArticleLink(let value):
             "引用文章卡片中没有可验证的 X 文章链接：\(value)"
         }
@@ -98,6 +101,10 @@ public struct BrowserCapturedBlock: Codable, Hashable, Sendable {
     public var tableRows: [[BrowserCapturedTableCell]]?
     public var listMarker: String?
     public var embeddedMediaType: String?
+    public var embeddedMediaID: String?
+    public var embeddedMediaURLs: [String]?
+    public var posterURL: String?
+    public var durationSeconds: Double?
 
     public init(
         kind: Kind,
@@ -112,7 +119,11 @@ public struct BrowserCapturedBlock: Codable, Hashable, Sendable {
         language: String? = nil,
         tableRows: [[BrowserCapturedTableCell]]? = nil,
         listMarker: String? = nil,
-        embeddedMediaType: String? = nil
+        embeddedMediaType: String? = nil,
+        embeddedMediaID: String? = nil,
+        embeddedMediaURLs: [String]? = nil,
+        posterURL: String? = nil,
+        durationSeconds: Double? = nil
     ) {
         self.kind = kind
         self.text = text
@@ -127,6 +138,10 @@ public struct BrowserCapturedBlock: Codable, Hashable, Sendable {
         self.tableRows = tableRows
         self.listMarker = listMarker
         self.embeddedMediaType = embeddedMediaType
+        self.embeddedMediaID = embeddedMediaID
+        self.embeddedMediaURLs = embeddedMediaURLs
+        self.posterURL = posterURL
+        self.durationSeconds = durationSeconds
     }
 }
 
@@ -205,8 +220,10 @@ public enum BrowserArticleCaptureDecoder {
         guard !title.isEmpty else { throw BrowserArticleCaptureError.missingTitle }
 
         var media: [MediaAsset] = []
+        var videos: [VideoAsset] = []
         var blocks: [CanonicalBlock] = []
         var usedMediaIDs = Set<String>()
+        var usedVideoIDs = Set<String>()
         var embeddedMediaCounts: [String: Int] = [:]
 
         for captured in payload.blocks {
@@ -223,7 +240,7 @@ public enum BrowserArticleCaptureDecoder {
             case .table: canonicalKind = .table
             case .image: canonicalKind = .image
             case .embeddedPost: canonicalKind = .embeddedPost
-            case .embeddedMedia: canonicalKind = .unsupported
+            case .embeddedMedia: canonicalKind = .video
             }
 
             if captured.kind == .image {
@@ -270,9 +287,44 @@ public enum BrowserArticleCaptureDecoder {
             if captured.kind == .embeddedMedia {
                 let mediaType = normalizedEmbeddedMediaType(captured.embeddedMediaType)
                 embeddedMediaCounts[mediaType, default: 0] += 1
+                if mediaType == "video" {
+                    guard let sourceURL = preferredVideoURL(from: captured.embeddedMediaURLs ?? []) else {
+                        throw BrowserArticleCaptureError.missingVideoSource(
+                            captured.embeddedMediaID ?? captured.text
+                        )
+                    }
+                    let rawID = captured.embeddedMediaID?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let baseID = rawID?.isEmpty == false
+                        ? rawID!
+                        : "browser-video-\(ContentHasher.sha256(sourceURL.absoluteString).prefix(20))"
+                    var videoID = baseID
+                    var suffix = 2
+                    while !usedVideoIDs.insert(videoID).inserted {
+                        videoID = "\(baseID)-\(suffix)"
+                        suffix += 1
+                    }
+                    let duration = captured.durationSeconds.flatMap {
+                        $0.isFinite && $0 > 0 ? $0 : nil
+                    }
+                    videos.append(VideoAsset(
+                        id: videoID,
+                        sourceURL: sourceURL,
+                        posterURL: captured.posterURL.flatMap(normalizedVideoPosterURL(from:)),
+                        position: videos.count,
+                        durationSeconds: duration
+                    ))
+                    blocks.append(CanonicalBlock(
+                        kind: .video,
+                        mediaID: videoID,
+                        sourceEntityType: "browser-rendered-video"
+                    ))
+                    continue
+                }
+
                 let sourceURL = URL(string: "https://x.com/\(context.link.username)/status/\(context.link.postID)")!
                 let detail = captured.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                let prefix = mediaType == "video" ? "视频未归档" : "嵌入媒体未归档"
+                let prefix = "嵌入媒体未归档"
                 let detailSuffix = detail.isEmpty || detail == "嵌入内容" ? "" : "（\(detail)）"
                 let messagePrefix = "\(prefix)\(detailSuffix)，请在原文查看："
                 let linkText = sourceURL.absoluteString
@@ -334,7 +386,9 @@ public enum BrowserArticleCaptureDecoder {
         }
 
         guard blocks.contains(where: {
-            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.kind == .image
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || $0.kind == .image
+                || $0.kind == .video
         }) else {
             throw BrowserArticleCaptureError.missingBody
         }
@@ -360,9 +414,6 @@ public enum BrowserArticleCaptureDecoder {
         }
 
         var warnings: [String] = []
-        if let videoCount = embeddedMediaCounts["video"], videoCount > 0 {
-            warnings.append("文章包含 \(videoCount) 个视频；当前版本不下载视频文件，已在原位置保留原文查看入口")
-        }
         let otherEmbeddedMediaCount = embeddedMediaCounts
             .filter { $0.key != "video" }
             .reduce(0) { $0 + $1.value }
@@ -382,9 +433,11 @@ public enum BrowserArticleCaptureDecoder {
             publishedAt: publishedAt,
             blocks: blocks,
             media: media,
+            videos: videos,
             warnings: warnings,
             sourcePlainText: context.expectedPlainText,
             sourceMediaIDs: media.map(\.id),
+            sourceVideoIDs: videos.map(\.id),
             layoutFidelity: .renderedPageVerified
         )
         try ContentFidelityValidator.validateCanonical(document)
@@ -426,6 +479,49 @@ public enum BrowserArticleCaptureDecoder {
         return URL(string: "https://x.com/\(parts.joined(separator: "/"))")
     }
 
+    static func preferredVideoURL(from values: [String]) -> URL? {
+        values.compactMap { value -> (url: URL, score: Int)? in
+            guard let components = URLComponents(string: value),
+                  components.scheme?.lowercased() == "https",
+                  components.host?.lowercased() == "video.twimg.com",
+                  components.path.lowercased().hasSuffix(".mp4"),
+                  !components.path.lowercased().contains("/aud/") else { return nil }
+
+            let parts = components.path.split(separator: "/").map(String.init)
+            let resolution = parts.compactMap { part -> (Int, Int)? in
+                let dimensions = part.split(separator: "x", maxSplits: 1)
+                guard dimensions.count == 2,
+                      let width = Int(dimensions[0]),
+                      let height = Int(dimensions[1]),
+                      width > 0, height > 0 else { return nil }
+                return (width, height)
+            }.max { $0.0 * $0.1 < $1.0 * $1.1 }
+            let area = resolution.map { $0.0 * $0.1 } ?? 0
+
+            // Progressive variants place the resolution directly after the
+            // codec segment. Fragmented HLS init files include time-range
+            // components such as /avc1/0/0/ before the resolution.
+            let isProgressive: Bool
+            if let codecIndex = parts.lastIndex(where: { $0 == "avc1" || $0 == "vp9" }),
+               parts.indices.contains(codecIndex + 1) {
+                isProgressive = parts[codecIndex + 1].contains("x")
+            } else {
+                isProgressive = components.path.contains("/tweet_video/")
+            }
+            guard isProgressive else { return nil }
+            return (components.url!, (isProgressive ? 1_000_000_000 : 0) + area)
+        }
+        .max { $0.score < $1.score }?
+        .url
+    }
+
+    private static func normalizedVideoPosterURL(from value: String) -> URL? {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "pbs.twimg.com" else { return nil }
+        return components.url
+    }
+
     private static func normalizedAltText(_ value: String?) -> String? {
         guard let value else { return nil }
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -454,7 +550,7 @@ public enum BrowserArticleCaptureDecoder {
     private static func comparableBrowserText(_ blocks: [CanonicalBlock]) -> String {
         comparableText(blocks.compactMap { block -> String? in
             switch block.kind {
-            case .image, .divider, .code, .embeddedPost, .unsupported:
+            case .image, .video, .divider, .code, .embeddedPost, .unsupported:
                 nil
             default:
                 block.text

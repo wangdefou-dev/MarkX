@@ -887,7 +887,7 @@ final class BrowserArticleCaptureDecoderTests: XCTestCase {
         ))
     }
 
-    func testEmbeddedVideoKeepsArticleArchivableAndAddsVisibleSourceLink() throws {
+    func testEmbeddedVideoSelectsHighestProgressiveMP4AndRendersPlayableHTML() throws {
         let creator = Creator(xUserID: "u1", username: "writer", displayName: "作者")
         let payload = BrowserArticleCapturePayload(
             postID: link.postID,
@@ -899,7 +899,16 @@ final class BrowserArticleCaptureDecoderTests: XCTestCase {
                 BrowserCapturedBlock(
                     kind: .embeddedMedia,
                     text: "0:25",
-                    embeddedMediaType: "video"
+                    embeddedMediaType: "video",
+                    embeddedMediaID: "2095075428293840896",
+                    embeddedMediaURLs: [
+                        "https://video.twimg.com/amplify_video/2095075428293840896/vid/avc1/538x270/low.mp4?tag=29",
+                        "https://video.twimg.com/amplify_video/2095075428293840896/vid/avc1/0/0/1438x720/init.mp4",
+                        "https://video.twimg.com/amplify_video/2095075428293840896/pl/master.m3u8?tag=29",
+                        "https://video.twimg.com/amplify_video/2095075428293840896/vid/avc1/1438x720/high.mp4?tag=29"
+                    ],
+                    posterURL: "https://pbs.twimg.com/amplify_video_thumb/2095075428293840896/img/poster.jpg",
+                    durationSeconds: 25.4
                 ),
                 BrowserCapturedBlock(kind: .paragraph, text: "视频后的正文")
             ]
@@ -910,17 +919,36 @@ final class BrowserArticleCaptureDecoderTests: XCTestCase {
             expectedPlainText: "视频前的正文\n视频后的正文"
         )
 
-        let document = try BrowserArticleCaptureDecoder.decode(payload, context: context)
-        XCTAssertEqual(document.blocks.map(\.kind), [.paragraph, .unsupported, .paragraph])
+        var document = try BrowserArticleCaptureDecoder.decode(payload, context: context)
+        XCTAssertEqual(document.blocks.map(\.kind), [.paragraph, .video, .paragraph])
         XCTAssertEqual(document.blocks[1].sourceEntityType, "browser-rendered-video")
-        XCTAssertTrue(document.blocks[1].text.contains("视频未归档（0:25）"))
-        XCTAssertEqual(document.blocks[1].links.map { $0.url.absoluteString }, [link.originalURL.absoluteString])
-        XCTAssertEqual(document.warnings, ["文章包含 1 个视频；当前版本不下载视频文件，已在原位置保留原文查看入口"])
+        XCTAssertEqual(document.blocks[1].mediaID, "2095075428293840896")
+        let video = try XCTUnwrap(document.videos?.first)
+        XCTAssertEqual(video.sourceURL.absoluteString, "https://video.twimg.com/amplify_video/2095075428293840896/vid/avc1/1438x720/high.mp4?tag=29")
+        XCTAssertEqual(video.posterURL?.absoluteString, "https://pbs.twimg.com/amplify_video_thumb/2095075428293840896/img/poster.jpg")
+        XCTAssertEqual(video.durationSeconds, 25.4)
+        XCTAssertTrue(document.warnings.isEmpty)
 
+        document.videos?[0].remoteURL = URL(string: "https://media.example.test/archive/video.mp4")
         let markdown = try MarkdownRenderer.render(document: document)
-        XCTAssertTrue(markdown.contains("<!-- unsupported:x-article-node:browser-rendered-video -->"))
-        XCTAssertTrue(markdown.contains("[视频未归档（0:25），请在原文查看：](https://x.com/writer/status/2094984812251746424)"))
+        XCTAssertTrue(markdown.contains("videos_count: 1"))
+        XCTAssertTrue(markdown.contains("<video controls preload=\"metadata\" src=\"https://media.example.test/archive/video.mp4\"></video>"))
+        XCTAssertTrue(markdown.contains("[打开或下载视频](https://media.example.test/archive/video.mp4)"))
         try MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)
+
+        let videoOnlyPayload = BrowserArticleCapturePayload(
+            postID: link.postID,
+            title: "只有视频的文章",
+            publishedAt: "2026-09-02T03:04:00.000Z",
+            pageURL: link.originalURL.absoluteString,
+            blocks: [payload.blocks[1]]
+        )
+        let videoOnlyDocument = try BrowserArticleCaptureDecoder.decode(
+            videoOnlyPayload,
+            context: BrowserArticleCaptureContext(link: link, creator: creator)
+        )
+        XCTAssertEqual(videoOnlyDocument.blocks.map(\.kind), [.video])
+        XCTAssertEqual(videoOnlyDocument.videos?.count, 1)
     }
 
     func testAcceptsOnlyRealArticleMediaAndRejectsAvatarOrEmojiImages() throws {
@@ -983,6 +1011,56 @@ final class S3ImageHostAdapterTests: XCTestCase {
         XCTAssertTrue(authorization.contains("Credential=ACCESS123/19700101/auto/s3/aws4_request"))
         XCTAssertFalse(authorization.contains("SECRET456"))
         XCTAssertEqual(request.value(forHTTPHeaderField: "x-amz-date"), "19700101T000000Z")
+    }
+
+    func testSignsMP4UploadsWithVideoContentTypeAndExtension() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "x-s3-video-sign-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "video.mp4")
+        try Data("synthetic-mp4".utf8).write(to: file)
+        let configuration = S3ImageHostConfiguration(
+            endpoint: URL(string: "https://account.r2.cloudflarestorage.com")!,
+            bucket: "media",
+            publicBaseURL: URL(string: "https://media.example.test")!,
+            region: "auto",
+            keyPrefix: "x-archive/video"
+        )
+        let adapter = S3ImageHostAdapter(configuration: configuration, accessKey: "ACCESS123", secretKey: "SECRET456")
+
+        let request = try adapter.signedRequestForTesting(fileURL: file, date: Date(timeIntervalSince1970: 0))
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "video/mp4")
+        XCTAssertTrue(request.url?.absoluteString.hasSuffix(".mp4") == true)
+        XCTAssertTrue(request.url?.path.contains("/media/x-archive/video/") == true)
+    }
+}
+
+final class VideoDownloaderTests: XCTestCase {
+    func testDownloadsRealXProgressiveMP4WhenExplicitlyEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["RUN_X_VIDEO_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set RUN_X_VIDEO_INTEGRATION=1 to download and validate one public X progressive MP4")
+        }
+        let root = FileManager.default.temporaryDirectory.appending(path: "x-video-download-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let video = VideoAsset(
+            id: "2095075428293840896",
+            sourceURL: URL(string: "https://video.twimg.com/amplify_video/2095075428293840896/vid/avc1/1438x720/Tm4o1AUqnBJp5VqV.mp4?tag=29")!,
+            posterURL: URL(string: "https://pbs.twimg.com/amplify_video_thumb/2095075428293840896/img/vYpK9Ho6KdDCJgBp.jpg")!,
+            position: 0,
+            durationSeconds: 26
+        )
+
+        let cached = try await VideoDownloader().cache(video, in: root)
+
+        let path = try XCTUnwrap(cached.localCachePath)
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.int64Value ?? 0, 1_000_000)
+        XCTAssertTrue(path.hasSuffix(".mp4"))
+        XCTAssertEqual(cached.sha256?.count, 64)
+        let prefix = try Data(contentsOf: URL(fileURLWithPath: path)).prefix(12)
+        XCTAssertEqual(String(data: Data(prefix.dropFirst(4).prefix(4)), encoding: .ascii), "ftyp")
     }
 }
 
@@ -1319,6 +1397,7 @@ final class ArchiveDatabaseTests: XCTestCase {
             sourcePostID: "1",
             publishedAt: Date(timeIntervalSince1970: 0),
             sourceChecksum: "abc",
+            videoCount: 2,
             pipelineState: .committed
         )
         try await database.upsertArticle(article)
@@ -1327,6 +1406,7 @@ final class ArchiveDatabaseTests: XCTestCase {
         let loaded = try await database.loadArticles()
         XCTAssertEqual(loaded.count, 1)
         XCTAssertEqual(loaded.first?.stableSourceKey, "a1")
+        XCTAssertEqual(loaded.first?.videoCount, 2)
     }
 
     func testDeletesOnlyTheRequestedArticle() async throws {
@@ -1657,20 +1737,20 @@ final class ArchivePipelineTests: XCTestCase {
 
     func testUPicLiveIntegrationWhenExplicitlyEnabled() async throws {
         guard ProcessInfo.processInfo.environment["RUN_UPIC_INTEGRATION"] == "1" else {
-            throw XCTSkip("Set RUN_UPIC_INTEGRATION=1 to upload one synthetic 1x1 PNG through uPic's current default S3/R2 host")
+            throw XCTSkip("Set RUN_UPIC_INTEGRATION=1 to upload one synthetic 1x1 PNG through uPic's current default host")
         }
-        let directory = FileManager.default.temporaryDirectory.appending(path: "x-upic-test-\(UUID().uuidString)")
+        // uPic's App Store build cannot read another app's private temporary
+        // directory. The product likewise stages media below the user-selected
+        // archive root, so this guarded integration test uses the checked-out
+        // repository as its explicitly accessible staging root.
+        let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appending(path: ".x-upic-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
         let file = directory.appending(path: "X长文归档器-uPic联调.png")
         try png.write(to: file)
-        let profile = try UPicConfigurationReader.readDefaultS3()
-        let adapter = S3ImageHostAdapter(
-            configuration: profile.configuration,
-            accessKey: profile.accessKey,
-            secretKey: profile.secretKey
-        )
+        let adapter = UPicAdapter()
         let capability = await adapter.probe()
         XCTAssertTrue(capability.isAvailable)
         let results = try await adapter.upload(fileURLs: [file])

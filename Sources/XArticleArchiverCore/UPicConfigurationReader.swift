@@ -143,35 +143,89 @@ public enum UPicConfigurationReader {
         let outputURL = FileManager.default.temporaryDirectory
             .appending(path: "x-article-archiver-upic-\(UUID().uuidString).plist")
         defer { try? FileManager.default.removeItem(at: outputURL) }
+        let outputDescriptor = open(
+            outputURL.path,
+            O_WRONLY | O_CREAT | O_TRUNC,
+            S_IRUSR | S_IWUSR
+        )
+        guard outputDescriptor >= 0 else {
+            throw UPicConfigurationError.unreadablePreferences
+        }
+        defer { close(outputDescriptor) }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        process.arguments = ["export", "com.svend.uPic.macos", outputURL.path]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
+        // Foundation.Process can leave its termination state stale when this
+        // synchronous helper runs inside a detached task owned by a SwiftUI
+        // app. Spawn `defaults` directly so the same code path behaves in the
+        // installed GUI and in tests. A regular file also avoids Pipe EOF
+        // deadlocks and the preferences-daemon stall seen with an export path.
+        var fileActions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
+            throw UPicConfigurationError.unreadablePreferences
+        }
+        defer { posix_spawn_file_actions_destroy(&fileActions) }
+        guard posix_spawn_file_actions_adddup2(&fileActions, outputDescriptor, STDOUT_FILENO) == 0,
+              posix_spawn_file_actions_addopen(
+                &fileActions,
+                STDERR_FILENO,
+                "/dev/null",
+                O_WRONLY,
+                0
+              ) == 0 else {
+            throw UPicConfigurationError.unreadablePreferences
+        }
+
+        let argumentStrings = [
+            "defaults",
+            "export",
+            "com.svend.uPic.macos",
+            "-"
+        ]
+        var arguments: [UnsafeMutablePointer<CChar>?] = argumentStrings.map { strdup($0) } + [nil]
+        defer {
+            for argument in arguments where argument != nil {
+                free(argument)
+            }
+        }
+
+        var childPID: pid_t = 0
+        let spawnResult = posix_spawn(
+            &childPID,
+            "/usr/bin/defaults",
+            &fileActions,
+            nil,
+            &arguments,
+            environ
+        )
+        guard spawnResult == 0 else {
             throw hasPreferencesFile ? UPicConfigurationError.unreadablePreferences : UPicConfigurationError.preferencesNotFound
         }
 
         let deadline = Date().addingTimeInterval(3)
-        while process.isRunning, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+        var childCompleted = false
+        var waitStatus: Int32 = 0
+        while Date() < deadline {
+            let result = waitpid(childPID, &waitStatus, WNOHANG)
+            if result == childPID {
+                childCompleted = true
+                break
+            }
+            if result == -1 && errno != EINTR {
+                throw UPicConfigurationError.unreadablePreferences
+            }
+            usleep(20_000)
         }
-        if process.isRunning {
-            process.terminate()
-            let terminationDeadline = Date().addingTimeInterval(0.5)
-            while process.isRunning, Date() < terminationDeadline {
-                Thread.sleep(forTimeInterval: 0.02)
+        if !childCompleted {
+            kill(childPID, SIGTERM)
+            usleep(200_000)
+            if waitpid(childPID, &waitStatus, WNOHANG) == 0 {
+                kill(childPID, SIGKILL)
             }
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
+            _ = waitpid(childPID, &waitStatus, 0)
             throw UPicConfigurationError.preferencesExportTimedOut
         }
 
-        guard process.terminationStatus == 0,
+        guard waitStatus == 0,
+              fsync(outputDescriptor) == 0,
               let data = try? Data(contentsOf: outputURL), !data.isEmpty else {
             throw hasPreferencesFile ? UPicConfigurationError.unreadablePreferences : UPicConfigurationError.preferencesNotFound
         }

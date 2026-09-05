@@ -144,8 +144,8 @@ public actor ArchiveDatabase {
         let sql = """
         INSERT INTO articles
           (id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id,
-           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, pipeline_state, warnings, last_error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(stable_source_key) DO UPDATE SET
           creator_id=excluded.creator_id,
           title=excluded.title,
@@ -160,6 +160,7 @@ public actor ArchiveDatabase {
           source_checksum=excluded.source_checksum,
           markdown_path=excluded.markdown_path,
           image_count=excluded.image_count,
+          video_count=excluded.video_count,
           pipeline_state=excluded.pipeline_state,
           warnings=excluded.warnings,
           last_error=excluded.last_error;
@@ -182,14 +183,15 @@ public actor ArchiveDatabase {
         bind(article.sourceChecksum, to: 14, in: statement)
         bind(article.markdownPath, to: 15, in: statement)
         sqlite3_bind_int(statement, 16, Int32(article.imageCount))
-        bind(article.pipelineState.rawValue, to: 17, in: statement)
-        bind(warnings, to: 18, in: statement)
-        bind(article.lastError, to: 19, in: statement)
+        sqlite3_bind_int(statement, 17, Int32(article.videoCount))
+        bind(article.pipelineState.rawValue, to: 18, in: statement)
+        bind(warnings, to: 19, in: statement)
+        bind(article.lastError, to: 20, in: statement)
         try step(statement)
     }
 
     public func loadArticles() throws -> [ArchivedArticle] {
-        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, pipeline_state, warnings, last_error FROM articles ORDER BY published_at DESC;"
+        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error FROM articles ORDER BY published_at DESC;"
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
         var output: [ArchivedArticle] = []
@@ -208,8 +210,8 @@ public actor ArchiveDatabase {
                   let lastSyncedAt = text(statement, 11).flatMap(Self.parseDate),
                   let sourceStatus = SourceStatus(rawValue: text(statement, 12) ?? ""),
                   let checksum = text(statement, 13),
-                  let pipeline = PipelineState(rawValue: text(statement, 16) ?? "") else { continue }
-            let warningData = Data((text(statement, 17) ?? "[]").utf8)
+                  let pipeline = PipelineState(rawValue: text(statement, 17) ?? "") else { continue }
+            let warningData = Data((text(statement, 18) ?? "[]").utf8)
             let warnings = (try? JSONDecoder().decode([String].self, from: warningData)) ?? []
             output.append(ArchivedArticle(
                 id: id,
@@ -228,9 +230,10 @@ public actor ArchiveDatabase {
                 sourceChecksum: checksum,
                 markdownPath: text(statement, 14),
                 imageCount: Int(sqlite3_column_int(statement, 15)),
+                videoCount: Int(sqlite3_column_int(statement, 16)),
                 pipelineState: pipeline,
                 warnings: warnings,
-                lastError: text(statement, 18)
+                lastError: text(statement, 19)
             ))
         }
         return output
@@ -301,6 +304,7 @@ public actor ArchiveDatabase {
           source_checksum TEXT NOT NULL,
           markdown_path TEXT,
           image_count INTEGER NOT NULL DEFAULT 0,
+          video_count INTEGER NOT NULL DEFAULT 0,
           pipeline_state TEXT NOT NULL,
           warnings TEXT NOT NULL DEFAULT '[]',
           last_error TEXT,
@@ -309,8 +313,25 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_creator_id ON articles(creator_id);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
-        PRAGMA user_version=1;
+        PRAGMA user_version=2;
         """)
+        if !columnExists(on: database, table: "articles", column: "video_count") {
+            try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
+        }
+        try execute(on: database, sql: "PRAGMA user_version=2;")
+    }
+
+    private static func columnExists(on database: OpaquePointer?, table: String, column: String) -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(\(table));", -1, &statement, nil) == SQLITE_OK else {
+            return false
+        }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let value = sqlite3_column_text(statement, 1) else { continue }
+            if String(cString: value) == column { return true }
+        }
+        return false
     }
 
     private static func execute(on database: OpaquePointer?, sql: String) throws {

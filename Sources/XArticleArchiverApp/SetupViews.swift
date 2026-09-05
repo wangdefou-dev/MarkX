@@ -45,7 +45,7 @@ struct AddCreatorsView: View {
                 Text(model.downloadSheetPrefill.isEmpty ? "开始下载文章" : "重新拉取博主文章")
                     .font(.title2.bold())
                 Text(entryMode == .articleLinks
-                     ? "每行粘贴一条 x.com 或 twitter.com 的文章链接；在应用内打开真实页面并保留段落、列表、表格、代码和图片顺序。"
+                     ? "每行粘贴一条 x.com 或 twitter.com 的文章链接；在应用内打开真实页面并保留段落、列表、表格、代码、图片和视频顺序。"
                      : (model.downloadSheetPrefill.isEmpty
                         ? "粘贴 @handle 或 X 博主主页链接，选择数量后下载其官方 X Article。"
                         : "已带入这位博主。你可以再次选择数量并重新拉取；既有文章会校验更新，新文章会继续添加。"))
@@ -142,7 +142,7 @@ struct AddCreatorsView: View {
     private var downloadOptionsSection: some View {
         if entryMode == .articleLinks {
             GroupBox {
-                Label("链接模式的正文和图片全部来自当前展示的 X Article 页面；X API 调用为 0。多条链接会进入队列，逐篇确认并保存。", systemImage: "safari")
+                Label("链接模式的正文、图片和视频全部来自当前展示的 X Article 页面；X API 调用为 0。多条链接会进入队列，逐篇确认并保存。", systemImage: "safari")
                     .font(.callout)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -385,31 +385,19 @@ struct ConnectionSetupView: View {
             if model.imageHostChoice == .uPic {
                 Label(model.upicCapability.detail, systemImage: model.upicCapability.isAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(model.upicCapability.isAvailable ? .green : .orange)
-                Text("会直接读取 uPic 当前选中的 S3/R2 图床，上传一张 1×1 无隐私测试图，并验证返回的 HTTPS 图片。")
+                Text("会让 uPic 使用它当前的默认图床上传一张 1×1 无隐私测试图，再由本应用验证返回的 HTTPS 图片。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                HStack {
-                    Button(isTestingUPic ? "正在测试…" : "验证 uPic 默认图床") {
-                        isTestingUPic = true
-                        Task {
-                            _ = await model.testUPic()
-                            isTestingUPic = false
-                        }
+                Button(isTestingUPic ? "正在测试…" : "验证 uPic 默认图床") {
+                    isTestingUPic = true
+                    Task {
+                        _ = await model.testUPic()
+                        isTestingUPic = false
                     }
-                    .disabled(!model.upicCapability.isAvailable || isTestingUPic || isTestingS3)
-                    .help("上传一张无隐私测试图，验证 uPic 当前默认图床能返回可访问的 HTTPS 地址")
-
-                    Button(isTestingS3 ? "正在导入并测试…" : "从 uPic 导入当前 S3/R2 配置") {
-                        isTestingS3 = true
-                        Task {
-                            _ = await model.importAndTestCurrentUPicS3()
-                            isTestingS3 = false
-                        }
-                    }
-                    .disabled(!model.upicCapability.isAvailable || isTestingUPic || isTestingS3)
-                    .help("把 uPic 当前 S3/R2 配置导入本应用钥匙串，并进行真实上传验证")
                 }
-                Text("直接验证不会复制密钥；只有点击“导入”时，才会把 uPic 当前的 S3/R2 密钥转存到本应用钥匙串。")
+                .disabled(!model.upicCapability.isAvailable || isTestingUPic || isTestingS3)
+                .help("上传一张无隐私测试图，验证 uPic 当前默认图床能返回可访问的 HTTPS 地址")
+                Text("本应用不读取、复制或记录 uPic 的密钥；文章媒体交给 uPic 上传，上传结果再经 HTTPS 回读校验。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
@@ -505,7 +493,7 @@ struct SettingsView: View {
                     .help("打开默认图床、归档目录和可选 X API 的设置窗口")
             }
             Section("隐私") {
-                Text("软件不收集遥测，不上传诊断日志。文章链接与正文仅从你在应用内打开的 X 页面读取并在本机转换，不调用 X API；图片只发送到你明确选择并测试通过的图床。")
+                Text("软件不收集遥测，不上传诊断日志。文章链接与正文仅从你在应用内打开的 X 页面读取并在本机转换，不调用 X API；图片和视频只发送到你明确选择并测试通过的存储。")
             }
         }
         .formStyle(.grouped)

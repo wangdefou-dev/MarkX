@@ -3,12 +3,14 @@ import Foundation
 public enum ArchivePipelineError: LocalizedError {
     case missingArchiveRoot
     case missingLocalImage(String)
+    case missingLocalVideo(String)
     case localFileModified(String)
 
     public var errorDescription: String? {
         switch self {
         case .missingArchiveRoot: "没有选择本地归档目录"
         case .missingLocalImage(let id): "图片没有本地缓存：\(id)"
+        case .missingLocalVideo(let id): "视频没有本地缓存：\(id)"
         case .localFileModified(let path): "本地 Markdown 已被修改，未覆盖：\(path)"
         }
     }
@@ -17,11 +19,18 @@ public enum ArchivePipelineError: LocalizedError {
 public actor ArchivePipeline {
     private let database: ArchiveDatabase
     private let downloader: ImageDownloader
+    private let videoDownloader: VideoDownloader
     private let imageHost: any ImageHostAdapter
 
-    public init(database: ArchiveDatabase, downloader: ImageDownloader = ImageDownloader(), imageHost: any ImageHostAdapter) {
+    public init(
+        database: ArchiveDatabase,
+        downloader: ImageDownloader = ImageDownloader(),
+        videoDownloader: VideoDownloader = VideoDownloader(),
+        imageHost: any ImageHostAdapter
+    ) {
         self.database = database
         self.downloader = downloader
+        self.videoDownloader = videoDownloader
         self.imageHost = imageHost
     }
 
@@ -58,6 +67,7 @@ public actor ArchivePipeline {
             lastSyncedAt: Date(),
             sourceChecksum: sourceChecksum,
             imageCount: document.media.count,
+            videoCount: document.videos?.count ?? 0,
             pipelineState: .parsed,
             warnings: document.warnings
         )
@@ -65,9 +75,11 @@ public actor ArchivePipeline {
 
         let internalRoot = root.appending(path: ".x-article-archiver", directoryHint: .isDirectory)
         let cache = internalRoot.appending(path: "assets-cache", directoryHint: .isDirectory)
+        let videoCache = internalRoot.appending(path: "video-cache", directoryHint: .isDirectory)
         let pending = internalRoot.appending(path: "pending", directoryHint: .isDirectory)
         let snapshots = internalRoot.appending(path: "source-snapshots", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: videoCache, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: pending, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
 
@@ -95,6 +107,43 @@ public actor ArchivePipeline {
                 try await imageHost.verify(remoteURL: remoteURL)
                 document.media[index].remoteURL = remoteURL
             }
+            record.pipelineState = .mediaUploaded
+            try await database.upsertArticle(record)
+        }
+
+        if var videos = document.videos, !videos.isEmpty {
+            await progress?("正在下载 \(videos.count) 个视频原文件")
+            for index in videos.indices {
+                if let path = videos[index].localCachePath,
+                   FileManager.default.fileExists(atPath: path) { continue }
+                videos[index] = try await videoDownloader.cache(videos[index], in: videoCache)
+            }
+            document.videos = videos
+            record.pipelineState = .mediaCached
+            try await database.upsertArticle(record)
+
+            await progress?("正在上传 \(videos.count) 个视频到 \(imageHost.displayName)")
+            let pendingVideos = videos.filter { $0.remoteURL == nil }
+            let localURLs = try pendingVideos.map { video -> URL in
+                guard let path = video.localCachePath else {
+                    throw ArchivePipelineError.missingLocalVideo(video.id)
+                }
+                return URL(fileURLWithPath: path)
+            }
+            let uploadResults = try await imageHost.upload(fileURLs: localURLs)
+            let remoteByPath = Dictionary(uniqueKeysWithValues: uploadResults.map { ($0.localPath, $0.remoteURL) })
+            for index in videos.indices where videos[index].remoteURL == nil {
+                guard let path = videos[index].localCachePath,
+                      let remoteURL = remoteByPath[path] else {
+                    throw ImagePipelineError.outputCountMismatch(
+                        expected: localURLs.count,
+                        actual: remoteByPath.count
+                    )
+                }
+                try await imageHost.verifyVideo(remoteURL: remoteURL)
+                videos[index].remoteURL = remoteURL
+            }
+            document.videos = videos
             record.pipelineState = .mediaUploaded
             try await database.upsertArticle(record)
         }

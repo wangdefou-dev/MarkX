@@ -213,6 +213,7 @@ public struct S3ImageHostAdapter: ImageHostAdapter {
         case "gif": "image/gif"
         case "webp": "image/webp"
         case "avif": "image/avif"
+        case "mp4", "m4v": "video/mp4"
         default: "application/octet-stream"
         }
     }

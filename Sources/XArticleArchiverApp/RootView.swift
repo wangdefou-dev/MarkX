@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import SwiftUI
 import XArticleArchiverCore
 
@@ -84,7 +85,7 @@ struct RootView: View {
             Button("取消", role: .cancel) { model.articlePendingDeletion = nil }
                 .help("取消删除，保留这篇文章")
         } message: {
-            Text("会删除本地 Markdown、全文快照和资料库记录，但不会删除图床上的远程图片。本地文件可从废纸篓恢复。")
+            Text("会删除本地 Markdown、全文快照和资料库记录，但不会删除远程图片或视频。本地文件可从废纸篓恢复。")
         }
         .confirmationDialog(
             model.exactCaptureTaskPendingDeletion.map { "删除《\($0.title)》的精确采集任务？" } ?? "删除精确采集任务？",
@@ -111,7 +112,7 @@ struct RootView: View {
             Button("取消", role: .cancel) { model.showingDeleteAllExactCaptureTasksConfirmation = false }
                 .help("取消清空，保留全部采集任务")
         } message: {
-            Text("将清理 \(model.pendingExactCaptureCount) 个任务。已存在的 Markdown、全文快照和图片不会被删除；只会删除未归档的临时记录。")
+            Text("将清理 \(model.pendingExactCaptureCount) 个任务。已存在的 Markdown、全文快照和媒体不会被删除；只会删除未归档的临时记录。")
         }
         .confirmationDialog(
             model.creatorPendingDeletion.map { "删除博主 @\($0.username)？" } ?? "删除博主？",
@@ -126,7 +127,7 @@ struct RootView: View {
             Button("取消", role: .cancel) { model.creatorPendingDeletion = nil }
                 .help("取消删除，继续跟踪该博主")
         } message: {
-            Text("只会停止跟踪并从侧边栏移除该博主。已经下载的文章、本地图片缓存和图床图片全部保留；以后再次添加该博主即可继续拉取。")
+            Text("只会停止跟踪并从侧边栏移除该博主。已经下载的文章、本地媒体缓存和远程图片/视频全部保留；以后再次添加该博主即可继续拉取。")
         }
     }
 
@@ -277,7 +278,7 @@ struct RootView: View {
                                         Label("删除文章…", systemImage: "trash")
                                     }
                                     .disabled(model.isRunning)
-                                    .help("删除这篇文章的本地归档；图床图片不删除")
+                                    .help("删除这篇文章的本地归档；远程图片和视频不删除")
                                 }
                         }
                     }
@@ -316,7 +317,7 @@ struct RootView: View {
                     .foregroundStyle(.tint)
                 Text("把 X Article 全文收进自己的 Mac")
                     .font(.largeTitle.bold())
-                Text("按博主下载时直接读取其 X Articles 专属列表，再逐篇打开真实页面，保留标题、段落、列表、表格、代码和图片顺序。整个下载流程不调用 X API。")
+                Text("按博主下载时直接读取其 X Articles 专属列表，再逐篇打开真实页面，保留标题、段落、列表、表格、代码、图片和视频顺序。整个下载流程不调用 X API。")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 12) {
@@ -370,6 +371,9 @@ struct RootView: View {
                         HStack {
                             StatusPill(article.pipelineState.displayName, color: article.pipelineState == .committed ? .green : .orange)
                             StatusPill("\(article.imageCount) 张图片", color: .blue)
+                            if article.videoCount > 0 {
+                                StatusPill("\(article.videoCount) 个视频", color: .purple)
+                            }
                             Button {
                                 model.openSource()
                             } label: {
@@ -474,7 +478,7 @@ struct RootView: View {
                 .background(Color(nsColor: .textBackgroundColor))
             }
         } else {
-            ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文和图片。"))
+            ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
         }
     }
 
@@ -716,9 +720,13 @@ private struct ArticleDocumentPreview: View {
         Dictionary(uniqueKeysWithValues: document.media.map { ($0.id, $0) })
     }
 
+    private var videoByID: [String: VideoAsset] {
+        Dictionary(uniqueKeysWithValues: (document.videos ?? []).map { ($0.id, $0) })
+    }
+
     private var characterCount: Int {
         document.blocks
-            .filter { $0.kind != .image && $0.kind != .divider }
+            .filter { $0.kind != .image && $0.kind != .video && $0.kind != .divider }
             .reduce(0) { $0 + $1.text.count }
     }
 
@@ -734,6 +742,9 @@ private struct ArticleDocumentPreview: View {
                     .fontWeight(.semibold)
                 Text("· \(characterCount) 字")
                 Text("· \(document.media.count) 张图片")
+                if let videoCount = document.videos?.count, videoCount > 0 {
+                    Text("· \(videoCount) 个视频")
+                }
             }
             .font(.system(size: 12.5 * textScale))
             .foregroundStyle(.secondary)
@@ -743,6 +754,7 @@ private struct ArticleDocumentPreview: View {
                 ArticleBlockView(
                     block: block,
                     media: block.mediaID.flatMap { mediaByID[$0] },
+                    video: block.mediaID.flatMap { videoByID[$0] },
                     textScale: textScale,
                     resolvedOrderedMarker: orderedMarkers[index]
                 )
@@ -810,6 +822,7 @@ private struct ArticleDocumentPreview: View {
 private struct ArticleBlockView: View {
     let block: CanonicalBlock
     let media: MediaAsset?
+    let video: VideoAsset?
     let textScale: Double
     let resolvedOrderedMarker: String?
 
@@ -900,6 +913,14 @@ private struct ArticleBlockView: View {
             }
         case .image:
             articleImage
+        case .video:
+            if let remoteURL = video?.remoteURL {
+                ArchivedVideoPlayer(url: remoteURL)
+            } else {
+                Label("视频尚未下载并验证", systemImage: "exclamationmark.triangle")
+                    .font(bodyFont)
+                    .foregroundStyle(.orange)
+            }
         case .embeddedPost:
             Group {
                 if let referenceURL = block.links.first?.url {
@@ -1046,6 +1067,63 @@ private struct ArticleBlockView: View {
     }
 }
 
+private struct ArchivedVideoPlayer: View {
+    let url: URL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ArchivedAVPlayerView(url: url)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15)))
+            Link(destination: url) {
+                Label("在默认播放器中打开视频", systemImage: "arrow.up.right.square")
+            }
+            .font(.caption)
+        }
+    }
+}
+
+/// AVKit's SwiftUI `VideoPlayer` currently aborts while initializing its
+/// private generic NSViewRepresentable metadata on some macOS 26 builds.
+/// Hosting the stable AppKit AVPlayerView directly keeps playback native while
+/// avoiding that runtime-only crash in the installed app.
+private struct ArchivedAVPlayerView: NSViewRepresentable {
+    let url: URL
+
+    final class Coordinator {
+        var currentURL: URL?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let playerView = AVPlayerView()
+        playerView.controlsStyle = .inline
+        playerView.videoGravity = .resizeAspect
+        playerView.player = AVPlayer(url: url)
+        context.coordinator.currentURL = url
+        return playerView
+    }
+
+    func updateNSView(_ playerView: AVPlayerView, context: Context) {
+        guard context.coordinator.currentURL != url else { return }
+        playerView.player?.pause()
+        playerView.player = AVPlayer(url: url)
+        context.coordinator.currentURL = url
+    }
+
+    static func dismantleNSView(_ playerView: AVPlayerView, coordinator: Coordinator) {
+        playerView.player?.pause()
+        playerView.player = nil
+        coordinator.currentURL = nil
+    }
+}
+
 private struct ArticleRow: View {
     let article: ArchivedArticle
 
@@ -1066,6 +1144,7 @@ private struct ArticleRow: View {
                     .foregroundStyle(statusColor)
                 Text(statusTitle)
                 if article.imageCount > 0 { Text("· \(article.imageCount) 张图") }
+                if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
             }
             .font(.caption)
         }
@@ -1147,6 +1226,7 @@ private struct TaskProgressBar: View {
                 Text("完成 \(progress.completedArticles)")
                 if progress.skippedArticles > 0 { Text("跳过 \(progress.skippedArticles)") }
                 Text("图片 \(progress.uploadedImages)")
+                Text("视频 \(progress.uploadedVideos)")
                 if progress.failedArticles > 0 { Text("失败 \(progress.failedArticles)").foregroundStyle(.red) }
             }
             .font(.caption2)

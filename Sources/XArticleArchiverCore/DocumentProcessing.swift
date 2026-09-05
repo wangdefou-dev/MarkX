@@ -99,6 +99,25 @@ public enum ContentFidelityValidator {
             throw DocumentProcessingError.fidelityMismatch("图片数量或原始顺序与 X 返回结果不一致")
         }
 
+        let videos = document.videos ?? []
+        let videoIDs = videos.map(\.id)
+        guard Set(videoIDs).count == videoIDs.count else {
+            throw DocumentProcessingError.fidelityMismatch("源视频 ID 存在重复")
+        }
+        for (index, video) in videos.enumerated() {
+            guard video.position == index else {
+                throw DocumentProcessingError.fidelityMismatch("源视频顺序不连续：\(video.id)")
+            }
+            guard video.sourceURL.scheme?.lowercased() == "https",
+                  video.sourceURL.host?.lowercased() == "video.twimg.com",
+                  video.sourceURL.pathExtension.lowercased() == "mp4" else {
+                throw DocumentProcessingError.fidelityMismatch("源视频不是可验证的 X MP4：\(video.id)")
+            }
+        }
+        if let sourceVideoIDs = document.sourceVideoIDs, sourceVideoIDs != videoIDs {
+            throw DocumentProcessingError.fidelityMismatch("视频数量或原始顺序与 X 页面结果不一致")
+        }
+
         var imageBlockIDs: [String] = []
         for block in document.blocks where block.kind == .image {
             guard let mediaID = block.mediaID, !mediaID.isEmpty else {
@@ -110,6 +129,19 @@ public enum ContentFidelityValidator {
               Set(imageBlockIDs) == Set(mediaIDs),
               Set(imageBlockIDs).count == imageBlockIDs.count else {
             throw DocumentProcessingError.fidelityMismatch("正文图片块与 X 返回的图片不是一一对应")
+        }
+
+        var videoBlockIDs: [String] = []
+        for block in document.blocks where block.kind == .video {
+            guard let videoID = block.mediaID, !videoID.isEmpty else {
+                throw DocumentProcessingError.fidelityMismatch("正文中存在没有视频 ID 的视频块")
+            }
+            videoBlockIDs.append(videoID)
+        }
+        guard videoBlockIDs.count == videoIDs.count,
+              Set(videoBlockIDs) == Set(videoIDs),
+              Set(videoBlockIDs).count == videoBlockIDs.count else {
+            throw DocumentProcessingError.fidelityMismatch("正文视频块与 X 页面返回的视频不是一一对应")
         }
 
         for block in document.blocks {
@@ -194,7 +226,7 @@ public enum ContentFidelityValidator {
             switch block.kind {
             case .blankLine:
                 signature.append("B")
-            case .image, .divider:
+            case .image, .video, .divider:
                 continue
             case .code where block.sourceEntityType == "article-code":
                 // This entity is an additional X field. It is validated and
@@ -309,6 +341,7 @@ public enum MarkdownRenderer {
         }
 
         let mediaByID = Dictionary(uniqueKeysWithValues: document.media.map { ($0.id, $0) })
+        let videoByID = Dictionary(uniqueKeysWithValues: (document.videos ?? []).map { ($0.id, $0) })
         var lines: [String] = []
         lines.append("---")
         lines.append("title: \(yamlQuoted(title))")
@@ -326,13 +359,18 @@ public enum MarkdownRenderer {
         lines.append("last_synced_at: \(yamlQuoted(iso8601(archivedAt)))")
         lines.append("source_status: active")
         lines.append("images_count: \(document.media.count)")
+        lines.append("videos_count: \(document.videos?.count ?? 0)")
         lines.append("content_checksum: \(yamlQuoted("sha256:\(try ContentHasher.sourceChecksum(for: document))"))")
         lines.append("exporter_version: \"0.2\"")
         lines.append("---")
         lines.append("")
         lines.append("# \(escapeHeading(title))")
         lines.append("")
-        lines.append(contentsOf: try renderBodyLines(document: document, mediaByID: mediaByID))
+        lines.append(contentsOf: try renderBodyLines(
+            document: document,
+            mediaByID: mediaByID,
+            videoByID: videoByID
+        ))
 
         while lines.last == "" { lines.removeLast() }
         return lines.joined(separator: "\n") + "\n"
@@ -365,7 +403,7 @@ public enum MarkdownRenderer {
 
     public static func visibleSourceText(_ document: CanonicalDocument) -> String {
         document.blocks
-            .filter { $0.kind != .image && $0.kind != .divider }
+            .filter { $0.kind != .image && $0.kind != .video && $0.kind != .divider }
             .map(\.text)
             .joined(separator: "\n")
             .precomposedStringWithCanonicalMapping
@@ -379,6 +417,9 @@ public enum MarkdownRenderer {
         guard markdown.contains("images_count: \(document.media.count)") else {
             throw DocumentProcessingError.fidelityMismatch("Markdown 图片计数与源数据不一致")
         }
+        guard markdown.contains("videos_count: \(document.videos?.count ?? 0)") else {
+            throw DocumentProcessingError.fidelityMismatch("Markdown 视频计数与源数据不一致")
+        }
         let expectedChecksum = "content_checksum: \(yamlQuoted("sha256:\(try ContentHasher.sourceChecksum(for: document))"))"
         guard markdown.contains(expectedChecksum) else {
             throw DocumentProcessingError.fidelityMismatch("源内容校验和不一致")
@@ -391,7 +432,12 @@ public enum MarkdownRenderer {
         }
         let actualBody = String(markdown[bodyRange.upperBound...])
         let mediaByID = Dictionary(uniqueKeysWithValues: document.media.map { ($0.id, $0) })
-        var expectedLines = try renderBodyLines(document: document, mediaByID: mediaByID)
+        let videoByID = Dictionary(uniqueKeysWithValues: (document.videos ?? []).map { ($0.id, $0) })
+        var expectedLines = try renderBodyLines(
+            document: document,
+            mediaByID: mediaByID,
+            videoByID: videoByID
+        )
         while expectedLines.last == "" { expectedLines.removeLast() }
         let expectedBody = expectedLines.joined(separator: "\n") + "\n"
         guard actualBody == expectedBody else {
@@ -473,7 +519,11 @@ public enum MarkdownRenderer {
         return output
     }
 
-    private static func renderBodyLines(document: CanonicalDocument, mediaByID: [String: MediaAsset]) throws -> [String] {
+    private static func renderBodyLines(
+        document: CanonicalDocument,
+        mediaByID: [String: MediaAsset],
+        videoByID: [String: VideoAsset]
+    ) throws -> [String] {
         var lines: [String] = []
         let orderedMarkers = ArticleListMarkerResolver.orderedMarkers(for: document.blocks)
         for (index, block) in document.blocks.enumerated() {
@@ -531,6 +581,19 @@ public enum MarkdownRenderer {
                 }
                 let alt = (media.altText?.isEmpty == false ? media.altText! : "图片 \(String(format: "%02d", media.position + 1))")
                 lines.append("![\(escapeAltText(alt))](\(remoteURL.absoluteString))")
+                lines.append("")
+            case .video:
+                guard let videoID = block.mediaID, let video = videoByID[videoID] else {
+                    throw DocumentProcessingError.fidelityMismatch("视频块找不到对应资源：\(block.mediaID ?? "unknown")")
+                }
+                guard let remoteURL = video.remoteURL,
+                      remoteURL.scheme?.lowercased() == "https" else {
+                    throw DocumentProcessingError.fidelityMismatch("视频尚未上传或验证：\(video.id)")
+                }
+                let escapedURL = escapeHTMLAttribute(remoteURL.absoluteString)
+                lines.append("<video controls preload=\"metadata\" src=\"\(escapedURL)\"></video>")
+                lines.append("")
+                lines.append("[打开或下载视频](\(remoteURL.absoluteString))")
                 lines.append("")
             case .embeddedPost:
                 if let referenceURL = block.links.first?.url {
