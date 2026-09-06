@@ -51,6 +51,7 @@ final class AppViewModel: ObservableObject {
     }
 
     @Published var creators: [Creator] = []
+    @Published private(set) var pinnedCreatorIDs: [UUID] = []
     @Published var articles: [ArchivedArticle] = []
     @Published var selectedArticleID: UUID?
     @Published var sidebarSelection: SidebarSelection? = .all
@@ -112,8 +113,13 @@ final class AppViewModel: ObservableObject {
     private var downloadProgressWindowHiddenByUser = false
     private var todayRefreshTask: Task<Void, Never>?
     private let defaults = UserDefaults.standard
+    private static let pinnedCreatorIDsDefaultsKey = "pinnedCreatorIDs"
+    private static let maximumPinnedCreators = 5
 
     init() {
+        if let savedPinnedIDs = defaults.array(forKey: Self.pinnedCreatorIDsDefaultsKey) as? [String] {
+            pinnedCreatorIDs = savedPinnedIDs.compactMap(UUID.init)
+        }
         if let path = defaults.string(forKey: "archiveRootPath") {
             archiveRoot = URL(fileURLWithPath: path, isDirectory: true)
         }
@@ -216,6 +222,66 @@ final class AppViewModel: ObservableObject {
 
     var pendingExactCaptureArticles: [ArchivedArticle] {
         articles.filter(ExactCaptureQueuePolicy.needsCapture)
+    }
+
+    var pinnedCreators: [Creator] {
+        let creatorsByID = Dictionary(uniqueKeysWithValues: creators.map { ($0.id, $0) })
+        return pinnedCreatorIDs.compactMap { creatorsByID[$0] }
+    }
+
+    var unpinnedCreators: [Creator] {
+        let pinnedIDs = Set(pinnedCreatorIDs)
+        return creators.filter { !pinnedIDs.contains($0.id) }
+    }
+
+    var canPinAnotherCreator: Bool {
+        pinnedCreatorIDs.count < Self.maximumPinnedCreators
+    }
+
+    func isCreatorPinned(_ creator: Creator) -> Bool {
+        pinnedCreatorIDs.contains(creator.id)
+    }
+
+    func pinnedCreatorIndex(of creator: Creator) -> Int? {
+        pinnedCreatorIDs.firstIndex(of: creator.id)
+    }
+
+    func pinCreator(_ creator: Creator) {
+        guard !isCreatorPinned(creator), canPinAnotherCreator else { return }
+        pinnedCreatorIDs.append(creator.id)
+        persistPinnedCreatorIDs()
+    }
+
+    func unpinCreator(_ creator: Creator) {
+        guard let index = pinnedCreatorIndex(of: creator) else { return }
+        pinnedCreatorIDs.remove(at: index)
+        persistPinnedCreatorIDs()
+    }
+
+    func movePinnedCreators(fromOffsets offsets: IndexSet, toOffset offset: Int) {
+        guard !offsets.isEmpty else { return }
+        pinnedCreatorIDs.move(fromOffsets: offsets, toOffset: offset)
+        persistPinnedCreatorIDs()
+    }
+
+    func movePinnedCreator(_ creator: Creator, by direction: Int) {
+        guard let index = pinnedCreatorIndex(of: creator) else { return }
+        let destination = index + direction
+        guard pinnedCreatorIDs.indices.contains(destination) else { return }
+        pinnedCreatorIDs.swapAt(index, destination)
+        persistPinnedCreatorIDs()
+    }
+
+    private func persistPinnedCreatorIDs() {
+        defaults.set(pinnedCreatorIDs.map(\.uuidString), forKey: Self.pinnedCreatorIDsDefaultsKey)
+    }
+
+    private func reconcilePinnedCreatorIDs() {
+        let availableIDs = Set(creators.map(\.id))
+        let reconciled = Array(pinnedCreatorIDs.filter { availableIDs.contains($0) }.prefix(Self.maximumPinnedCreators))
+        guard reconciled != pinnedCreatorIDs else { return }
+        pinnedCreatorIDs = reconciled
+        persistPinnedCreatorIDs()
     }
 
     var enabledCreatorCount: Int {
@@ -2227,6 +2293,7 @@ final class AppViewModel: ObservableObject {
     private func reload() async throws {
         guard let database else { return }
         creators = try await database.loadCreators().filter(\.isEnabled)
+        reconcilePinnedCreatorIDs()
         // Older builds also stored Note Posts and assembled threads. Keep the
         // user's files and rows intact, but never present them as X Articles.
         var loadedArticles = try await database.loadArticles().filter { $0.contentType == .xArticle }

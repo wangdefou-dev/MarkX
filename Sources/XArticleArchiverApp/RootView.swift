@@ -216,62 +216,31 @@ struct RootView: View {
             }
             Section {
                 if isCreatorsExpanded {
-                    ForEach(model.creators) { creator in
-                    let localArticleCount = statistics.articleCount(for: creator.id)
-                    let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
-                        HStack(spacing: 8) {
-                            Label {
-                                VStack(alignment: .leading, spacing: 2) {
-                                Text(creator.displayName)
-                                    .lineLimit(1)
-                                Text("@\(creator.username)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                }
-                        } icon: {
-                            Image(systemName: creator.isProtected ? "lock.circle" : "person.crop.circle")
+                    if !model.pinnedCreators.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "pin.fill")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                            Text("置顶")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Text("\(model.pinnedCreators.count)/5")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
                         }
-                        Spacer(minLength: 4)
-                        SidebarFractionBadge(
-                            numerator: downloadedArticleCount,
-                            denominator: creator.knownArticleCount
-                            )
-                                .help(creator.knownArticleCount.map {
-                                    "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
-                                } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；可用“刷新线上文章总数”更新")
+                        .padding(.leading, 22)
+                        .padding(.top, 4)
+                        .padding(.bottom, 2)
+                        ForEach(model.pinnedCreators) { creator in
+                            creatorSidebarRow(creator, statistics: statistics)
                         }
-                        .padding(.vertical, 2)
-                        .tag(AppViewModel.SidebarSelection.creator(creator.id))
-                    .contextMenu {
-                        Button {
-                            model.openCreatorProfile(creator)
-                        } label: {
-                            Label("查看 X 主页", systemImage: "arrow.up.right.square")
+                        .onMove { offsets, destination in
+                            model.movePinnedCreators(fromOffsets: offsets, toOffset: destination)
                         }
-                        .help("在默认浏览器打开 @\(creator.username) 的 X 主页")
-                        Button {
-                            model.presentDownloadSheet(for: creator)
-                        } label: {
-                            Label("重新拉取文章…", systemImage: "arrow.clockwise")
-                        }
-                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                        .help("重新选择数量并拉取 @\(creator.username) 的 X Article")
-                        Button {
-                            model.refreshCreatorArticleCount(creator)
-                        } label: {
-                            Label("刷新线上文章总数", systemImage: "number.circle")
-                        }
-                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                        .help("完整扫描 @\(creator.username) 的 Articles 列表，只更新线上文章总数，不下载文章")
-                        Divider()
-                        Button(role: .destructive) {
-                            model.requestDeleteCreator(creator)
-                        } label: {
-                            Label("删除博主…", systemImage: "trash")
-                        }
-                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                        .help("从博主列表移除 @\(creator.username)，已归档文章保留")
                     }
+                    ForEach(model.unpinnedCreators) { creator in
+                        creatorSidebarRow(creator, statistics: statistics)
                     }
                 }
             } header: {
@@ -293,6 +262,104 @@ struct RootView: View {
             .padding(.top, 5)
             .padding(.bottom, 8)
             .background(.bar)
+        }
+    }
+
+    @ViewBuilder
+    private func creatorSidebarRow(
+        _ creator: Creator,
+        statistics: ArchiveSidebarStatistics
+    ) -> some View {
+        let localArticleCount = statistics.articleCount(for: creator.id)
+        let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
+        HStack(spacing: 8) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(creator.displayName)
+                        .lineLimit(1)
+                    Text("@\(creator.username)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: creator.isProtected
+                      ? "lock.circle"
+                      : model.isCreatorPinned(creator) ? "pin.circle.fill" : "person.crop.circle")
+                    .foregroundStyle(model.isCreatorPinned(creator) ? .orange : .secondary)
+            }
+            Spacer(minLength: 4)
+            SidebarFractionBadge(
+                numerator: downloadedArticleCount,
+                denominator: creator.knownArticleCount
+            )
+            .help(creator.knownArticleCount.map {
+                "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
+            } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；可用“刷新线上文章总数”更新")
+        }
+        .padding(.vertical, 2)
+        .tag(AppViewModel.SidebarSelection.creator(creator.id))
+        .contextMenu {
+            if model.isCreatorPinned(creator) {
+                Button {
+                    model.unpinCreator(creator)
+                } label: {
+                    Label("取消置顶", systemImage: "pin.slash")
+                }
+                if let index = model.pinnedCreatorIndex(of: creator) {
+                    Divider()
+                    Button {
+                        model.movePinnedCreator(creator, by: -1)
+                    } label: {
+                        Label("置顶上移", systemImage: "arrow.up")
+                    }
+                    .disabled(index == 0)
+                    Button {
+                        model.movePinnedCreator(creator, by: 1)
+                    } label: {
+                        Label("置顶下移", systemImage: "arrow.down")
+                    }
+                    .disabled(index == model.pinnedCreators.count - 1)
+                }
+            } else if model.canPinAnotherCreator {
+                Button {
+                    model.pinCreator(creator)
+                } label: {
+                    Label("置顶博主", systemImage: "pin")
+                }
+                .help("将 @\(creator.username) 放入置顶列表，最多 5 位")
+            } else {
+                Button("置顶博主（最多 5 位）", systemImage: "pin") {}
+                    .disabled(true)
+            }
+            Divider()
+            Button {
+                model.openCreatorProfile(creator)
+            } label: {
+                Label("查看 X 主页", systemImage: "arrow.up.right.square")
+            }
+            .help("在默认浏览器打开 @\(creator.username) 的 X 主页")
+            Button {
+                model.presentDownloadSheet(for: creator)
+            } label: {
+                Label("重新拉取文章…", systemImage: "arrow.clockwise")
+            }
+            .disabled(model.isRunning || model.hasActiveDownloadProgress)
+            .help("重新选择数量并拉取 @\(creator.username) 的 X Article")
+            Button {
+                model.refreshCreatorArticleCount(creator)
+            } label: {
+                Label("刷新线上文章总数", systemImage: "number.circle")
+            }
+            .disabled(model.isRunning || model.hasActiveDownloadProgress)
+            .help("完整扫描 @\(creator.username) 的 Articles 列表，只更新线上文章总数，不下载文章")
+            Divider()
+            Button(role: .destructive) {
+                model.requestDeleteCreator(creator)
+            } label: {
+                Label("删除博主…", systemImage: "trash")
+            }
+            .disabled(model.isRunning || model.hasActiveDownloadProgress)
+            .help("从博主列表移除 @\(creator.username)，已归档文章保留")
         }
     }
 
@@ -771,12 +838,13 @@ private struct DownloadResultView: View {
             }
 
             if !notice.metrics.isEmpty {
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
-                    spacing: 8
-                ) {
-                    ForEach(notice.metrics) { metric in
-                        DownloadResultMetricText(metric: metric)
+                VStack(spacing: 4) {
+                    ForEach(Array(metricRows.enumerated()), id: \.offset) { _, row in
+                        HStack(spacing: 8) {
+                            ForEach(row) { metric in
+                                DownloadResultMetricText(metric: metric)
+                            }
+                        }
                     }
                 }
                 .padding(.top, 12)
@@ -807,6 +875,52 @@ private struct DownloadResultView: View {
         }
         .padding(18)
         .frame(minWidth: 460, idealWidth: 500, minHeight: 260, idealHeight: 320)
+    }
+
+    private var metricRows: [[DownloadResultMetric]] {
+        [
+            [
+                displayMetric(id: "queued", label: "进入队列", systemImage: "tray.and.arrow.down.fill"),
+                displayMetric(id: "saved", label: "成功保存", systemImage: "checkmark.circle.fill"),
+                displayMetric(id: "failed", label: "下载失败", systemImage: "xmark.circle.fill")
+            ],
+            [
+                displayMetric(id: "skipped", label: "已跳过", systemImage: "forward.end.fill"),
+                displayMetric(id: "subscription", label: "需订阅", systemImage: "lock.fill"),
+                displayMetric(id: "pending", label: "待处理", systemImage: "clock.arrow.circlepath")
+            ],
+            [
+                displayMetric(id: "images", label: "图片", systemImage: "photo.fill"),
+                displayMetric(id: "videos", label: "视频", systemImage: "video.fill")
+            ]
+        ]
+    }
+
+    private func displayMetric(
+        id: String,
+        label: String,
+        systemImage: String
+    ) -> DownloadResultMetric {
+        let source = notice.metrics.first(where: { $0.id == id })
+            ?? fallbackMetric(for: id)
+        return DownloadResultMetric(
+            id: id,
+            label: label,
+            value: source?.value ?? "0",
+            systemImage: systemImage,
+            tone: source?.tone ?? .neutral
+        )
+    }
+
+    private func fallbackMetric(for id: String) -> DownloadResultMetric? {
+        switch id {
+        case "queued":
+            notice.metrics.first(where: { $0.id == "checked" })
+        case "saved":
+            notice.metrics.first(where: { $0.id == "downloaded" })
+        default:
+            nil
+        }
     }
 }
 

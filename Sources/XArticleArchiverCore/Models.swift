@@ -7,7 +7,7 @@ public enum ArchiveMode: String, Codable, CaseIterable, Sendable {
     public var displayName: String {
         switch self {
         case .recentWindow: "最近范围"
-        case .fullArchive: "完整历史"
+        case .fullArchive: "下载全部"
         }
     }
 }

@@ -38,7 +38,7 @@ struct AddCreatorsView: View {
 
     private var downloadTitle: String {
         if !parsedArticleLinks.isEmpty { return "下载 \(parsedArticleLinks.count) 篇文章" }
-        return mode == .recentWindow ? "下载最近 \(articleLimit) 篇" : "下载完整历史"
+        return mode == .recentWindow ? "下载最近 \(articleLimit) 篇" : "下载全部文章"
     }
 
     var body: some View {
@@ -174,14 +174,14 @@ struct AddCreatorsView: View {
             }
         }
         .pickerStyle(.segmented)
-        .help("选择只下载最近指定数量，或自动滚动 Articles 列表获取完整历史")
+        .help("选择只下载最近指定数量，或自动滚动 Articles 列表下载全部文章")
 
         if mode == .recentWindow {
             recentRangeControls
             totalCountOption
         } else {
             Label(
-                "完整历史模式会扫描到 Articles 列表底部，并同时更新线上文章总数。",
+                "下载全部会扫描到 Articles 列表底部，并同时更新线上文章总数。",
                 systemImage: "number"
             )
             .font(.caption)
