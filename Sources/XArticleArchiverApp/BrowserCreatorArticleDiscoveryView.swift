@@ -337,8 +337,8 @@ struct BrowserCreatorArticleDiscoveryView: View {
                 } ?? (model.isSyncingTrackedCreators ? "正在同步博主文章" : "正在获取博主文章"))
                     .font(.title3.weight(.semibold))
                 Text(model.isSyncingTrackedCreators
-                     ? "后台检查 X Articles 专属列表，已有完整归档会自动跳过"
-                     : "后台读取 X Articles 专属列表，浏览器页面不会显示")
+                     ? "先获取完整 Articles 列表总数，再处理选定范围；已有完整归档会自动跳过"
+                     : "先获取完整 Articles 列表总数，再处理选定范围；浏览器页面不会显示")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

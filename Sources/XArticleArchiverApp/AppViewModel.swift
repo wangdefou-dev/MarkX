@@ -921,7 +921,7 @@ final class AppViewModel: ObservableObject {
             CreatorArticleDiscoveryRequest(
                 username: $0,
                 maximumArticles: maximumArticles,
-                resolvesTotalCount: !isSyncingTrackedCreators
+                resolvesTotalCount: true
             )
         }
         creatorArticleDiscoveryIndex = 0
@@ -929,12 +929,12 @@ final class AppViewModel: ObservableObject {
         errorMessage = nil
         progress = SyncProgress(
             stage: isSyncingTrackedCreators
-                ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主"
-                : "正在打开 X Articles 专属列表"
+                ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主并获取线上总数"
+                : "正在打开 X Articles 专属列表并获取线上总数"
         )
         statusMessage = isSyncingTrackedCreators
-            ? "后台同步已开始；已完整归档文章会自动跳过，X API 调用为 0"
-            : "只读取博主 Articles 列表；不扫描普通 Post，X API 调用为 0"
+            ? "后台同步已开始；先获取每位博主线上总数，再按范围处理文章；X API 调用为 0"
+            : "先读取完整 Articles 列表获取线上总数，再按范围下载；不扫描普通 Post，X API 调用为 0"
         isRunning = true
         showingAddCreators = false
         showingSyncAllConfiguration = false
