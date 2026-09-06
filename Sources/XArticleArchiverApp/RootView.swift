@@ -423,6 +423,9 @@ struct RootView: View {
                         }
                     }
                     .listStyle(.inset)
+                    // Recreate the list when the sidebar filter changes. This prevents
+                    // macOS List from retaining a stale selected row during status-only filters.
+                    .id(model.sidebarSelection)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
                 } else {
@@ -1567,6 +1570,8 @@ private struct ArticleRow: View {
             }
         }
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private var hasLayoutLimit: Bool {
@@ -1717,15 +1722,25 @@ private struct ArticleProcessingPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundStyle(color)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.title3)
+                        .foregroundStyle(color)
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
-                Spacer()
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
                 if isActive {
                     Button("停止处理", role: .cancel, action: stop)
                         .buttonStyle(.bordered)
