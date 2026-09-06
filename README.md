@@ -1,6 +1,6 @@
 # MarkX
 
-一个面向 Apple Silicon Mac 的原生 X 长文归档工具。当前版本为研发预览 `0.2.11`（Build 67）。
+一个面向 Apple Silicon Mac 的原生 X 长文归档工具。当前版本为研发预览 `0.2.12`（Build 68）。
 
 ## 已实现
 

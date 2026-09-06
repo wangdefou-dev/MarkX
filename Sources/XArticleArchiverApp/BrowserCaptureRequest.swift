@@ -32,10 +32,51 @@ struct CreatorArticleListItem: Identifiable, Hashable {
     }
 }
 
+enum DownloadResultMetricTone: String, Hashable {
+    case accent
+    case positive
+    case neutral
+    case warning
+    case danger
+}
+
+struct DownloadResultMetric: Identifiable, Hashable {
+    let id: String
+    let label: String
+    let value: String
+    let systemImage: String
+    let tone: DownloadResultMetricTone
+
+    init(
+        id: String,
+        label: String,
+        value: String,
+        systemImage: String,
+        tone: DownloadResultMetricTone = .neutral
+    ) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.systemImage = systemImage
+        self.tone = tone
+    }
+}
+
 struct DownloadResultNotice: Identifiable, Hashable {
     let id = UUID()
     var title: String
     var message: String
+    var metrics: [DownloadResultMetric]
+
+    init(
+        title: String,
+        message: String,
+        metrics: [DownloadResultMetric] = []
+    ) {
+        self.title = title
+        self.message = message
+        self.metrics = metrics
+    }
 }
 
 enum BrowserCaptureArchiveOutcome: Hashable {

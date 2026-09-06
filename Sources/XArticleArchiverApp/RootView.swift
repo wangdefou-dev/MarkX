@@ -6,6 +6,8 @@ import XArticleArchiverCore
 struct RootView: View {
     @EnvironmentObject private var model: AppViewModel
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
+    @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
+    @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
 
     var body: some View {
         NavigationSplitView {
@@ -40,29 +42,11 @@ struct RootView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        .alert(
-            model.downloadResultNotice?.title ?? "下载结果",
-            isPresented: Binding(
-                get: { model.downloadResultNotice != nil },
-                set: { if !$0 { model.downloadResultNotice = nil } }
-            )
-        ) {
-            Button("完成", role: .cancel) { model.downloadResultNotice = nil }
-                .help("关闭下载结果")
-        } message: {
-            Text(model.downloadResultNotice?.message ?? "")
+        .sheet(item: $model.downloadResultNotice) { notice in
+            DownloadResultView(notice: notice)
         }
-        .alert(
-            model.syncResultNotice?.title ?? "同步结果",
-            isPresented: Binding(
-                get: { model.syncResultNotice != nil },
-                set: { if !$0 { model.syncResultNotice = nil } }
-            )
-        ) {
-            Button("完成", role: .cancel) { model.syncResultNotice = nil }
-                .help("关闭本次同步结果")
-        } message: {
-            Text(model.syncResultNotice?.message ?? "")
+        .sheet(item: $model.syncResultNotice) { notice in
+            DownloadResultView(notice: notice)
         }
         .confirmationDialog(
             model.articlePendingDeletion.map { "删除《\($0.title)》？" } ?? "删除文章？",
@@ -147,7 +131,8 @@ struct RootView: View {
                 .disabled(model.isRunning || model.hasActiveDownloadProgress)
                 .help("输入博主主页或一个及多个 X Article 链接开始下载")
             }
-            Section("资料库") {
+            Section {
+                if isLibraryExpanded {
                 SidebarCountRow(
                     title: "全部文章",
                     systemImage: "doc.text",
@@ -225,17 +210,25 @@ struct RootView: View {
                     }
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
+                }
+            } header: {
+                SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
             }
-            Section("博主") {
-                ForEach(model.creators) { creator in
+            Section {
+                if isCreatorsExpanded {
+                    ForEach(model.creators) { creator in
                     let localArticleCount = statistics.articleCount(for: creator.id)
                     let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
-                    HStack(spacing: 8) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(creator.displayName).lineLimit(1)
-                                Text("@\(creator.username)").font(.caption).foregroundStyle(.secondary)
-                            }
+                        HStack(spacing: 8) {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                Text(creator.displayName)
+                                    .font(.system(size: 13.5, weight: .medium))
+                                    .lineLimit(1)
+                                Text("@\(creator.username)")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(.secondary)
+                                }
                         } icon: {
                             Image(systemName: creator.isProtected ? "lock.circle" : "person.crop.circle")
                         }
@@ -279,7 +272,10 @@ struct RootView: View {
                         .disabled(model.isRunning || model.hasActiveDownloadProgress)
                         .help("从博主列表移除 @\(creator.username)，已归档文章保留")
                     }
+                    }
                 }
+            } header: {
+                SidebarSectionHeader(title: "博主", isExpanded: $isCreatorsExpanded)
             }
         }
         .listStyle(.sidebar)
@@ -680,6 +676,153 @@ struct RootView: View {
 
     private func adjustArticleTextScale(by delta: Double) {
         articlePreviewTextScale = min(max((previewTextScale + delta) * 10, 8), 16).rounded() / 10
+    }
+}
+
+private struct SidebarSectionHeader: View {
+    let title: String
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 12)
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isExpanded ? "折叠\(title)" : "展开\(title)")
+    }
+}
+
+private struct DownloadResultView: View {
+    let notice: DownloadResultNotice
+    @Environment(\.dismiss) private var dismiss
+
+    private var hasDanger: Bool {
+        notice.metrics.contains { $0.tone == .danger }
+    }
+
+    private var hasWarning: Bool {
+        notice.metrics.contains { $0.tone == .warning }
+    }
+
+    private var statusColor: Color {
+        if hasDanger { return .red }
+        if hasWarning { return .orange }
+        return .green
+    }
+
+    private var statusImage: String {
+        if hasDanger { return "exclamationmark.triangle.fill" }
+        if hasWarning { return "exclamationmark.circle.fill" }
+        return "checkmark.seal.fill"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: statusImage)
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(statusColor)
+                    .frame(width: 42, height: 42)
+                    .background(statusColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(notice.title)
+                        .font(.title2.weight(.bold))
+                    Text(hasDanger ? "任务未完全完成，已保存的内容仍然保留" : "任务结果已整理完成")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if !notice.metrics.isEmpty {
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                    spacing: 10
+                ) {
+                    ForEach(notice.metrics) { metric in
+                        DownloadResultMetricCard(metric: metric)
+                    }
+                }
+                .padding(.top, 22)
+            }
+
+            Divider()
+                .padding(.vertical, 18)
+
+            ScrollView {
+                Text(notice.message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 70, maxHeight: 150)
+
+            HStack {
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .help("关闭任务结果")
+            }
+            .padding(.top, 18)
+        }
+        .padding(26)
+        .frame(minWidth: 560, idealWidth: 600, minHeight: 390, idealHeight: 470)
+    }
+}
+
+private struct DownloadResultMetricCard: View {
+    let metric: DownloadResultMetric
+
+    private var color: Color {
+        switch metric.tone {
+        case .accent: .blue
+        case .positive: .green
+        case .neutral: .secondary
+        case .warning: .orange
+        case .danger: .red
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: metric.systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(color)
+                Text(metric.label)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            Text(metric.value)
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(color.opacity(0.18), lineWidth: 0.8)
+        }
     }
 }
 
@@ -1327,6 +1470,7 @@ private struct SidebarCountRow: View {
             Spacer(minLength: 4)
             SidebarCountBadge(count: count)
         }
+        .font(.system(size: 13.5))
         .contentShape(Rectangle())
     }
 }
@@ -1336,7 +1480,7 @@ private struct SidebarCountBadge: View {
 
     var body: some View {
         Text(count, format: .number.grouping(.never))
-            .font(.caption.monospacedDigit().weight(.semibold))
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
@@ -1357,7 +1501,7 @@ private struct SidebarFractionBadge: View {
 
     var body: some View {
         Text(label)
-            .font(.caption.monospacedDigit().weight(.semibold))
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)

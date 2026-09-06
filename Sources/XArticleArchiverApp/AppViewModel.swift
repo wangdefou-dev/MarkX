@@ -517,13 +517,17 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func publishSyncResult(title: String, message: String) {
+    private func publishSyncResult(
+        title: String,
+        message: String,
+        metrics: [DownloadResultMetric] = []
+    ) {
         if scheduledRunActive {
             scheduledRunActive = false
             let compact = message.replacingOccurrences(of: "\n", with: " ")
             recordScheduledSyncResult(at: Date(), message: "\(title)：\(compact)")
         } else {
-            syncResultNotice = DownloadResultNotice(title: title, message: message)
+            syncResultNotice = DownloadResultNotice(title: title, message: message, metrics: metrics)
         }
     }
 
@@ -1059,7 +1063,12 @@ final class AppViewModel: ObservableObject {
             statusMessage = "已刷新 \(creatorCount) 位博主的线上文章总数；本次没有下载文章，X API 调用为 0"
             downloadResultNotice = DownloadResultNotice(
                 title: "线上文章总数已刷新",
-                message: "已完整扫描 Articles 列表并更新 \(creatorCount) 位博主的线上文章总数。本次没有下载文章，X API 调用为 0。"
+                message: "已完整扫描 Articles 列表并更新 \(creatorCount) 位博主的线上文章总数。本次没有下载文章，X API 调用为 0。",
+                metrics: [
+                    DownloadResultMetric(id: "creators", label: "刷新博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
+                    DownloadResultMetric(id: "status", label: "总数状态", value: "已更新", systemImage: "number.circle.fill", tone: .positive),
+                    DownloadResultMetric(id: "downloaded", label: "下载文章", value: "0", systemImage: "arrow.down.circle", tone: .neutral)
+                ]
             )
             activeArchiveOperation = .download
             return
@@ -1094,14 +1103,23 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
                 publishSyncResult(
                     title: "同步完成",
-                    message: "已检查 \(creatorCount) 位已跟踪博主的最近 \(articleLimit) 篇 X Article，未发现可下载文章。本次 X API 调用为 0。"
+                    message: "已检查 \(creatorCount) 位已跟踪博主的最近 \(articleLimit) 篇 X Article，未发现可下载文章。本次 X API 调用为 0。",
+                    metrics: [
+                        DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
+                        DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
+                        DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
+                    ]
                 )
             } else {
                 progress.stage = "没有发现 X Article"
                 statusMessage = "Articles 专属列表中没有发现文章；X API 调用为 0"
                 downloadResultNotice = DownloadResultNotice(
                     title: "没有发现文章",
-                    message: "目标博主的 Articles 专属列表中没有找到可下载的 X Article。"
+                    message: "目标博主的 Articles 专属列表中没有找到可下载的 X Article。",
+                    metrics: [
+                        DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
+                        DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
+                    ]
                 )
             }
             return
@@ -1134,7 +1152,11 @@ final class AppViewModel: ObservableObject {
             statusMessage = "线上文章总数刷新未完成；没有下载文章，也没有调用 X API"
             downloadResultNotice = DownloadResultNotice(
                 title: "线上文章总数未刷新",
-                message: "没有下载文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。"
+                message: "没有下载文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。",
+                metrics: [
+                    DownloadResultMetric(id: "status", label: "总数状态", value: "未完成", systemImage: "number.circle", tone: .danger),
+                    DownloadResultMetric(id: "downloaded", label: "下载文章", value: "0", systemImage: "arrow.down.circle", tone: .neutral)
+                ]
             )
             activeArchiveOperation = .download
         } else if isSyncingTrackedCreators {
@@ -1142,14 +1164,23 @@ final class AppViewModel: ObservableObject {
             statusMessage = "同步未完成；没有调用 X API"
             publishSyncResult(
                 title: "同步未完成",
-                message: "本次同步已停止，已完成的本地归档保留。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。"
+                message: "本次同步已停止，已完成的本地归档保留。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。",
+                metrics: [
+                    DownloadResultMetric(id: "status", label: "同步状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
+                    DownloadResultMetric(id: "saved", label: "已保存", value: "\(progress.completedArticles)", systemImage: "checkmark.circle.fill", tone: .positive),
+                    DownloadResultMetric(id: "failed", label: "失败", value: "\(progress.failedArticles)", systemImage: "xmark.circle.fill", tone: .danger)
+                ]
             )
         } else {
             progress.stage = "Articles 列表读取失败"
             statusMessage = "没有调用 X API；请确认 Chrome 已登录 X 后重试"
             downloadResultNotice = DownloadResultNotice(
                 title: "没有完成文章发现",
-                message: "没有下载任何文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。"
+                message: "没有下载任何文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。",
+                metrics: [
+                    DownloadResultMetric(id: "status", label: "发现状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
+                    DownloadResultMetric(id: "downloaded", label: "下载文章", value: "0", systemImage: "arrow.down.circle", tone: .neutral)
+                ]
             )
         }
     }
@@ -1311,11 +1342,22 @@ final class AppViewModel: ObservableObject {
                 statusMessage = hasUnfinishedWork
                     ? "本次同步结束：保存 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
                     : "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
+                let metrics = [
+                    DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
+                    DownloadResultMetric(id: "checked", label: "检查文章", value: "\(checked)", systemImage: "doc.text.magnifyingglass", tone: .accent),
+                    DownloadResultMetric(id: "saved", label: "新增保存", value: "\(completed)", systemImage: "checkmark.circle.fill", tone: .positive),
+                    DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(skipped)", systemImage: "forward.end.fill", tone: .neutral),
+                    DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
+                    DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
+                    DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
+                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent)
+                ]
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
                         title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(outstandingNote)"
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(outstandingNote)",
+                        metrics: metrics
                     )
                 }
             } else {
@@ -1323,11 +1365,21 @@ final class AppViewModel: ObservableObject {
                 statusMessage = hasUnfinishedWork
                     ? "本次队列结束：成功 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
                     : "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
+                let metrics = [
+                    DownloadResultMetric(id: "queued", label: "进入队列", value: "\(total)", systemImage: "tray.and.arrow.down.fill", tone: .accent),
+                    DownloadResultMetric(id: "saved", label: "成功保存", value: "\(completed)", systemImage: "checkmark.circle.fill", tone: .positive),
+                    DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(skipped)", systemImage: "forward.end.fill", tone: .neutral),
+                    DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
+                    DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
+                    DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
+                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent)
+                ]
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.downloadResultNotice = DownloadResultNotice(
                         title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(outstandingNote)"
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(outstandingNote)",
+                        metrics: metrics
                     )
                 }
             }
@@ -1969,14 +2021,25 @@ final class AppViewModel: ObservableObject {
                         statusMessage = "同步完成：\(localHits) 篇已有完整归档，全部跳过"
                         publishSyncResult(
                             title: "全部博主已经是最新状态",
-                            message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或存储媒体。\n\n本次 X API 调用为 0。"
+                            message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或存储媒体。\n\n本次 X API 调用为 0。",
+                            metrics: [
+                                DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
+                                DownloadResultMetric(id: "checked", label: "检查文章", value: "\(localHits)", systemImage: "doc.text.magnifyingglass", tone: .accent),
+                                DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive),
+                                DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(localHits)", systemImage: "forward.end.fill", tone: .neutral)
+                            ]
                         )
                     } else {
                         progress.stage = "全部链接已精确保存"
                         statusMessage = "\(localHits) 篇文章已有完整排版；本次 X API 调用为 0"
                         downloadResultNotice = DownloadResultNotice(
                             title: "不需要重复下载",
-                            message: "识别到的 \(localHits) 篇文章都已经完整保存在本地，本次没有重复下载或存储媒体。"
+                            message: "识别到的 \(localHits) 篇文章都已经完整保存在本地，本次没有重复下载或存储媒体。",
+                            metrics: [
+                                DownloadResultMetric(id: "checked", label: "检查文章", value: "\(localHits)", systemImage: "doc.text.magnifyingglass", tone: .accent),
+                                DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive),
+                                DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(localHits)", systemImage: "forward.end.fill", tone: .neutral)
+                            ]
                         )
                     }
                     return
@@ -1993,7 +2056,11 @@ final class AppViewModel: ObservableObject {
                 if isSyncingTrackedCreators {
                     publishSyncResult(
                         title: "同步未完成",
-                        message: "无法建立新文章采集队列：\(error.localizedDescription)"
+                        message: "无法建立新文章采集队列：\(error.localizedDescription)",
+                        metrics: [
+                            DownloadResultMetric(id: "status", label: "同步状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
+                            DownloadResultMetric(id: "saved", label: "已保存", value: "\(progress.completedArticles)", systemImage: "checkmark.circle.fill", tone: .positive)
+                        ]
                     )
                 }
             }
