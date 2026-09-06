@@ -246,7 +246,7 @@ struct RootView: View {
                         )
                             .help(creator.knownArticleCount.map {
                                 "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
-                            } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；重新拉取该博主可更新线上总数")
+                            } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；可用“刷新线上文章总数”更新")
                     }
                     .tag(AppViewModel.SidebarSelection.creator(creator.id))
                     .contextMenu {
@@ -263,6 +263,13 @@ struct RootView: View {
                         }
                         .disabled(model.isRunning || model.hasActiveDownloadProgress)
                         .help("重新选择数量并拉取 @\(creator.username) 的 X Article")
+                        Button {
+                            model.refreshCreatorArticleCount(creator)
+                        } label: {
+                            Label("刷新线上文章总数", systemImage: "number.circle")
+                        }
+                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                        .help("完整扫描 @\(creator.username) 的 Articles 列表，只更新线上文章总数，不下载文章")
                         Divider()
                         Button(role: .destructive) {
                             model.requestDeleteCreator(creator)

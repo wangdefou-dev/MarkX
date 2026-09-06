@@ -16,6 +16,7 @@ struct AddCreatorsView: View {
     @State private var entryMode: EntryMode = .single
     @State private var articleLimit = 10
     @State private var refreshExistingLinks = false
+    @State private var resolveTotalCount = false
 
     private var parsedHandles: [String] { HandleParser.parse(input) }
     private var parsedArticleLinks: [XArticleLink] { XArticleURLParser.parse(input) }
@@ -177,6 +178,14 @@ struct AddCreatorsView: View {
 
         if mode == .recentWindow {
             recentRangeControls
+            totalCountOption
+        } else {
+            Label(
+                "完整历史模式会扫描到 Articles 列表底部，并同时更新线上文章总数。",
+                systemImage: "number"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
 
         creatorModeExplanation
@@ -226,13 +235,29 @@ struct AddCreatorsView: View {
         .help("快速设置每位博主要下载的文章数量")
     }
 
+    private var totalCountOption: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("同时获取线上文章总数", isOn: $resolveTotalCount)
+                    .help("开启后会完整扫描 Articles 列表并更新左侧博主的线上总数，仍只下载最近指定数量")
+                Text(resolveTotalCount
+                     ? "会完整扫描列表来更新总数，等待时间会更长，但下载范围仍是最近 \(articleLimit) 篇。"
+                     : "默认只读取最近 \(articleLimit) 篇，速度更快；之后可在左侧博主菜单中单独刷新线上总数。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var creatorModeExplanation: some View {
         GroupBox {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "safari")
                     .foregroundStyle(.blue)
                 Text(mode == .recentWindow
-                     ? "应用会直接打开 x.com/<博主>/articles，只收集前 \(articleLimit) 个官方 Article 链接，再逐篇保存完整排版。发现和正文下载的 X API 调用都为 0。"
+                     ? (resolveTotalCount
+                         ? "应用会先完整扫描 x.com/<博主>/articles 更新线上总数，再取前 \(articleLimit) 个官方 Article 链接逐篇保存。X API 调用为 0。"
+                         : "应用会直接打开 x.com/<博主>/articles，只读取前 \(articleLimit) 个官方 Article 链接，再逐篇保存完整排版。线上总数可稍后刷新。X API 调用为 0。")
                      : "应用会自动滚动 x.com/<博主>/articles 直到列表底部，再逐篇保存。不会调用 Full-Archive Search，也不会扫描普通 Post，X API 调用为 0。")
                     .font(.callout)
             }
@@ -261,7 +286,12 @@ struct AddCreatorsView: View {
         if !parsedArticleLinks.isEmpty {
             model.archiveArticleLinks(input: input, refreshExisting: refreshExistingLinks)
         } else {
-            model.addAndArchiveCreators(input: input, mode: mode, articleLimit: articleLimit)
+            model.addAndArchiveCreators(
+                input: input,
+                mode: mode,
+                articleLimit: articleLimit,
+                resolveTotalCount: resolveTotalCount
+            )
         }
     }
 }

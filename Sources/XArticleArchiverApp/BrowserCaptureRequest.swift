@@ -5,7 +5,8 @@ struct CreatorArticleDiscoveryRequest: Identifiable, Hashable {
     var id: String { username.lowercased() }
     var username: String
     var maximumArticles: Int?
-    var resolvesTotalCount = true
+    var resolvesTotalCount = false
+    var countOnly = false
 
     var pageURL: URL {
         URL(string: "https://x.com/\(username)/articles")!

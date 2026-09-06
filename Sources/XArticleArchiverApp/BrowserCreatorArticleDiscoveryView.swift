@@ -21,6 +21,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     @Published var pageStatus = "正在准备博主文章列表…"
     @Published var currentURL: URL?
     @Published var discoveredItems: [CreatorArticleListItem] = []
+    @Published var discoveredCount = 0
 
     let webView: WKWebView
     private var currentListURL: URL?
@@ -84,6 +85,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         }
         isDiscovering = true
         discoveredItems = []
+        discoveredCount = 0
         defer { isDiscovering = false }
 
         load(request)
@@ -124,7 +126,10 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                         discoveredCount: orderedItems.count,
                         maximumArticles: request.maximumArticles
                     )
-                    discoveredItems = Array(orderedItems.prefix(selectedCount))
+                    discoveredCount = orderedItems.count
+                    discoveredItems = request.countOnly
+                        ? []
+                        : Array(orderedItems.prefix(selectedCount))
 
                     if CreatorArticleDiscoveryPolicy.shouldStopAtRequestedLimit(
                         discoveredCount: orderedItems.count,
@@ -133,7 +138,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                     ) {
                         pageStatus = "已从 @\(request.username) Articles 列表找到 \(selectedCount) 篇；X API 调用为 0"
                         return CreatorArticleDiscoveryResult(
-                            items: discoveredItems,
+                            items: request.countOnly ? [] : discoveredItems,
                             knownArticleCount: nil
                         )
                     }
@@ -150,9 +155,11 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                         : "已找到 \(orderedItems.count) 篇 Article，正在向下检查更多…X API 调用为 0"
 
                     if unchangedAtBottom >= 5 {
-                        pageStatus = "@\(request.username) 线上共 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
+                        pageStatus = request.countOnly
+                            ? "@\(request.username) 线上共 \(orderedItems.count) 篇 Article，正在保存总数；不会下载文章"
+                            : "@\(request.username) 线上共 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
                         return CreatorArticleDiscoveryResult(
-                            items: discoveredItems,
+                            items: request.countOnly ? [] : discoveredItems,
                             knownArticleCount: orderedItems.count
                         )
                     }
@@ -171,7 +178,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                 maximumArticles: request.maximumArticles
             )
             return CreatorArticleDiscoveryResult(
-                items: Array(orderedItems.prefix(selectedCount)),
+                items: request.countOnly ? [] : Array(orderedItems.prefix(selectedCount)),
                 knownArticleCount: nil
             )
         }
@@ -331,14 +338,24 @@ struct BrowserCreatorArticleDiscoveryView: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(request.map {
-                    model.isSyncingTrackedCreators
+                    model.isRefreshingCreatorCounts
+                        ? "正在刷新 @\($0.username) 的线上文章总数"
+                        : model.isSyncingTrackedCreators
                         ? "正在同步 @\($0.username) 的文章"
                         : "正在获取 @\($0.username) 的文章"
-                } ?? (model.isSyncingTrackedCreators ? "正在同步博主文章" : "正在获取博主文章"))
+                } ?? (model.isRefreshingCreatorCounts
+                      ? "正在刷新线上文章总数"
+                      : model.isSyncingTrackedCreators ? "正在同步博主文章" : "正在获取博主文章"))
                     .font(.title3.weight(.semibold))
-                Text(model.isSyncingTrackedCreators
-                     ? "先获取完整 Articles 列表总数，再处理选定范围；已有完整归档会自动跳过"
-                     : "先获取完整 Articles 列表总数，再处理选定范围；浏览器页面不会显示")
+                Text(model.isRefreshingCreatorCounts
+                     ? "完整扫描 Articles 列表，只更新总数，不下载文章"
+                     : model.isSyncingTrackedCreators
+                         ? (model.activeSyncResolvesTotalCount
+                             ? "先获取完整 Articles 列表总数，再处理选定范围；已有完整归档会自动跳过"
+                             : "只读取每位博主最近文章；已有完整归档会自动跳过")
+                         : (request?.resolvesTotalCount == true
+                             ? "先获取完整 Articles 列表总数，再处理选定范围；浏览器页面不会显示"
+                             : "只读取最近文章，线上总数可稍后手动刷新；浏览器页面不会显示"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -362,9 +379,11 @@ struct BrowserCreatorArticleDiscoveryView: View {
                 Text(controller.pageStatus)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text(model.isSyncingTrackedCreators
-                     ? "已检查并识别 \(controller.discoveredItems.count) 篇文章标题和链接"
-                     : "已识别 \(controller.discoveredItems.count) 篇文章标题和链接")
+                Text(model.isRefreshingCreatorCounts
+                     ? "已扫描 \(controller.discoveredCount) 篇文章卡片"
+                     : model.isSyncingTrackedCreators
+                         ? "已检查并识别 \(controller.discoveredItems.count) 篇文章标题和链接"
+                         : "已识别 \(controller.discoveredItems.count) 篇文章标题和链接")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -388,7 +407,14 @@ struct BrowserCreatorArticleDiscoveryView: View {
 
     private var discoveredArticleList: some View {
         Group {
-            if controller.discoveredItems.isEmpty {
+            if model.isRefreshingCreatorCounts {
+                ContentUnavailableView {
+                    Label("正在统计线上文章", systemImage: "number")
+                } description: {
+                    Text("已扫描 \(controller.discoveredCount) 篇 Articles 卡片；不会下载文章")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if controller.discoveredItems.isEmpty {
                 ContentUnavailableView {
                     Label("正在查找文章", systemImage: "list.bullet.rectangle")
                 } description: {
@@ -440,9 +466,11 @@ struct BrowserCreatorArticleDiscoveryView: View {
         HStack(spacing: 10) {
             Image(systemName: "eye.slash.fill")
                 .foregroundStyle(.secondary)
-            Text(model.isSyncingTrackedCreators
-                 ? "同步在后台自动运行，已有完整归档会跳过，完成后统一显示同步结果。"
-                 : "采集过程在后台自动运行，完成后会统一显示下载结果。")
+            Text(model.isRefreshingCreatorCounts
+                 ? "完整扫描只用于更新线上总数，不会下载文章。"
+                 : model.isSyncingTrackedCreators
+                     ? "同步在后台自动运行，已有完整归档会跳过，完成后统一显示同步结果。"
+                     : "采集过程在后台自动运行，完成后会统一显示下载结果。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -450,9 +478,11 @@ struct BrowserCreatorArticleDiscoveryView: View {
                 .help("隐藏进度窗口，文章发现会继续在后台执行")
             Button("停止") { model.closeCreatorArticleDiscovery() }
                 .keyboardShortcut(.cancelAction)
-                .help(model.isSyncingTrackedCreators
-                      ? "停止本次同步；已经完成的本地归档保留"
-                      : "停止当前博主的 Articles 列表发现；已发现的标题和链接保留")
+                .help(model.isRefreshingCreatorCounts
+                      ? "停止线上文章总数刷新"
+                      : model.isSyncingTrackedCreators
+                          ? "停止本次同步；已经完成的本地归档保留"
+                          : "停止当前博主的 Articles 列表发现；已发现的标题和链接保留")
         }
     }
 

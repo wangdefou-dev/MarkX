@@ -18,7 +18,8 @@ private enum ArticleDeletionError: LocalizedError {
 final class AppViewModel: ObservableObject {
     private enum ActiveArchiveOperation {
         case download
-        case syncAll(creatorCount: Int, articleLimit: Int)
+        case syncAll(creatorCount: Int, articleLimit: Int, resolvesTotalCount: Bool)
+        case refreshCounts(creatorCount: Int)
     }
 
     enum ImageHostChoice: String, CaseIterable, Identifiable {
@@ -226,14 +227,24 @@ final class AppViewModel: ObservableObject {
         return false
     }
 
+    var isRefreshingCreatorCounts: Bool {
+        if case .refreshCounts = activeArchiveOperation { return true }
+        return false
+    }
+
     var activeSyncArticleLimit: Int? {
-        guard case .syncAll(_, let articleLimit) = activeArchiveOperation else { return nil }
+        guard case .syncAll(_, let articleLimit, _) = activeArchiveOperation else { return nil }
         return articleLimit
     }
 
     var activeSyncCreatorCount: Int? {
-        guard case .syncAll(let creatorCount, _) = activeArchiveOperation else { return nil }
+        guard case .syncAll(let creatorCount, _, _) = activeArchiveOperation else { return nil }
         return creatorCount
+    }
+
+    var activeSyncResolvesTotalCount: Bool {
+        guard case .syncAll(_, _, let resolvesTotalCount) = activeArchiveOperation else { return false }
+        return resolvesTotalCount
     }
 
     var configurationSummary: String {
@@ -500,7 +511,7 @@ final class AppViewModel: ObservableObject {
             at: triggeredAt,
             message: "正在后台同步 \(enabledCreatorCount) 位博主，每位最近 \(scheduledSyncArticleLimit) 篇"
         )
-        startSyncAll(articleLimit: scheduledSyncArticleLimit)
+        startSyncAll(articleLimit: scheduledSyncArticleLimit, resolveTotalCount: false)
         if !NSApp.isActive {
             NSApp.hide(nil)
         }
@@ -840,7 +851,8 @@ final class AppViewModel: ObservableObject {
     func addAndArchiveCreators(
         input: String,
         mode: ArchiveMode,
-        articleLimit: Int = 10
+        articleLimit: Int = 10,
+        resolveTotalCount: Bool = false
     ) {
         guard !isRunning else { return }
         let handles = HandleParser.parse(input)
@@ -866,7 +878,9 @@ final class AppViewModel: ObservableObject {
         showingAddCreators = false
         beginCreatorArticleDiscovery(
             handles: handles,
-            maximumArticles: mode == .recentWindow ? articleLimit : nil
+            maximumArticles: mode == .recentWindow ? articleLimit : nil,
+            resolvesTotalCount: mode == .fullArchive || resolveTotalCount,
+            countOnly: false
         )
     }
 
@@ -880,7 +894,7 @@ final class AppViewModel: ObservableObject {
         showingSyncAllConfiguration = true
     }
 
-    func startSyncAll(articleLimit: Int) {
+    func startSyncAll(articleLimit: Int, resolveTotalCount: Bool = false) {
         guard !isRunning else { return }
         guard (1...100).contains(articleLimit) else {
             errorMessage = "同步数量必须在 1 到 100 之间"
@@ -902,15 +916,39 @@ final class AppViewModel: ObservableObject {
         }
         activeArchiveOperation = .syncAll(
             creatorCount: handles.count,
-            articleLimit: articleLimit
+            articleLimit: articleLimit,
+            resolvesTotalCount: resolveTotalCount
         )
-        beginCreatorArticleDiscovery(handles: handles, maximumArticles: articleLimit)
+        beginCreatorArticleDiscovery(
+            handles: handles,
+            maximumArticles: articleLimit,
+            resolvesTotalCount: resolveTotalCount,
+            countOnly: false
+        )
+    }
+
+    func refreshCreatorArticleCount(_ creator: Creator) {
+        guard !isRunning else { return }
+        let username = creator.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !username.isEmpty else { return }
+        activeArchiveOperation = .refreshCounts(creatorCount: 1)
+        beginCreatorArticleDiscovery(
+            handles: [username],
+            maximumArticles: nil,
+            resolvesTotalCount: true,
+            countOnly: true
+        )
     }
 
     /// Discovers exact Article status URLs from each creator's dedicated
     /// `/articles` page. This intentionally never calls the timeline or search
     /// endpoints: regular Posts are not read, counted, or billed.
-    private func beginCreatorArticleDiscovery(handles: [String], maximumArticles: Int?) {
+    private func beginCreatorArticleDiscovery(
+        handles: [String],
+        maximumArticles: Int?,
+        resolvesTotalCount: Bool,
+        countOnly: Bool
+    ) {
         var seen = Set<String>()
         let uniqueHandles = handles.filter { seen.insert($0.lowercased()).inserted }
         guard !uniqueHandles.isEmpty, !isRunning else { return }
@@ -921,20 +959,33 @@ final class AppViewModel: ObservableObject {
             CreatorArticleDiscoveryRequest(
                 username: $0,
                 maximumArticles: maximumArticles,
-                resolvesTotalCount: true
+                resolvesTotalCount: resolvesTotalCount,
+                countOnly: countOnly
             )
         }
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
         errorMessage = nil
         progress = SyncProgress(
-            stage: isSyncingTrackedCreators
-                ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主并获取线上总数"
-                : "正在打开 X Articles 专属列表并获取线上总数"
+            stage: isRefreshingCreatorCounts
+                ? "正在刷新 \(uniqueHandles.count) 位博主的线上文章总数"
+                : isSyncingTrackedCreators
+                    ? (resolvesTotalCount
+                        ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主并获取线上总数"
+                        : "正在后台快速同步 \(uniqueHandles.count) 位已跟踪博主")
+                    : (resolvesTotalCount
+                        ? "正在打开 X Articles 专属列表并获取线上总数"
+                        : "正在打开 X Articles 专属列表并读取最近文章")
         )
-        statusMessage = isSyncingTrackedCreators
-            ? "后台同步已开始；先获取每位博主线上总数，再按范围处理文章；X API 调用为 0"
-            : "先读取完整 Articles 列表获取线上总数，再按范围下载；不扫描普通 Post，X API 调用为 0"
+        statusMessage = isRefreshingCreatorCounts
+            ? "正在完整扫描 Articles 列表，只更新线上总数，不下载文章；X API 调用为 0"
+            : isSyncingTrackedCreators
+                ? (resolvesTotalCount
+                    ? "后台同步已开始；先获取每位博主线上总数，再按范围处理文章；X API 调用为 0"
+                    : "后台快速同步已开始；只读取每位博主最近文章，不扫描完整历史；X API 调用为 0")
+                : (resolvesTotalCount
+                    ? "先读取完整 Articles 列表获取线上总数，再按范围下载；不扫描普通 Post，X API 调用为 0"
+                    : "只读取 Articles 列表最近文章，再逐篇下载；线上总数可稍后手动刷新；X API 调用为 0")
         isRunning = true
         showingAddCreators = false
         showingSyncAllConfiguration = false
@@ -980,6 +1031,36 @@ final class AppViewModel: ObservableObject {
             } catch {
                 errorMessage = "无法保存 @\(request.username) 的文章总数：\(error.localizedDescription)"
             }
+        }
+        if request.countOnly {
+            guard result.knownArticleCount != nil else {
+                creatorArticleDiscoveryFailed(
+                    BrowserArticleCaptureError.pageNotReady("Articles 列表未到达底部，无法确认线上文章总数")
+                )
+                return
+            }
+            let next = creatorArticleDiscoveryIndex + 1
+            if creatorArticleDiscoveryRequests.indices.contains(next) {
+                creatorArticleDiscoveryIndex = next
+                progress.stage = "正在刷新第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主的线上文章总数"
+                return
+            }
+
+            let creatorCount = creatorArticleDiscoveryRequests.count
+            showingCreatorArticleDiscovery = false
+            creatorArticleDiscoveryRequests = []
+            creatorArticleDiscoveryIndex = 0
+            discoveredCreatorArticles = []
+            isRunning = false
+            finishDownloadProgressWindow()
+            progress.stage = "线上文章总数刷新完成"
+            statusMessage = "已刷新 \(creatorCount) 位博主的线上文章总数；本次没有下载文章，X API 调用为 0"
+            downloadResultNotice = DownloadResultNotice(
+                title: "线上文章总数已刷新",
+                message: "已完整扫描 Articles 列表并更新 \(creatorCount) 位博主的线上文章总数。本次没有下载文章，X API 调用为 0。"
+            )
+            activeArchiveOperation = .download
+            return
         }
         var knownPostIDs = Set(discoveredCreatorArticles.map(\.link.postID))
         for item in result.items where knownPostIDs.insert(item.link.postID).inserted {
@@ -1046,7 +1127,15 @@ final class AppViewModel: ObservableObject {
         discoveredCreatorArticles = []
         isRunning = false
         finishDownloadProgressWindow()
-        if isSyncingTrackedCreators {
+        if isRefreshingCreatorCounts {
+            progress.stage = "线上文章总数刷新失败"
+            statusMessage = "线上文章总数刷新未完成；没有下载文章，也没有调用 X API"
+            downloadResultNotice = DownloadResultNotice(
+                title: "线上文章总数未刷新",
+                message: "没有下载文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。"
+            )
+            activeArchiveOperation = .download
+        } else if isSyncingTrackedCreators {
             progress.stage = "同步失败"
             statusMessage = "同步未完成；没有调用 X API"
             publishSyncResult(
@@ -1070,10 +1159,18 @@ final class AppViewModel: ObservableObject {
         discoveredCreatorArticles = []
         isRunning = false
         finishDownloadProgressWindow()
-        progress.stage = isSyncingTrackedCreators ? "已停止同步" : "已停止文章列表发现"
-        statusMessage = isSyncingTrackedCreators
-            ? "已停止同步；已完成的本地归档保留"
-            : "已停止；本次没有调用 X API"
+        progress.stage = isRefreshingCreatorCounts
+            ? "已停止线上文章总数刷新"
+            : isSyncingTrackedCreators ? "已停止同步" : "已停止文章列表发现"
+        let wasRefreshingCreatorCounts = isRefreshingCreatorCounts
+        statusMessage = wasRefreshingCreatorCounts
+            ? "已停止线上文章总数刷新；本次没有下载文章"
+            : isSyncingTrackedCreators
+                ? "已停止同步；已完成的本地归档保留"
+                : "已停止；本次没有调用 X API"
+        if wasRefreshingCreatorCounts {
+            activeArchiveOperation = .download
+        }
     }
 
     func archiveArticleLinks(input: String, refreshExisting: Bool = false) {

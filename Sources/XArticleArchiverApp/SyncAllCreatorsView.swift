@@ -19,6 +19,7 @@ struct SyncAllCreatorsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var mode: Mode = .now
     @State private var articleLimit = 10
+    @State private var resolveTotalCount = false
     @State private var scheduleEnabled = false
     @State private var scheduleTime = Date()
     @State private var scheduleArticleLimit = 10
@@ -77,6 +78,7 @@ struct SyncAllCreatorsView: View {
     private var immediateContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             quantityCard(limit: $articleLimit)
+            totalCountOption
             VStack(alignment: .leading, spacing: 10) {
                 SyncInfoRow(
                     symbol: "person.3.fill",
@@ -97,6 +99,20 @@ struct SyncAllCreatorsView: View {
             .padding(14)
             .cardBackground()
             readinessRow
+        }
+    }
+
+    private var totalCountOption: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
+                    .help("开启后会完整扫描每位博主的 Articles 列表并更新左侧总数，下载仍只处理最近指定数量")
+                Text(resolveTotalCount
+                     ? "会完整扫描所有 Articles 列表，等待时间更长，但仍只下载最近 \(articleLimit) 篇。"
+                     : "默认只读取最近 \(articleLimit) 篇，速度更快；需要时可在左侧博主菜单中单独刷新总数。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -242,7 +258,10 @@ struct SyncAllCreatorsView: View {
 
             if mode == .now {
                 Button("开始后台同步") {
-                    model.startSyncAll(articleLimit: articleLimit)
+                    model.startSyncAll(
+                        articleLimit: articleLimit,
+                        resolveTotalCount: resolveTotalCount
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
