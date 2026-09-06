@@ -302,7 +302,8 @@ struct RootView: View {
                 if !model.filteredArticles.isEmpty {
                     List(selection: $model.selectedArticleID) {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
-                            ArticleRow(article: article, index: index + 1)
+                            let creator = model.creators.first(where: { $0.id == article.creatorID })
+                            ArticleRow(article: article, index: index + 1, creator: creator)
                                 .tag(article.id)
                                 .contextMenu {
                                     if article.pipelineState == .subscriptionRequired {
@@ -334,6 +335,14 @@ struct RootView: View {
                                             Label("删除精确采集任务…", systemImage: "xmark.circle")
                                         }
                                         .help("只从待采集队列移除；已有本地归档保留")
+                                    }
+                                    if let creator {
+                                        Button {
+                                            model.sidebarSelection = .creator(creator.id)
+                                        } label: {
+                                            Label("查看博主的其他文章", systemImage: "person.crop.circle")
+                                        }
+                                        .help("跳转到 @\(creator.username) 的文章分组")
                                     }
                                     Divider()
                                     Button(role: .destructive) {
@@ -412,21 +421,24 @@ struct RootView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(article.title).font(.title2.bold()).textSelection(.enabled)
+                        Text(article.title)
+                            .font(.title2.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
                         HStack(spacing: 8) {
                             Button {
                                 model.openCreatorProfile(handle: article.authorHandle)
                             } label: {
                                 HStack(spacing: 4) {
-                                    Text("@\(article.authorHandle)")
+                                    Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
+                                    Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
                                     Image(systemName: "arrow.up.right")
                                         .font(.caption2.weight(.semibold))
                                 }
                             }
                             .buttonStyle(.plain)
                             .help("查看 @\(article.authorHandle) 的 X 主页")
-                            Text("·")
-                            Text(article.contentType.displayName)
                             Text("·")
                             Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
                         }
@@ -461,7 +473,8 @@ struct RootView: View {
                             }
                         }
                     }
-                    Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
                     HStack(spacing: 9) {
                         HStack(spacing: 3) {
                             Button {
@@ -668,6 +681,11 @@ struct RootView: View {
     private var selectedSidebarCreator: Creator? {
         guard case .creator(let id) = model.sidebarSelection else { return nil }
         return model.creators.first { $0.id == id }
+    }
+
+    private var selectedArticleCreator: Creator? {
+        guard let article = model.selectedArticle else { return nil }
+        return model.creators.first { $0.id == article.creatorID }
     }
 
     private var previewTextScale: Double {
@@ -1399,6 +1417,7 @@ private struct ArchivedAVPlayerView: NSViewRepresentable {
 private struct ArticleRow: View {
     let article: ArchivedArticle
     let index: Int
+    let creator: Creator?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1413,24 +1432,24 @@ private struct ArticleRow: View {
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(2)
-            HStack(spacing: 6) {
-                Text("@\(article.authorHandle)")
-                Text("·")
-                Text(article.contentType.displayName)
-                Spacer()
-                Text(article.publishedAt, style: .date)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                Image(systemName: statusIcon)
-                    .foregroundStyle(statusColor)
-                Text(statusTitle)
-                if article.imageCount > 0 { Text("· \(article.imageCount) 张图") }
-                if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(creator?.displayName ?? "@\(article.authorHandle)")
+                    Text("·")
+                    Text("@\(creator?.username ?? article.authorHandle)")
+                    Spacer()
+                    Text(article.publishedAt, style: .date)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: statusIcon)
+                        .foregroundStyle(statusColor)
+                    Text(statusTitle)
+                    if article.imageCount > 0 { Text("· \(article.imageCount) 张图") }
+                    if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
