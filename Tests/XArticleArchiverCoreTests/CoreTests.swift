@@ -1118,6 +1118,39 @@ final class UPicOutputParserTests: XCTestCase {
     }
 }
 
+final class UPicAdapterTests: XCTestCase {
+    func testUploadTerminatesHungProcessAfterTimeout() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(
+            path: "markx-upic-timeout-test-\(UUID().uuidString)"
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let executable = directory.appending(path: "fake-upic")
+        try "#!/bin/sh\nexec /bin/sleep 30\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let image = directory.appending(path: "image.png")
+        try Data([0x89, 0x50, 0x4e, 0x47]).write(to: image)
+        let adapter = UPicAdapter(executableURL: executable, processTimeout: 0.1)
+        let startedAt = Date()
+
+        do {
+            _ = try await adapter.upload(fileURLs: [image])
+            XCTFail("Expected a hung uPic process to time out")
+        } catch let error as ImagePipelineError {
+            guard case .processTimedOut(let seconds) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(seconds, 1)
+        }
+
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 3)
+    }
+}
+
 final class S3ImageHostAdapterTests: XCTestCase {
     func testBuildsDeterministicR2SigV4RequestWithoutExposingSecret() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "x-s3-sign-test-\(UUID().uuidString)")

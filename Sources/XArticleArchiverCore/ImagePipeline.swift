@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 public struct ImageHostCapability: Sendable {
@@ -312,6 +313,7 @@ public struct MirroredMediaHostAdapter<Primary: ImageHostAdapter>: ImageHostAdap
 public enum ImagePipelineError: LocalizedError, Sendable {
     case hostUnavailable(String)
     case processFailed(Int32, String)
+    case processTimedOut(Int)
     case invalidOutput(String)
     case outputCountMismatch(expected: Int, actual: Int)
     case insecureURL(String)
@@ -326,6 +328,7 @@ public enum ImagePipelineError: LocalizedError, Sendable {
         switch self {
         case .hostUnavailable(let detail): "媒体存储不可用：\(detail)"
         case .processFailed(let code, let detail): "uPic 上传失败（\(code)）：\(detail)"
+        case .processTimedOut(let seconds): "uPic 上传超过 \(seconds) 秒，已自动终止；当前文章任务已保留，可稍后重试"
         case .invalidOutput(let detail): "无法解析图床返回结果：\(detail)"
         case .outputCountMismatch(let expected, let actual): "图床返回 URL 数量不一致，应为 \(expected)，实际为 \(actual)"
         case .insecureURL(let value): "图床返回了不安全或无效的 URL：\(value)"
@@ -437,13 +440,16 @@ public struct VideoDownloader: Sendable {
 public struct UPicAdapter: ImageHostAdapter {
     public let displayName = "uPic 图床"
     public var executableURL: URL
+    public var processTimeout: TimeInterval
     private let session: URLSession
 
     public init(
         executableURL: URL = URL(fileURLWithPath: "/Applications/uPic.app/Contents/MacOS/uPic"),
+        processTimeout: TimeInterval = 300,
         session: URLSession = .shared
     ) {
         self.executableURL = executableURL
+        self.processTimeout = processTimeout
         self.session = session
     }
 
@@ -465,34 +471,62 @@ public struct UPicAdapter: ImageHostAdapter {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw ImagePipelineError.hostUnavailable("没有找到 uPic")
         }
+        let executableURL = self.executableURL
+        let processTimeout = self.processTimeout
         return try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.executableURL = self.executableURL
-            process.arguments = ["-u"] + fileURLs.map(\.path) + ["-o", "url"]
-            process.standardOutput = stdout
-            process.standardError = stderr
-            var environment = [String: String]()
-            for key in ["PATH", "TMPDIR", "LANG", "LC_ALL", "HOME", "USER"] {
-                if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
-            }
-            process.environment = environment
-            try process.run()
-            process.waitUntilExit()
-            let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: outputData, encoding: .utf8) ?? ""
-            let error = String(data: errorData, encoding: .utf8) ?? ""
-            guard process.terminationStatus == 0 else {
-                throw ImagePipelineError.processFailed(process.terminationStatus, Self.safeProcessMessage(error.isEmpty ? output : error))
-            }
-            let urls = try UPicOutputParser.parse(output)
-            guard urls.count == fileURLs.count else {
-                throw ImagePipelineError.outputCountMismatch(expected: fileURLs.count, actual: urls.count)
-            }
-            return zip(fileURLs, urls).map { UploadResult(localPath: $0.0.path, remoteURL: $0.1) }
+            try Self.runUploadProcess(
+                executableURL: executableURL,
+                fileURLs: fileURLs,
+                timeout: processTimeout
+            )
         }.value
+    }
+
+    private static func runUploadProcess(
+        executableURL: URL,
+        fileURLs: [URL],
+        timeout: TimeInterval
+    ) throws -> [UploadResult] {
+        let process = Process()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.executableURL = executableURL
+        process.arguments = ["-u"] + fileURLs.map(\.path) + ["-o", "url"]
+        process.standardOutput = stdout
+        process.standardError = stderr
+        var environment = [String: String]()
+        for key in ["PATH", "TMPDIR", "LANG", "LC_ALL", "HOME", "USER"] {
+            if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
+        }
+        process.environment = environment
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
+        try process.run()
+        guard finished.wait(timeout: .now() + timeout) == .success else {
+            if process.isRunning {
+                process.terminate()
+            }
+            if finished.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                _ = finished.wait(timeout: .now() + 2)
+            }
+            throw ImagePipelineError.processTimedOut(Int(timeout.rounded(.up)))
+        }
+        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+        let error = String(data: errorData, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw ImagePipelineError.processFailed(
+                process.terminationStatus,
+                Self.safeProcessMessage(error.isEmpty ? output : error)
+            )
+        }
+        let urls = try UPicOutputParser.parse(output)
+        guard urls.count == fileURLs.count else {
+            throw ImagePipelineError.outputCountMismatch(expected: fileURLs.count, actual: urls.count)
+        }
+        return zip(fileURLs, urls).map { UploadResult(localPath: $0.0.path, remoteURL: $0.1) }
     }
 
     public func verify(remoteURL: URL) async throws {
