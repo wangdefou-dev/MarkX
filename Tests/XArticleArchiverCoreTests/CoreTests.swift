@@ -1,6 +1,7 @@
 import Foundation
 import CommonCrypto
 import CryptoKit
+import SQLite3
 import XCTest
 @testable import XArticleArchiverCore
 
@@ -1569,7 +1570,12 @@ final class ArchiveDatabaseTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let database = try ArchiveDatabase(url: root.appending(path: "archive.sqlite"))
-        let creator = Creator(xUserID: "u1", username: "writer", displayName: "作者")
+        let creator = Creator(
+            xUserID: "u1",
+            username: "writer",
+            displayName: "作者",
+            knownArticleCount: 125
+        )
         try await database.upsertCreator(creator)
         let article = ArchivedArticle(
             stableSourceKey: "a1",
@@ -1588,11 +1594,55 @@ final class ArchiveDatabaseTests: XCTestCase {
         try await database.upsertArticle(article)
         let loadedCreators = try await database.loadCreators()
         XCTAssertEqual(loadedCreators.count, 1)
+        XCTAssertEqual(loadedCreators.first?.knownArticleCount, 125)
+
+        var profileUpdate = creator
+        profileUpdate.displayName = "新作者名"
+        profileUpdate.knownArticleCount = nil
+        try await database.upsertCreator(profileUpdate)
+        let preservedCreator = try await database.creator(xUserID: "u1")
+        XCTAssertEqual(preservedCreator?.displayName, "新作者名")
+        XCTAssertEqual(preservedCreator?.knownArticleCount, 125)
         let loaded = try await database.loadArticles()
         XCTAssertEqual(loaded.count, 1)
         XCTAssertEqual(loaded.first?.stableSourceKey, "a1")
         XCTAssertEqual(loaded.first?.videoCount, 2)
         XCTAssertEqual(loaded.first?.processingLog, article.processingLog)
+    }
+
+    func testMigratesVersionThreeCreatorTableForKnownArticleCount() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "x-archive-db-migration-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "archive.sqlite")
+        var pointer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &pointer), SQLITE_OK)
+        defer { if let pointer { sqlite3_close(pointer) } }
+        let legacySQL = """
+        CREATE TABLE creators (
+          id TEXT PRIMARY KEY, x_user_id TEXT NOT NULL UNIQUE,
+          username TEXT NOT NULL, display_name TEXT NOT NULL,
+          profile_image_url TEXT, is_protected INTEGER NOT NULL DEFAULT 0,
+          is_enabled INTEGER NOT NULL DEFAULT 1, last_sync_at TEXT,
+          last_seen_post_id TEXT, completeness TEXT NOT NULL DEFAULT 'UNKNOWN'
+        );
+        PRAGMA user_version=3;
+        """
+        XCTAssertEqual(sqlite3_exec(pointer, legacySQL, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(pointer), SQLITE_OK)
+        pointer = nil
+
+        let database = try ArchiveDatabase(url: databaseURL)
+        let creator = Creator(
+            xUserID: "legacy-user",
+            username: "legacy_writer",
+            displayName: "旧版作者",
+            knownArticleCount: 125
+        )
+        try await database.upsertCreator(creator)
+
+        let migratedCreator = try await database.creator(xUserID: "legacy-user")
+        XCTAssertEqual(migratedCreator?.knownArticleCount, 125)
     }
 
     func testDeletesOnlyTheRequestedArticle() async throws {
@@ -1714,6 +1764,36 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
         XCTAssertEqual(statistics.articleCount(for: UUID()), 0)
     }
 
+    func testCreatorDisplayCountPrefersKnownOnlineTotal() {
+        let creator = Creator(
+            id: firstCreatorID,
+            xUserID: "u1",
+            username: "writer",
+            displayName: "作者",
+            knownArticleCount: 125
+        )
+        let statistics = ArchiveSidebarStatistics(articles: [
+            makeArticle(creatorID: firstCreatorID, state: .committed),
+            makeArticle(creatorID: firstCreatorID, state: .committed)
+        ])
+
+        XCTAssertEqual(statistics.displayedArticleCount(for: creator), 125)
+    }
+
+    func testCreatorDisplayCountFallsBackToLocalRecords() {
+        let creator = Creator(
+            id: firstCreatorID,
+            xUserID: "u1",
+            username: "writer",
+            displayName: "作者"
+        )
+        let statistics = ArchiveSidebarStatistics(articles: [
+            makeArticle(creatorID: firstCreatorID, state: .failed)
+        ])
+
+        XCTAssertEqual(statistics.displayedArticleCount(for: creator), 1)
+    }
+
     func testDownloadedArticleCountRemainsCompletedOnly() {
         let statistics = ArchiveSidebarStatistics(articles: [
             makeArticle(creatorID: firstCreatorID, state: .committed),
@@ -1745,6 +1825,28 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
             pipelineState: state,
             lastError: lastError
         )
+    }
+}
+
+final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
+    func testManualDiscoveryContinuesPastDownloadLimitToResolveTotal() {
+        XCTAssertFalse(CreatorArticleDiscoveryPolicy.shouldStopAtRequestedLimit(
+            discoveredCount: 100,
+            maximumArticles: 100,
+            resolvesTotalCount: true
+        ))
+        XCTAssertEqual(CreatorArticleDiscoveryPolicy.selectedCount(
+            discoveredCount: 125,
+            maximumArticles: 100
+        ), 100)
+    }
+
+    func testBatchSyncStopsAtRequestedLimit() {
+        XCTAssertTrue(CreatorArticleDiscoveryPolicy.shouldStopAtRequestedLimit(
+            discoveredCount: 10,
+            maximumArticles: 10,
+            resolvesTotalCount: false
+        ))
     }
 }
 

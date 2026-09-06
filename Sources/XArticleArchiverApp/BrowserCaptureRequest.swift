@@ -5,6 +5,7 @@ struct CreatorArticleDiscoveryRequest: Identifiable, Hashable {
     var id: String { username.lowercased() }
     var username: String
     var maximumArticles: Int?
+    var resolvesTotalCount = false
 
     var pageURL: URL {
         URL(string: "https://x.com/\(username)/articles")!
@@ -13,6 +14,11 @@ struct CreatorArticleDiscoveryRequest: Identifiable, Hashable {
     var scopeDescription: String {
         maximumArticles.map { "最近 \($0) 篇" } ?? "全部历史"
     }
+}
+
+struct CreatorArticleDiscoveryResult: Hashable {
+    var items: [CreatorArticleListItem]
+    var knownArticleCount: Int?
 }
 
 struct CreatorArticleListItem: Identifiable, Hashable {

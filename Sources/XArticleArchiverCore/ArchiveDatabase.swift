@@ -42,8 +42,8 @@ public actor ArchiveDatabase {
     public func upsertCreator(_ creator: Creator) throws {
         let sql = """
         INSERT INTO creators
-          (id, x_user_id, username, display_name, profile_image_url, is_protected, is_enabled, last_sync_at, last_seen_post_id, completeness)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, x_user_id, username, display_name, profile_image_url, is_protected, is_enabled, last_sync_at, last_seen_post_id, completeness, known_article_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(x_user_id) DO UPDATE SET
           username=excluded.username,
           display_name=excluded.display_name,
@@ -52,7 +52,8 @@ public actor ArchiveDatabase {
           is_enabled=excluded.is_enabled,
           last_sync_at=excluded.last_sync_at,
           last_seen_post_id=excluded.last_seen_post_id,
-          completeness=excluded.completeness;
+          completeness=excluded.completeness,
+          known_article_count=COALESCE(excluded.known_article_count, creators.known_article_count);
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -66,11 +67,12 @@ public actor ArchiveDatabase {
         bind(creator.lastSyncAt.map(Self.iso8601), to: 8, in: statement)
         bind(creator.lastSeenPostID, to: 9, in: statement)
         bind(creator.completeness.rawValue, to: 10, in: statement)
+        bind(creator.knownArticleCount, to: 11, in: statement)
         try step(statement)
     }
 
     public func loadCreators() throws -> [Creator] {
-        let statement = try prepare("SELECT id, x_user_id, username, display_name, profile_image_url, is_protected, is_enabled, last_sync_at, last_seen_post_id, completeness FROM creators ORDER BY username COLLATE NOCASE;")
+        let statement = try prepare("SELECT id, x_user_id, username, display_name, profile_image_url, is_protected, is_enabled, last_sync_at, last_seen_post_id, completeness, known_article_count FROM creators ORDER BY username COLLATE NOCASE;")
         defer { sqlite3_finalize(statement) }
         var output: [Creator] = []
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -88,7 +90,8 @@ public actor ArchiveDatabase {
                 isEnabled: sqlite3_column_int(statement, 6) != 0,
                 lastSyncAt: text(statement, 7).flatMap(Self.parseDate),
                 lastSeenPostID: text(statement, 8),
-                completeness: CompletenessStatus(rawValue: text(statement, 9) ?? "") ?? .unknown
+                completeness: CompletenessStatus(rawValue: text(statement, 9) ?? "") ?? .unknown,
+                knownArticleCount: optionalInt(statement, 10)
             ))
         }
         return output
@@ -120,7 +123,7 @@ public actor ArchiveDatabase {
         UPDATE creators SET
           x_user_id = ?, username = ?, display_name = ?, profile_image_url = ?,
           is_protected = ?, is_enabled = ?, last_sync_at = ?,
-          last_seen_post_id = ?, completeness = ?
+          last_seen_post_id = ?, completeness = ?, known_article_count = ?
         WHERE id = ?;
         """
         let statement = try prepare(sql)
@@ -134,7 +137,8 @@ public actor ArchiveDatabase {
         bind(creator.lastSyncAt.map(Self.iso8601), to: 7, in: statement)
         bind(creator.lastSeenPostID, to: 8, in: statement)
         bind(creator.completeness.rawValue, to: 9, in: statement)
-        bind(creator.id.uuidString, to: 10, in: statement)
+        bind(creator.knownArticleCount, to: 10, in: statement)
+        bind(creator.id.uuidString, to: 11, in: statement)
         try step(statement)
     }
 
@@ -292,7 +296,8 @@ public actor ArchiveDatabase {
           is_enabled INTEGER NOT NULL DEFAULT 1,
           last_sync_at TEXT,
           last_seen_post_id TEXT,
-          completeness TEXT NOT NULL DEFAULT 'UNKNOWN'
+          completeness TEXT NOT NULL DEFAULT 'UNKNOWN',
+          known_article_count INTEGER
         );
         CREATE TABLE IF NOT EXISTS articles (
           id TEXT PRIMARY KEY,
@@ -321,7 +326,7 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_creator_id ON articles(creator_id);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
-        PRAGMA user_version=3;
+        PRAGMA user_version=4;
         """)
         if !columnExists(on: database, table: "articles", column: "video_count") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
@@ -329,7 +334,10 @@ public actor ArchiveDatabase {
         if !columnExists(on: database, table: "articles", column: "processing_log") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN processing_log TEXT NOT NULL DEFAULT '[]';")
         }
-        try execute(on: database, sql: "PRAGMA user_version=3;")
+        if !columnExists(on: database, table: "creators", column: "known_article_count") {
+            try execute(on: database, sql: "ALTER TABLE creators ADD COLUMN known_article_count INTEGER;")
+        }
+        try execute(on: database, sql: "PRAGMA user_version=4;")
     }
 
     private static func columnExists(on database: OpaquePointer?, table: String, column: String) -> Bool {
@@ -365,6 +373,16 @@ public actor ArchiveDatabase {
     private func bind(_ value: String?, to index: Int32, in statement: OpaquePointer?) {
         if let value { sqlite3_bind_text(statement, index, value, -1, transient) }
         else { sqlite3_bind_null(statement, index) }
+    }
+
+    private func bind(_ value: Int?, to index: Int32, in statement: OpaquePointer?) {
+        if let value { sqlite3_bind_int64(statement, index, Int64(value)) }
+        else { sqlite3_bind_null(statement, index) }
+    }
+
+    private func optionalInt(_ statement: OpaquePointer?, _ index: Int32) -> Int? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return Int(sqlite3_column_int64(statement, index))
     }
 
     private func step(_ statement: OpaquePointer?) throws {

@@ -78,7 +78,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         return session
     }
 
-    func discoverAutomatically(_ request: CreatorArticleDiscoveryRequest) async throws -> [CreatorArticleListItem] {
+    func discoverAutomatically(_ request: CreatorArticleDiscoveryRequest) async throws -> CreatorArticleDiscoveryResult {
         guard !isDiscovering else {
             throw BrowserArticleCaptureError.pageNotReady("文章列表发现正在进行")
         }
@@ -120,13 +120,22 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                             title: cleanedTitle.isEmpty ? "X Article · \(link.postID)" : cleanedTitle
                         ))
                     }
-                    discoveredItems = orderedItems
+                    let selectedCount = CreatorArticleDiscoveryPolicy.selectedCount(
+                        discoveredCount: orderedItems.count,
+                        maximumArticles: request.maximumArticles
+                    )
+                    discoveredItems = Array(orderedItems.prefix(selectedCount))
 
-                    if let maximum = request.maximumArticles, orderedItems.count >= maximum {
-                        let result = Array(orderedItems.prefix(maximum))
-                        discoveredItems = result
-                        pageStatus = "已从 @\(request.username) Articles 列表找到 \(result.count) 篇；X API 调用为 0"
-                        return result
+                    if CreatorArticleDiscoveryPolicy.shouldStopAtRequestedLimit(
+                        discoveredCount: orderedItems.count,
+                        maximumArticles: request.maximumArticles,
+                        resolvesTotalCount: request.resolvesTotalCount
+                    ) {
+                        pageStatus = "已从 @\(request.username) Articles 列表找到 \(selectedCount) 篇；X API 调用为 0"
+                        return CreatorArticleDiscoveryResult(
+                            items: discoveredItems,
+                            knownArticleCount: nil
+                        )
                     }
 
                     let gained = orderedItems.count - before
@@ -141,8 +150,11 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                         : "已找到 \(orderedItems.count) 篇 Article，正在向下检查更多…X API 调用为 0"
 
                     if unchangedAtBottom >= 5 {
-                        pageStatus = "@\(request.username) Articles 列表已到底，共找到 \(orderedItems.count) 篇；X API 调用为 0"
-                        return orderedItems
+                        pageStatus = "@\(request.username) 线上共 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
+                        return CreatorArticleDiscoveryResult(
+                            items: discoveredItems,
+                            knownArticleCount: orderedItems.count
+                        )
                     }
                     try await scrollForMore()
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
@@ -153,7 +165,16 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
             try await Task.sleep(for: .milliseconds(750))
         }
 
-        if !orderedItems.isEmpty { return orderedItems }
+        if !orderedItems.isEmpty {
+            let selectedCount = CreatorArticleDiscoveryPolicy.selectedCount(
+                discoveredCount: orderedItems.count,
+                maximumArticles: request.maximumArticles
+            )
+            return CreatorArticleDiscoveryResult(
+                items: Array(orderedItems.prefix(selectedCount)),
+                knownArticleCount: nil
+            )
+        }
         throw BrowserArticleCaptureError.pageNotReady(lastReason)
     }
 
@@ -285,9 +306,9 @@ struct BrowserCreatorArticleDiscoveryView: View {
         .task(id: request?.id) {
             guard let request else { return }
             do {
-                let items = try await controller.discoverAutomatically(request)
+                let result = try await controller.discoverAutomatically(request)
                 try Task.checkCancellation()
-                model.completeCreatorArticleDiscovery(items, for: request)
+                await model.completeCreatorArticleDiscovery(result, for: request)
             } catch is CancellationError {
                 return
             } catch {

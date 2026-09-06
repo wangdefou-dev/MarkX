@@ -34,6 +34,10 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
         articleCountsByCreator[creatorID, default: 0]
     }
 
+    public func displayedArticleCount(for creator: Creator) -> Int {
+        creator.knownArticleCount ?? articleCount(for: creator.id)
+    }
+
     public func downloadedArticleCount(for creatorID: UUID) -> Int {
         downloadedArticleCountsByCreator[creatorID, default: 0]
     }

@@ -117,6 +117,7 @@ public struct Creator: Identifiable, Codable, Hashable, Sendable {
     public var lastSyncAt: Date?
     public var lastSeenPostID: String?
     public var completeness: CompletenessStatus
+    public var knownArticleCount: Int?
 
     public init(
         id: UUID = UUID(),
@@ -128,7 +129,8 @@ public struct Creator: Identifiable, Codable, Hashable, Sendable {
         isEnabled: Bool = true,
         lastSyncAt: Date? = nil,
         lastSeenPostID: String? = nil,
-        completeness: CompletenessStatus = .unknown
+        completeness: CompletenessStatus = .unknown,
+        knownArticleCount: Int? = nil
     ) {
         self.id = id
         self.xUserID = xUserID
@@ -140,6 +142,7 @@ public struct Creator: Identifiable, Codable, Hashable, Sendable {
         self.lastSyncAt = lastSyncAt
         self.lastSeenPostID = lastSeenPostID
         self.completeness = completeness
+        self.knownArticleCount = knownArticleCount
     }
 }
 

@@ -894,7 +894,11 @@ final class AppViewModel: ObservableObject {
 
         let isClosingInputSheet = showingAddCreators || showingSyncAllConfiguration
         creatorArticleDiscoveryRequests = uniqueHandles.map {
-            CreatorArticleDiscoveryRequest(username: $0, maximumArticles: maximumArticles)
+            CreatorArticleDiscoveryRequest(
+                username: $0,
+                maximumArticles: maximumArticles,
+                resolvesTotalCount: !isSyncingTrackedCreators
+            )
         }
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
@@ -928,12 +932,33 @@ final class AppViewModel: ObservableObject {
     }
 
     func completeCreatorArticleDiscovery(
-        _ items: [CreatorArticleListItem],
+        _ result: CreatorArticleDiscoveryResult,
         for request: CreatorArticleDiscoveryRequest
-    ) {
+    ) async {
         guard request.id == currentCreatorArticleDiscoveryRequest?.id else { return }
+        if let knownArticleCount = result.knownArticleCount, let database {
+            do {
+                var creator = try await database.creator(username: request.username)
+                    ?? Creator(
+                        xUserID: "browser:\(request.username.lowercased())",
+                        username: request.username,
+                        displayName: "@\(request.username)"
+                    )
+                creator.knownArticleCount = knownArticleCount
+                creator.isEnabled = true
+                try await database.upsertCreator(creator)
+                if let index = creators.firstIndex(where: { $0.id == creator.id }) {
+                    creators[index] = creator
+                } else {
+                    creators.append(creator)
+                    creators.sort { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+                }
+            } catch {
+                errorMessage = "无法保存 @\(request.username) 的文章总数：\(error.localizedDescription)"
+            }
+        }
         var knownPostIDs = Set(discoveredCreatorArticles.map(\.link.postID))
-        for item in items where knownPostIDs.insert(item.link.postID).inserted {
+        for item in result.items where knownPostIDs.insert(item.link.postID).inserted {
             discoveredCreatorArticles.append(item)
         }
         progress.discoveredArticles = discoveredCreatorArticles.count

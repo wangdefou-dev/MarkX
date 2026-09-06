@@ -220,6 +220,7 @@ struct RootView: View {
             }
             Section("博主") {
                 ForEach(model.creators) { creator in
+                    let localArticleCount = statistics.articleCount(for: creator.id)
                     HStack(spacing: 8) {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
@@ -230,7 +231,10 @@ struct RootView: View {
                             Image(systemName: creator.isProtected ? "lock.circle" : "person.crop.circle")
                         }
                         Spacer(minLength: 4)
-                        SidebarCountBadge(count: statistics.articleCount(for: creator.id))
+                        SidebarCountBadge(count: statistics.displayedArticleCount(for: creator))
+                            .help(creator.knownArticleCount.map {
+                                "X Articles 列表共 \($0) 篇；本地已归档 \(localArticleCount) 篇"
+                            } ?? "本地已归档 \(localArticleCount) 篇；重新拉取该博主可更新线上总数")
                     }
                     .tag(AppViewModel.SidebarSelection.creator(creator.id))
                     .contextMenu {
