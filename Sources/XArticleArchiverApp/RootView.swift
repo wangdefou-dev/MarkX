@@ -8,19 +8,16 @@ struct RootView: View {
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
     @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
-    @AppStorage("sidebarVisible") private var isSidebarVisible = true
 
     var body: some View {
-        Group {
-            if isSidebarVisible {
-                HSplitView {
-                    sidebar
-                        .frame(minWidth: 210, idealWidth: 235, maxWidth: 320)
-                    articleColumns
-                }
-            } else {
-                articleColumns
-            }
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 210, ideal: 235)
+        } content: {
+            articleList
+                .navigationSplitViewColumnWidth(min: 360, ideal: 430)
+        } detail: {
+            detail
         }
         .toolbar { toolbar }
         .onOpenURL { model.handleOpenURL($0) }
@@ -110,15 +107,6 @@ struct RootView: View {
                 .help("取消删除，继续跟踪该博主")
         } message: {
             Text("只会停止跟踪并从侧边栏移除该博主。已经下载的文章、本地媒体缓存和远程图片/视频全部保留；以后再次添加该博主即可继续拉取。")
-        }
-    }
-
-    private var articleColumns: some View {
-        HSplitView {
-            articleList
-                .frame(minWidth: 360, idealWidth: 430)
-            detail
-                .frame(minWidth: 420)
         }
     }
 
@@ -379,25 +367,14 @@ struct RootView: View {
     }
 
     private var articleList: some View {
-        let visibleArticles = model.filteredArticles
-
         return VStack(spacing: 0) {
             Group {
-                if !visibleArticles.isEmpty {
-                    // A native List can keep stale row layers when the source
-                    // changes from a large collection to a status filter. A
-                    // lazy stack keeps the same scrolling behavior without
-                    // reusing those layers across filters.
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(visibleArticles.enumerated()), id: \.element.id) { index, article in
-                                let creator = model.creators.first(where: { $0.id == article.creatorID })
-                                ArticleRow(
-                                    article: article,
-                                    index: index + 1,
-                                    creator: creator,
-                                    isSelected: model.selectedArticleID == article.id
-                                )
+                if !model.filteredArticles.isEmpty {
+                    List {
+                        ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
+                            let creator = model.creators.first(where: { $0.id == article.creatorID })
+                            ArticleRow(article: article, index: index + 1, creator: creator)
+                                .contentShape(Rectangle())
                                 .onTapGesture {
                                     model.selectedArticleID = article.id
                                 }
@@ -452,14 +429,13 @@ struct RootView: View {
                                     .disabled(model.isRunning || model.hasActiveDownloadProgress)
                                     .help("删除这篇文章的本地归档；远程图片和视频不删除")
                                 }
-                                if index < visibleArticles.count - 1 {
-                                    Divider()
-                                        .padding(.leading, 38)
-                                }
-                            }
                         }
-                        .padding(.horizontal, 4)
                     }
+                    .listStyle(.inset)
+                    // Recreate the list when the sidebar filter changes. The list
+                    // has no selection binding, so status-only filters cannot leave
+                    // a stale selected row layer behind.
+                    .id(model.sidebarSelection)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
                 } else {
@@ -709,16 +685,6 @@ struct RootView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button {
-                isSidebarVisible.toggle()
-            } label: {
-                Image(systemName: "sidebar.left")
-            }
-            .help(isSidebarVisible ? "隐藏边栏" : "显示边栏")
-            .accessibilityLabel(isSidebarVisible ? "隐藏边栏" : "显示边栏")
-        }
-
         if let creator = selectedSidebarCreator {
             if #available(macOS 26.0, *) {
                 ToolbarItem(placement: .navigation) {
@@ -1580,7 +1546,6 @@ private struct ArticleRow: View {
     let article: ArchivedArticle
     let index: Int
     let creator: Creator?
-    let isSelected: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1618,9 +1583,6 @@ private struct ArticleRow: View {
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .padding(.horizontal, 8)
-        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
-        .clipShape(Rectangle())
     }
 
     private var hasLayoutLimit: Bool {

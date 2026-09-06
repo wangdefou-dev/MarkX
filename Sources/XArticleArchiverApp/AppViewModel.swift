@@ -207,12 +207,20 @@ final class AppViewModel: ObservableObject {
     /// article from the previous filter while the list has a different source.
     func synchronizeSelectedArticleWithSidebar() {
         let visibleArticles = filteredArticles
-        guard let selectedArticleID else {
-            self.selectedArticleID = visibleArticles.first?.id
+        guard let nextID = visibleArticles.first?.id else {
+            selectedArticleID = nil
             return
         }
-        guard !visibleArticles.contains(where: { $0.id == selectedArticleID }) else { return }
-        self.selectedArticleID = visibleArticles.first?.id
+        guard selectedArticleID == nil || !visibleArticles.contains(where: { $0.id == selectedArticleID }) else { return }
+
+        // Let the native List finish removing the old selection before applying
+        // the first row from the new filter. Updating both identities in one
+        // transaction can leave a NavigationSplitView row layer unrendered.
+        selectedArticleID = nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.filteredArticles.contains(where: { $0.id == nextID }) else { return }
+            self.selectedArticleID = nextID
+        }
     }
 
     var currentBrowserCaptureRequest: BrowserCaptureRequest? {
