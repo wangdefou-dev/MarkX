@@ -202,6 +202,19 @@ final class AppViewModel: ObservableObject {
         return articles.first { $0.id == selectedArticleID }
     }
 
+    /// Keep the detail selection inside the active sidebar filter. Without this,
+    /// switching to a status-only filter can leave the detail pane showing an
+    /// article from the previous filter while the list has a different source.
+    func synchronizeSelectedArticleWithSidebar() {
+        let visibleArticles = filteredArticles
+        guard let selectedArticleID else {
+            self.selectedArticleID = visibleArticles.first?.id
+            return
+        }
+        guard !visibleArticles.contains(where: { $0.id == selectedArticleID }) else { return }
+        self.selectedArticleID = visibleArticles.first?.id
+    }
+
     var currentBrowserCaptureRequest: BrowserCaptureRequest? {
         guard browserCaptureRequests.indices.contains(browserCaptureIndex) else { return nil }
         return browserCaptureRequests[browserCaptureIndex]

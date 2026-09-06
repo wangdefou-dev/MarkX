@@ -21,6 +21,9 @@ struct RootView: View {
         }
         .toolbar { toolbar }
         .onOpenURL { model.handleOpenURL($0) }
+        .onChange(of: model.sidebarSelection) { _, _ in
+            model.synchronizeSelectedArticleWithSidebar()
+        }
         .sheet(isPresented: $model.showingAddCreators) {
             AddCreatorsView()
                 .environmentObject(model)
