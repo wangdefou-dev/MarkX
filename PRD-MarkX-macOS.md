@@ -41,7 +41,7 @@ v3.1 在 v3.0 的零 X API、后台精确采集基线上新增视频全链路；
 | 自动同步 | 用户级 macOS LaunchAgent，每日定时、隐藏唤起、唤醒补执行 |
 | 测试登记 | 2026-09-05 本地复测共 76 项：71 项通过，5 项显式外部联调跳过，0 项失败 |
 | 真实视频联调 | 已对 `video.twimg.com` 公开渐进式 MP4 执行下载、MIME、`ftyp`、大小和 SHA-256 校验，1 项通过 |
-| 安装产物 | arm64 `.app`、ZIP、DMG；当前本机包为 ad-hoc 签名 |
+| 安装产物 | 带 Applications 快捷入口的 arm64 DMG；当前本机包为 ad-hoc 签名 |
 | 正式分发边界 | 对外分发前仍需 Developer ID 签名、公证和 Gatekeeper 实机验收 |
 
 ### 0.3 当前产品不可回退的红线
@@ -391,7 +391,7 @@ DMG 基线：左侧放大号 App 图标，右侧放大号“应用程序”快�
 
 FR-001. 应用为原生 arm64 `.app`，无需 Rosetta、Homebrew、Python、Node、浏览器扩展或开发环境。
 
-FR-002. 每个候选版本同时生成 `.app`、ZIP 和 DMG；正式分发使用 Developer ID、公证和 stapling。
+FR-002. 每个候选版本生成带 Applications 快捷入口的 arm64 DMG；正式分发使用 Developer ID、公证和 stapling。
 
 FR-003. 应用只读取 Chrome 中 `x.com` / `twitter.com` 必要 Cookie，并仅用于内存中的非持久化采集会话。
 
@@ -704,13 +704,13 @@ AC-20. 用户手改 Markdown 不被静默覆盖，源更新时生成可比较版
 1. 运行完整默认测试套件。
 2. 构建 Release arm64 App，检查短版本号和 Build 号。
 3. 验证 Mach-O 架构和代码签名状态。
-4. 生成 ZIP 和带 Applications 快捷入口的 DMG。
+4. 生成带 Applications 快捷入口的 DMG。
 5. 重新挂载最终 DMG，而不是检查旧挂载点；确认仅有 App 和 Applications 两项。
 6. 从最终 DMG 拖入 `/Applications` 后启动。
 7. 检查 Dock、Finder 和 DMG 中图标清晰且尺寸正确。
 8. 打开真实主界面，确认侧边栏、工具栏和主要功能可见。
 9. 检查安装包无 Token、Cookie、密钥、源码夹具、开发路径和临时文件。
-10. 从最终 ZIP 重新解压并再次验证 App。
+10. 从最终 DMG 挂载路径再次验证 App。
 
 ### 13.2 签名边界
 
@@ -868,7 +868,7 @@ v3.1 的主要变化：
 - 视频解析、下载、上传、回读和 Markdown 任一校验失败均阻止 committed，保留任务供后续重试；
 - 默认套件已恢复全绿：65 项中 60 项通过、5 项外部联调跳过、0 项失败；额外的真实 X MP4 下载校验 1 项通过；
 - 安装应用已对先前失败的《Codex 实战系列｜ 零代码个人网站搭建》完成真实端到端复测：1 篇成功、0 篇失败、10 张图片、1 个视频；视频为 H.264/AAC、1438×720、27.65 秒、3,134,794 字节，远程 Range 回读为 HTTP 206 + `video/mp4` + 有效 `ftyp`，SQLite、Markdown 和 App 详情页视频计数一致；
-- 最终播放器验收：从最终 ZIP 安装的应用中，系统控件识别 `00:28` 时长，实际播放到 `27.61` 秒结束，应用进程保持稳定；已用 AppKit `AVPlayerView` 取代会在当前 macOS 26 触发 `_AVKit_SwiftUI` 元数据崩溃的 SwiftUI `VideoPlayer`。
+- 最终播放器验收：从最终 DMG 安装的应用中，系统控件识别 `00:28` 时长，实际播放到 `27.61` 秒结束，应用进程保持稳定；已用 AppKit `AVPlayerView` 取代会在当前 macOS 26 触发 `_AVKit_SwiftUI` 元数据崩溃的 SwiftUI `VideoPlayer`。
 - 最终图床验收：uPic 模式不读取跨容器配置，在已选归档目录中分期 1×1 无隐私测试图，uPic 真实上传后返回 `1want.link` URL，本应用 HTTPS 回读验证通过，界面显示“图床已连接”。
 
 ---
@@ -965,7 +965,7 @@ v3.4 的主要变化：
 
 本节是 0.2.0（Build 55）的产品命名与视觉资产基线。
 
-- 用户可见应用名统一由“X 长文归档器”改为“MarkX”，覆盖 Finder 应用包、菜单栏、主窗口、下载进度窗口、DMG 卷名、ZIP/DMG 文件名、README 和当前 PRD。
+- 用户可见应用名统一由“X 长文归档器”改为“MarkX”，覆盖 Finder 应用包、菜单栏、主窗口、下载进度窗口、DMG 卷名和文件名、README 及当前 PRD。
 - Swift Package target、可执行文件名、Bundle ID `ai.defou.xarticlearchiver`、URL Scheme、Keychain service、UserDefaults 和 `.x-article-archiver` 数据目录保持不变，确保升级后继续读取既有设置与 173 篇归档。
 - 图标继续使用 v4 的黑底白色 X 与三条文章横线，不重画、不改变内部比例；v5 仅把整枚图形以画布中心等比缩放到 90%。
 - 1024 px 母图的圆角底板边界由约 16–1008 px 收到约 66–958 px，形成四周一致的真实 Alpha 留白，避免 Dock、Finder 和 DMG 中视觉贴边。

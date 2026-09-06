@@ -223,10 +223,9 @@ struct RootView: View {
                             Label {
                                 VStack(alignment: .leading, spacing: 2) {
                                 Text(creator.displayName)
-                                    .font(.system(size: 13.5, weight: .medium))
                                     .lineLimit(1)
                                 Text("@\(creator.username)")
-                                    .font(.system(size: 11.5))
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
                                 }
                         } icon: {
@@ -696,6 +695,7 @@ private struct SidebarSectionHeader: View {
                     .frame(width: 12)
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
@@ -1418,7 +1418,10 @@ private struct ArticleRow: View {
                 .accessibilityLabel("第 \(index) 篇")
 
             VStack(alignment: .leading, spacing: 7) {
-                Text(article.title).font(.headline).lineLimit(2)
+                Text(article.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
             HStack(spacing: 6) {
                 Text("@\(article.authorHandle)")
                 Text("·")
@@ -1436,6 +1439,7 @@ private struct ArticleRow: View {
                 if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
             }
             .font(.caption)
+            .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
@@ -1476,7 +1480,6 @@ private struct SidebarCountRow: View {
             Spacer(minLength: 4)
             SidebarCountBadge(count: count)
         }
-        .font(.system(size: 13.5))
         .padding(.vertical, 1)
         .contentShape(Rectangle())
     }
@@ -1487,7 +1490,7 @@ private struct SidebarCountBadge: View {
 
     var body: some View {
         Text(count, format: .number.grouping(.never))
-            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+            .font(.caption.monospacedDigit().weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
@@ -1508,7 +1511,7 @@ private struct SidebarFractionBadge: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+            .font(.caption.monospacedDigit().weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)

@@ -5,8 +5,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_NAME="MarkX"
 DMG_VOLUME_NAME="MarkX 安装"
-DMG_PATH="$DIST_DIR/MarkX-0.2.14.dmg"
-ZIP_PATH="$DIST_DIR/MarkX-0.2.14.zip"
+DMG_PATH="$DIST_DIR/MarkX-0.2.15.dmg"
 BUILD_DIR="$(mktemp -d /tmp/x-article-archiver-app.XXXXXX)"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 STAGING_DIR="$(mktemp -d /tmp/x-article-archiver-dmg.XXXXXX)"
@@ -31,7 +30,7 @@ swift test
 swift build -c release --arch arm64
 
 rm -rf "$DIST_DIR/$APP_NAME.app"
-rm -f "$DMG_PATH" "$ZIP_PATH"
+rm -f "$DMG_PATH"
 mkdir -p "$DIST_DIR" "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" "$STAGING_DIR"
 
 cp "$PROJECT_DIR/.build/arm64-apple-macosx/release/XArticleArchiverApp" "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
@@ -117,13 +116,12 @@ hdiutil convert "$DMG_RW_PATH" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH
 xattr -cr "$APP_BUNDLE"
 codesign --force --deep --options runtime --timestamp=none --entitlements "$PROJECT_DIR/Config/XArticleArchiver.entitlements" --sign "$IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
-ditto -c -k --norsrc --noextattr --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
 file "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
 plutil -lint "$APP_BUNDLE/Contents/Info.plist"
-shasum -a 256 "$DMG_PATH" "$ZIP_PATH"
+shasum -a 256 "$DMG_PATH"
 
-printf '\nBuilt local test installers:\n%s\n%s\n' "$DMG_PATH" "$ZIP_PATH"
+printf '\nBuilt local DMG installer:\n%s\n' "$DMG_PATH"
 if [ "$IDENTITY" = "-" ]; then
   printf 'Note: ad-hoc signed for local testing; Developer ID notarization is not configured on this Mac.\n'
 fi
