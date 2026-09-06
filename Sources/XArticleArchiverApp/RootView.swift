@@ -732,21 +732,21 @@ private struct DownloadResultView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 13) {
+            HStack(alignment: .top, spacing: 10) {
                 Image(systemName: statusImage)
-                    .font(.system(size: 30, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(statusColor)
-                    .frame(width: 42, height: 42)
-                    .background(statusColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    .frame(width: 34, height: 34)
+                    .background(statusColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(notice.title)
-                        .font(.title2.weight(.bold))
+                        .font(.headline.weight(.bold))
                     Text(hasDanger
                         ? "任务未完全完成，已保存的内容仍然保留"
                         : hasWarning
                         ? "部分任务需要继续处理，已完成内容仍然保留"
                         : "任务结果已整理完成")
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -754,45 +754,45 @@ private struct DownloadResultView: View {
 
             if !notice.metrics.isEmpty {
                 LazyVGrid(
-                    columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-                    spacing: 10
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
+                    spacing: 8
                 ) {
                     ForEach(notice.metrics) { metric in
-                        DownloadResultMetricCard(metric: metric)
+                        DownloadResultMetricText(metric: metric)
                     }
                 }
-                .padding(.top, 22)
+                .padding(.top, 12)
             }
 
             Divider()
-                .padding(.vertical, 18)
+                .padding(.vertical, 10)
 
             ScrollView {
                 Text(notice.message)
-                    .font(.callout)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineSpacing(4)
+                    .lineSpacing(3)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minHeight: 70, maxHeight: 150)
+            .frame(minHeight: 42, maxHeight: 92)
 
             HStack {
                 Spacer()
                 Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .controlSize(.regular)
                     .help("关闭任务结果")
             }
-            .padding(.top, 18)
+            .padding(.top, 10)
         }
-        .padding(26)
-        .frame(minWidth: 560, idealWidth: 600, minHeight: 390, idealHeight: 470)
+        .padding(18)
+        .frame(minWidth: 460, idealWidth: 500, minHeight: 260, idealHeight: 320)
     }
 }
 
-private struct DownloadResultMetricCard: View {
+private struct DownloadResultMetricText: View {
     let metric: DownloadResultMetric
 
     private var color: Color {
@@ -806,29 +806,20 @@ private struct DownloadResultMetricCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Image(systemName: metric.systemImage)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(color)
-                Text(metric.label)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            }
+        HStack(spacing: 6) {
+            Image(systemName: metric.systemImage)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(color)
+            Text(metric.label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(metric.value)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .font(.headline.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.75)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(color.opacity(0.18), lineWidth: 0.8)
-        }
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
     }
 }
 

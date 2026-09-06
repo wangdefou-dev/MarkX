@@ -5,7 +5,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_NAME="MarkX"
 DMG_VOLUME_NAME="MarkX 安装"
-DMG_PATH="$DIST_DIR/MarkX-0.2.15.dmg"
+DMG_PATH="$DIST_DIR/MarkX-0.2.16.dmg"
 BUILD_DIR="$(mktemp -d /tmp/x-article-archiver-app.XXXXXX)"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 STAGING_DIR="$(mktemp -d /tmp/x-article-archiver-dmg.XXXXXX)"
@@ -64,6 +64,11 @@ test -n "$DMG_MOUNT_DIR"
 
 LAYOUT_ICON_SIZE="$(osascript <<APPLESCRIPT
 tell application "Finder"
+  repeat 20 times
+    if exists disk "$DMG_VOLUME_NAME" then exit repeat
+    delay 0.5
+  end repeat
+  if not (exists disk "$DMG_VOLUME_NAME") then error "DMG volume did not become visible in Finder"
   tell disk "$DMG_VOLUME_NAME"
     open
     set installerWindow to container window
