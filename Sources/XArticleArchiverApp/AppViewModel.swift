@@ -1322,6 +1322,7 @@ final class AppViewModel: ObservableObject {
             let pending = pendingExactCaptureArticles
             let attentionRemaining = pending.lazy.filter(ArchiveSidebarStatistics.needsAttention).count
             let waitingRemaining = max(0, pending.count - attentionRemaining)
+            let pendingTotal = waitingRemaining + attentionRemaining + unaccounted
             let outstandingNote = pending.isEmpty
                 ? ""
                 : "\n\n资料库仍有等待继续 \(waitingRemaining) 篇、需要处理 \(attentionRemaining) 篇；本次队列结束不代表这些文章已经完成。可在左侧对应分类中重新开始。"
@@ -1350,7 +1351,8 @@ final class AppViewModel: ObservableObject {
                     DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
                     DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
                     DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
-                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent)
+                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent),
+                    DownloadResultMetric(id: "pending", label: "待处理", value: "\(pendingTotal)", systemImage: "clock.arrow.circlepath", tone: pendingTotal > 0 ? .warning : .neutral)
                 ]
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))
@@ -1372,7 +1374,8 @@ final class AppViewModel: ObservableObject {
                     DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
                     DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
                     DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
-                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent)
+                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent),
+                    DownloadResultMetric(id: "pending", label: "待处理", value: "\(pendingTotal)", systemImage: "clock.arrow.circlepath", tone: pendingTotal > 0 ? .warning : .neutral)
                 ]
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(220))

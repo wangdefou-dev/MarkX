@@ -3,8 +3,8 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$PROJECT_DIR/dist"
-DMG_PATH="$DIST_DIR/MarkX-0.2.12.dmg"
-ZIP_PATH="$DIST_DIR/MarkX-0.2.12.zip"
+DMG_PATH="$DIST_DIR/MarkX-0.2.13.dmg"
+ZIP_PATH="$DIST_DIR/MarkX-0.2.13.zip"
 VERIFY_DIR="$(mktemp -d /tmp/x-article-archiver-verify.XXXXXX)"
 MOUNT_DIR="$VERIFY_DIR/mount"
 

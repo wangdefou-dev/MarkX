@@ -739,7 +739,11 @@ private struct DownloadResultView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(notice.title)
                         .font(.title2.weight(.bold))
-                    Text(hasDanger ? "任务未完全完成，已保存的内容仍然保留" : "任务结果已整理完成")
+                    Text(hasDanger
+                        ? "任务未完全完成，已保存的内容仍然保留"
+                        : hasWarning
+                        ? "部分任务需要继续处理，已完成内容仍然保留"
+                        : "任务结果已整理完成")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
