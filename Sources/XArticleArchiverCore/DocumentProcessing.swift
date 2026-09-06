@@ -199,17 +199,6 @@ public enum ContentFidelityValidator {
         for (start, end) in ranges where start < 0 || end <= start || end > textLength {
             throw DocumentProcessingError.fidelityMismatch("富文本范围越界：\(context)")
         }
-        for leftIndex in ranges.indices {
-            for rightIndex in ranges.indices where rightIndex > leftIndex {
-                let left = ranges[leftIndex]
-                let right = ranges[rightIndex]
-                let crosses = (left.0 < right.0 && right.0 < left.1 && left.1 < right.1)
-                    || (right.0 < left.0 && left.0 < right.1 && right.1 < left.1)
-                if crosses {
-                    throw DocumentProcessingError.fidelityMismatch("存在无法无损嵌套的交叉富文本范围")
-                }
-            }
-        }
     }
 
     private static func layoutSignature(fromPlainText text: String) -> [String] {
@@ -462,27 +451,17 @@ public enum MarkdownRenderer {
             throw DocumentProcessingError.fidelityMismatch("正文块内容、顺序或排版标记发生变化")
         }
 
-        let expectedImageURLs = try document.blocks.compactMap { block -> String? in
-            guard block.kind == .image else { return nil }
-            guard let mediaID = block.mediaID,
-                  let media = mediaByID[mediaID],
-                  let remoteURL = media.remoteURL else {
-                throw DocumentProcessingError.missingRemoteImage(block.mediaID ?? "unknown")
-            }
-            return try mediaReference(
-                for: remoteURL,
-                archiveRoot: archiveRoot,
-                markdownDirectory: markdownDirectory
-            )
-        }
-        let actualImageURLs = imageURLs(inMarkdownBody: actualBody)
-        guard actualImageURLs == expectedImageURLs else {
-            throw DocumentProcessingError.fidelityMismatch("图片数量、地址或正文顺序不一致")
-        }
+        // `actualBody == expectedBody` above already compares every generated
+        // image reference in order. Re-parsing Markdown image syntax here made
+        // valid output fail on edge-case alt text and URL syntax without adding
+        // any fidelity signal.
     }
 
     public static func renderInlineText(_ text: String, styles: [InlineStyleRange], links: [LinkRange]) -> String {
         guard !text.isEmpty else { return "" }
+        if inlineRangesCross(styles: styles, links: links) {
+            return renderSegmentedInlineHTML(text, styles: styles, links: links)
+        }
         let utf16Length = (text as NSString).length
         struct Marker {
             let start: Int
@@ -718,6 +697,9 @@ public enum MarkdownRenderer {
 
     private static func renderInlineHTML(_ text: String, styles: [InlineStyleRange], links: [LinkRange]) -> String {
         guard !text.isEmpty else { return "" }
+        if inlineRangesCross(styles: styles, links: links) {
+            return renderSegmentedInlineHTML(text, styles: styles, links: links)
+        }
         let utf16Length = (text as NSString).length
         struct Marker {
             let start: Int
@@ -781,6 +763,86 @@ public enum MarkdownRenderer {
         return output
     }
 
+    private static func inlineRangesCross(styles: [InlineStyleRange], links: [LinkRange]) -> Bool {
+        let ranges = styles.map { ($0.offset, $0.offset + $0.length) }
+            + links.map { ($0.offset, $0.offset + $0.length) }
+        for leftIndex in ranges.indices {
+            for rightIndex in ranges.indices where rightIndex > leftIndex {
+                let left = ranges[leftIndex]
+                let right = ranges[rightIndex]
+                if (left.0 < right.0 && right.0 < left.1 && left.1 < right.1)
+                    || (right.0 < left.0 && left.0 < right.1 && right.1 < left.1) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private static func renderSegmentedInlineHTML(
+        _ text: String,
+        styles: [InlineStyleRange],
+        links: [LinkRange]
+    ) -> String {
+        struct Span {
+            let start: Int
+            let end: Int
+            let prefix: String
+            let suffix: String
+            let order: Int
+        }
+
+        let utf16Length = (text as NSString).length
+        var spans: [Span] = []
+        for (order, style) in styles.enumerated()
+        where style.offset >= 0 && style.length > 0 && style.offset + style.length <= utf16Length {
+            let pair: (String, String)
+            switch style.style {
+            case .bold: pair = ("<strong>", "</strong>")
+            case .italic: pair = ("<em>", "</em>")
+            case .underline: pair = ("<u>", "</u>")
+            case .strikethrough: pair = ("<del>", "</del>")
+            case .code: pair = ("<code>", "</code>")
+            }
+            spans.append(Span(
+                start: style.offset,
+                end: style.offset + style.length,
+                prefix: pair.0,
+                suffix: pair.1,
+                order: order
+            ))
+        }
+        for (offset, link) in links.enumerated()
+        where link.offset >= 0 && link.length > 0 && link.offset + link.length <= utf16Length {
+            spans.append(Span(
+                start: link.offset,
+                end: link.offset + link.length,
+                prefix: "<a href=\"\(escapeHTMLAttribute(link.url.absoluteString))\">",
+                suffix: "</a>",
+                order: styles.count + offset
+            ))
+        }
+
+        let boundaries = Set([0, utf16Length] + spans.flatMap { [$0.start, $0.end] }).sorted()
+        let nsText = text as NSString
+        var output = ""
+        for index in 0..<(boundaries.count - 1) {
+            let start = boundaries[index]
+            let end = boundaries[index + 1]
+            let active = spans
+                .filter { $0.start <= start && $0.end >= end }
+                .sorted {
+                    let leftLength = $0.end - $0.start
+                    let rightLength = $1.end - $1.start
+                    return leftLength == rightLength ? $0.order < $1.order : leftLength > rightLength
+                }
+            for span in active { output += span.prefix }
+            output += escapeHTML(nsText.substring(with: NSRange(location: start, length: end - start)))
+            for span in active.reversed() { output += span.suffix }
+        }
+        return output
+    }
+
     private static func mediaReference(
         for storedURL: URL,
         archiveRoot: URL?,
@@ -823,14 +885,6 @@ public enum MarkdownRenderer {
             throw DocumentProcessingError.fidelityMismatch("无法生成本地媒体相对路径")
         }
         return encoded
-    }
-
-    private static func imageURLs(inMarkdownBody body: String) -> [String] {
-        body.components(separatedBy: "\n").compactMap { line in
-            guard line.hasPrefix("!["), line.hasSuffix(")"),
-                  let separator = line.range(of: "](", options: .backwards) else { return nil }
-            return String(line[separator.upperBound..<line.index(before: line.endIndex)])
-        }
     }
 
     private static func escapeInlineMarkdown(_ value: String) -> String {

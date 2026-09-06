@@ -340,6 +340,19 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         const href = image.closest('a[href*="/media/"]')?.getAttribute('href') || '';
         return href.match(/\/media\/(\d+)/)?.[1] || null;
       };
+      const currentArticleMediaID = anchor => {
+        try {
+          const parsed = new URL(anchor.getAttribute('href') || '', location.href);
+          const host = parsed.hostname.toLowerCase().replace(/^(?:www\.|mobile\.)/, '');
+          if (host !== 'x.com' && host !== 'twitter.com') return null;
+          const match = parsed.pathname.match(
+            /^\/(?:[A-Za-z0-9_]{1,15}|i)\/(?:article|status)\/(\d{1,19})\/media\/(\d{1,19})\/?$/i
+          );
+          return match && match[1] === pathMatch[1] ? match[2] : null;
+        } catch (_) {
+          return null;
+        }
+      };
       const articleMediaURL = image => {
         const value = absoluteURL(image.currentSrc || image.src || '');
         if (!value) return null;
@@ -697,7 +710,9 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       const expectedMediaIDs = new Set(
         [...articleView.querySelectorAll('a[href*="/media/"]')]
           .filter(anchor => !belongsToQuotedCard(anchor))
-          .map(anchor => (anchor.getAttribute('href') || '').match(/\/media\/(\d+)/)?.[1] || null)
+          // Article prose can contain an ordinary link to another Article's
+          // media page. Count only media owned by the post being captured.
+          .map(currentArticleMediaID)
           .filter(Boolean)
       );
       const capturedMediaIDs = new Set(

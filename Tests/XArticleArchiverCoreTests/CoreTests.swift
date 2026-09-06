@@ -503,6 +503,30 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("\\#不是标题"))
         try MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)
     }
+
+    func testRendersCrossingStyleAndLinkRangesWithoutLosingFormatting() throws {
+        let document = CanonicalDocument(
+            title: "交叉富文本",
+            authorName: "作者",
+            authorHandle: "writer",
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/123")!,
+            sourcePostID: "123",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [CanonicalBlock(
+                kind: .paragraph,
+                text: "abcdef",
+                inlineStyles: [InlineStyleRange(offset: 0, length: 4, style: .bold)],
+                links: [LinkRange(offset: 2, length: 4, url: URL(string: "https://example.test/read")!)]
+            )]
+        )
+
+        let markdown = try MarkdownRenderer.render(document: document)
+        XCTAssertTrue(markdown.contains("<strong>ab</strong>"))
+        XCTAssertTrue(markdown.contains("<strong><a href=\"https://example.test/read\">cd</a></strong>"))
+        XCTAssertTrue(markdown.contains("<a href=\"https://example.test/read\">ef</a>"))
+        try MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)
+    }
 }
 
 final class XContentDecoderTests: XCTestCase {
