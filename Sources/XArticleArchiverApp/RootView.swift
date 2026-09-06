@@ -236,12 +236,13 @@ struct RootView: View {
                         SidebarFractionBadge(
                             numerator: downloadedArticleCount,
                             denominator: creator.knownArticleCount
-                        )
-                            .help(creator.knownArticleCount.map {
-                                "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
-                            } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；可用“刷新线上文章总数”更新")
-                    }
-                    .tag(AppViewModel.SidebarSelection.creator(creator.id))
+                            )
+                                .help(creator.knownArticleCount.map {
+                                    "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
+                                } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；可用“刷新线上文章总数”更新")
+                        }
+                        .padding(.vertical, 2)
+                        .tag(AppViewModel.SidebarSelection.creator(creator.id))
                     .contextMenu {
                         Button {
                             model.openCreatorProfile(creator)
@@ -428,7 +429,7 @@ struct RootView: View {
                             Text("·")
                             Text(article.contentType.displayName)
                             Text("·")
-                            Text(article.publishedAt, style: .date)
+                            Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
                         }
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -700,6 +701,7 @@ private struct SidebarSectionHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.bottom, 5)
         .help(isExpanded ? "折叠\(title)" : "展开\(title)")
     }
 }
@@ -1475,6 +1477,7 @@ private struct SidebarCountRow: View {
             SidebarCountBadge(count: count)
         }
         .font(.system(size: 13.5))
+        .padding(.vertical, 1)
         .contentShape(Rectangle())
     }
 }
@@ -1484,7 +1487,7 @@ private struct SidebarCountBadge: View {
 
     var body: some View {
         Text(count, format: .number.grouping(.never))
-            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
@@ -1505,7 +1508,7 @@ private struct SidebarFractionBadge: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
