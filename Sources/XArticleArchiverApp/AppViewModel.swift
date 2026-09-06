@@ -1013,14 +1013,16 @@ final class AppViewModel: ObservableObject {
         guard request.id == currentCreatorArticleDiscoveryRequest?.id else { return }
         if let knownArticleCount = result.knownArticleCount, let database {
             do {
-                var creator = try await database.creator(username: request.username)
-                    ?? Creator(
+                let existingCreator = try await database.creator(username: request.username)
+                var creator = existingCreator ?? Creator(
                         xUserID: "browser:\(request.username.lowercased())",
                         username: request.username,
                         displayName: "@\(request.username)"
                     )
                 creator.knownArticleCount = knownArticleCount
-                creator.isEnabled = true
+                if !request.countOnly || existingCreator == nil {
+                    creator.isEnabled = true
+                }
                 try await database.upsertCreator(creator)
                 if let index = creators.firstIndex(where: { $0.id == creator.id }) {
                     creators[index] = creator
