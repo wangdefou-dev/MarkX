@@ -1,5 +1,7 @@
 # MarkX 项目协作约定
 
+完整的 macOS 客户端开发、测试、DMG 发布和本机覆盖规范见 [MARKX-macOS-CLIENT-DEVELOPMENT-SPEC.md](MARKX-macOS-CLIENT-DEVELOPMENT-SPEC.md)。本文件保留项目级默认发布闭环，作为执行时的快速入口。
+
 ## 默认发布闭环
 
 - 当用户要求修复缺陷或交付功能，且没有明确说“仅本地修改”时，完成条件默认包括：运行相关测试、更新版本与安装包、提交并推送应用源码到 GitHub、上传并验证官网安装包、更新并推送官网仓库、确认生产官网已经部署新版本，以及强制覆盖本机当前使用的 `/Applications/MarkX.app`。

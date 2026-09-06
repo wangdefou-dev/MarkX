@@ -155,4 +155,4 @@ RUN_X_DIRECT_INTEGRATION=1 X_API_BEARER_TOKEN=... swift test --filter XAPIClient
 CODE_SIGN_IDENTITY="Developer ID Application: ..." ./scripts/build-app.sh
 ```
 
-PRD 见 [PRD-MarkX-macOS.md](PRD-MarkX-macOS.md)。
+产品基线见 [PRD-MarkX-macOS.md](PRD-MarkX-macOS.md)；开发、测试、DMG 发布和本机覆盖规范见 [MARKX-macOS-CLIENT-DEVELOPMENT-SPEC.md](MARKX-macOS-CLIENT-DEVELOPMENT-SPEC.md)。
