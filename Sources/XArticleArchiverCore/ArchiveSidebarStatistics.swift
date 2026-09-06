@@ -42,6 +42,14 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
         downloadedArticleCountsByCreator[creatorID, default: 0]
     }
 
+    public static func isPublishedToday(
+        _ date: Date,
+        now: Date = Date(),
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Bool {
+        calendar.isDate(date, inSameDayAs: now)
+    }
+
     public static func isProcessing(_ article: ArchivedArticle) -> Bool {
         isWaiting(article)
     }

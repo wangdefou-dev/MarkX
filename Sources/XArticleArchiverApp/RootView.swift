@@ -170,6 +170,14 @@ struct RootView: View {
                 }
 
                 SidebarCountRow(
+                    title: "今日推文",
+                    systemImage: "sun.max",
+                    count: model.todayArticleCount
+                )
+                .tag(AppViewModel.SidebarSelection.today)
+                .help("按 X 原始发布时间显示今天发布的文章")
+
+                SidebarCountRow(
                     title: "等待继续",
                     systemImage: "clock.arrow.circlepath",
                     count: statistics.waitingArticleCount
@@ -647,6 +655,7 @@ struct RootView: View {
     private var listTitle: String {
         switch model.sidebarSelection {
         case .all, .none: "全部文章"
+        case .today: "今日推文"
         case .pending: "等待继续"
         case .failed: "需要处理"
         case .creator(let id): model.creators.first(where: { $0.id == id })?.displayName ?? "博主"

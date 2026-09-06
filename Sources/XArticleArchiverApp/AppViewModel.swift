@@ -38,6 +38,7 @@ final class AppViewModel: ObservableObject {
 
     enum SidebarSelection: Hashable {
         case all
+        case today
         case pending
         case failed
         case creator(UUID)
@@ -92,6 +93,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var scheduledSyncLastRunAt: Date?
     @Published private(set) var scheduledSyncLastResult = "尚未执行过定时同步"
     @Published private(set) var isBootstrapped = false
+    @Published private(set) var todayRefreshDate = Date()
 
     private var database: ArchiveDatabase?
     private var runningTask: Task<Void, Never>?
@@ -107,6 +109,7 @@ final class AppViewModel: ObservableObject {
     private var downloadProgressWindowDelegate: DownloadProgressWindowDelegate?
     private weak var downloadProgressAnchorWindow: NSWindow?
     private var downloadProgressWindowHiddenByUser = false
+    private var todayRefreshTask: Task<Void, Never>?
     private let defaults = UserDefaults.standard
 
     init() {
@@ -138,6 +141,13 @@ final class AppViewModel: ObservableObject {
         }
         Task { await bootstrap() }
         Task { await refreshS3CredentialState() }
+        todayRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self, !Task.isCancelled else { return }
+                self.todayRefreshDate = Date()
+            }
+        }
         // Build 47 removes the retired X Developer API configuration entirely.
         // Delete any credential created by older builds without surfacing or
         // retaining its value.
@@ -149,10 +159,18 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    deinit {
+        todayRefreshTask?.cancel()
+    }
+
     var filteredArticles: [ArchivedArticle] {
         switch sidebarSelection {
         case .all, .none:
             articles
+        case .today:
+            articles.filter {
+                ArchiveSidebarStatistics.isPublishedToday($0.publishedAt, now: todayRefreshDate)
+            }
         case .pending:
             articles.filter(ArchiveSidebarStatistics.isProcessing)
         case .failed:
@@ -164,6 +182,12 @@ final class AppViewModel: ObservableObject {
 
     var sidebarStatistics: ArchiveSidebarStatistics {
         ArchiveSidebarStatistics(articles: articles)
+    }
+
+    var todayArticleCount: Int {
+        articles.filter {
+            ArchiveSidebarStatistics.isPublishedToday($0.publishedAt, now: todayRefreshDate)
+        }.count
     }
 
     var selectedArticle: ArchivedArticle? {

@@ -1807,6 +1807,17 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
         XCTAssertEqual(statistics.downloadedArticleCount(for: UUID()), 0)
     }
 
+    func testPublishedTodayUsesSourcePublicationDateAndCalendarDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 60 * 60)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 6, hour: 12))!
+        let morning = calendar.date(from: DateComponents(year: 2026, month: 9, day: 6, hour: 8))!
+        let previousNight = calendar.date(from: DateComponents(year: 2026, month: 9, day: 5, hour: 23, minute: 59))!
+
+        XCTAssertTrue(ArchiveSidebarStatistics.isPublishedToday(morning, now: now, calendar: calendar))
+        XCTAssertFalse(ArchiveSidebarStatistics.isPublishedToday(previousNight, now: now, calendar: calendar))
+    }
+
     private func makeArticle(
         creatorID: UUID,
         state: PipelineState,
