@@ -10,6 +10,7 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
     /// browser capture queue to resume.
     public var processingArticleCount: Int { waitingArticleCount }
 
+    private let articleCountsByCreator: [UUID: Int]
     private let downloadedArticleCountsByCreator: [UUID: Int]
 
     public init(articles: [ArchivedArticle]) {
@@ -17,11 +18,20 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
         waitingArticleCount = articles.lazy.filter(Self.isWaiting).count
         needsAttentionArticleCount = articles.lazy.filter(Self.needsAttention).count
 
+        var articleCounts: [UUID: Int] = [:]
         var downloadedCounts: [UUID: Int] = [:]
-        for article in articles where article.pipelineState == .committed {
-            downloadedCounts[article.creatorID, default: 0] += 1
+        for article in articles {
+            articleCounts[article.creatorID, default: 0] += 1
+            if article.pipelineState == .committed {
+                downloadedCounts[article.creatorID, default: 0] += 1
+            }
         }
+        articleCountsByCreator = articleCounts
         downloadedArticleCountsByCreator = downloadedCounts
+    }
+
+    public func articleCount(for creatorID: UUID) -> Int {
+        articleCountsByCreator[creatorID, default: 0]
     }
 
     public func downloadedArticleCount(for creatorID: UUID) -> Int {

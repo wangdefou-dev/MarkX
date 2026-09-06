@@ -230,7 +230,7 @@ struct RootView: View {
                             Image(systemName: creator.isProtected ? "lock.circle" : "person.crop.circle")
                         }
                         Spacer(minLength: 4)
-                        SidebarCountBadge(count: statistics.downloadedArticleCount(for: creator.id))
+                        SidebarCountBadge(count: statistics.articleCount(for: creator.id))
                     }
                     .tag(AppViewModel.SidebarSelection.creator(creator.id))
                     .contextMenu {

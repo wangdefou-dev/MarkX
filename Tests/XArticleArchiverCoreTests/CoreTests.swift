@@ -1700,7 +1700,21 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
         )
     }
 
-    func testCreatorCountIncludesOnlyCompletedDownloads() {
+    func testCreatorArticleCountIncludesEverySidebarRecord() {
+        let statistics = ArchiveSidebarStatistics(articles: [
+            makeArticle(creatorID: firstCreatorID, state: .committed),
+            makeArticle(creatorID: firstCreatorID, state: .rendered),
+            makeArticle(creatorID: firstCreatorID, state: .failed),
+            makeArticle(creatorID: firstCreatorID, state: .subscriptionRequired),
+            makeArticle(creatorID: secondCreatorID, state: .committed)
+        ])
+
+        XCTAssertEqual(statistics.articleCount(for: firstCreatorID), 4)
+        XCTAssertEqual(statistics.articleCount(for: secondCreatorID), 1)
+        XCTAssertEqual(statistics.articleCount(for: UUID()), 0)
+    }
+
+    func testDownloadedArticleCountRemainsCompletedOnly() {
         let statistics = ArchiveSidebarStatistics(articles: [
             makeArticle(creatorID: firstCreatorID, state: .committed),
             makeArticle(creatorID: firstCreatorID, state: .rendered),
