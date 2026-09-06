@@ -221,6 +221,7 @@ struct RootView: View {
             Section("博主") {
                 ForEach(model.creators) { creator in
                     let localArticleCount = statistics.articleCount(for: creator.id)
+                    let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
                     HStack(spacing: 8) {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
@@ -231,10 +232,13 @@ struct RootView: View {
                             Image(systemName: creator.isProtected ? "lock.circle" : "person.crop.circle")
                         }
                         Spacer(minLength: 4)
-                        SidebarCountBadge(count: statistics.displayedArticleCount(for: creator))
+                        SidebarFractionBadge(
+                            numerator: downloadedArticleCount,
+                            denominator: creator.knownArticleCount
+                        )
                             .help(creator.knownArticleCount.map {
-                                "X Articles 列表共 \($0) 篇；本地已归档 \(localArticleCount) 篇"
-                            } ?? "本地已归档 \(localArticleCount) 篇；重新拉取该博主可更新线上总数")
+                                "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
+                            } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；重新拉取该博主可更新线上总数")
                     }
                     .tag(AppViewModel.SidebarSelection.creator(creator.id))
                     .contextMenu {
@@ -286,8 +290,8 @@ struct RootView: View {
             Group {
                 if !model.filteredArticles.isEmpty {
                     List(selection: $model.selectedArticleID) {
-                        ForEach(model.filteredArticles) { article in
-                            ArticleRow(article: article)
+                        ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
+                            ArticleRow(article: article, index: index + 1)
                                 .tag(article.id)
                                 .contextMenu {
                                     if article.pipelineState == .subscriptionRequired {
@@ -1238,10 +1242,18 @@ private struct ArchivedAVPlayerView: NSViewRepresentable {
 
 private struct ArticleRow: View {
     let article: ArchivedArticle
+    let index: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(article.title).font(.headline).lineLimit(2)
+        HStack(alignment: .top, spacing: 10) {
+            Text(index, format: .number.grouping(.never))
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, alignment: .trailing)
+                .accessibilityLabel("第 \(index) 篇")
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(article.title).font(.headline).lineLimit(2)
             HStack(spacing: 6) {
                 Text("@\(article.authorHandle)")
                 Text("·")
@@ -1259,6 +1271,7 @@ private struct ArticleRow: View {
                 if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
             }
             .font(.caption)
+            }
         }
         .padding(.vertical, 6)
     }
@@ -1315,6 +1328,29 @@ private struct SidebarCountBadge: View {
             .background(Color.primary.opacity(0.07), in: Capsule())
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel("\(count) 篇文章")
+    }
+}
+
+private struct SidebarFractionBadge: View {
+    let numerator: Int
+    let denominator: Int?
+
+    private var label: String {
+        "\(numerator) / \(denominator.map(String.init) ?? "?")"
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.caption.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .frame(minWidth: 52)
+            .background(Color.primary.opacity(0.07), in: Capsule())
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(denominator.map {
+                "已下载 \(numerator) 篇，共 \($0) 篇线上文章"
+            } ?? "已下载 \(numerator) 篇，线上文章总数尚未获取")
     }
 }
 
