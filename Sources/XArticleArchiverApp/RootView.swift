@@ -209,12 +209,6 @@ struct RootView: View {
             Section {
                 if isCreatorsExpanded {
                     if !model.pinnedCreators.isEmpty {
-                        Text("置顶")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 22)
-                            .padding(.top, 4)
-                            .padding(.bottom, 2)
                         ForEach(model.pinnedCreators) { creator in
                             creatorSidebarRow(creator, statistics: statistics)
                         }
@@ -275,10 +269,7 @@ struct RootView: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.orange.opacity(0.18))
-            )
+            .background(SidebarAccentPanel.shape.fill(SidebarAccentPanel.fill))
         }
         .buttonStyle(.plain)
         .disabled(model.isRunning || model.hasActiveDownloadProgress)
@@ -1063,6 +1054,15 @@ private struct CreatorProfileToolbarHeader: View {
     }
 }
 
+private enum SidebarAccentPanel {
+    static let fill = Color.orange.opacity(0.18)
+    static let cornerRadius: CGFloat = 12
+
+    static var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+}
+
 private struct SidebarStatusCard: View {
     let isRunning: Bool
     let statusText: String
@@ -1131,11 +1131,7 @@ private struct SidebarStatusCard: View {
             .disabled(isRunning)
         }
         .padding(10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.separator.opacity(0.55), lineWidth: 0.7)
-        }
+        .background(SidebarAccentPanel.shape.fill(SidebarAccentPanel.fill))
     }
 }
 
