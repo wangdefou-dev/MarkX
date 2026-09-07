@@ -880,7 +880,7 @@ private struct DownloadResultView: View {
             }
 
             if !notice.metrics.isEmpty {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
                     GridRow {
                         metricCell(id: "queued", label: "进入队列", systemImage: "tray.and.arrow.down.fill")
                         metricCell(id: "saved", label: "成功保存", systemImage: "checkmark.circle.fill")
@@ -972,7 +972,7 @@ private struct DownloadResultMetricText: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: metric.systemImage)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(color)
@@ -981,13 +981,11 @@ private struct DownloadResultMetricText: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Spacer(minLength: 6)
+                .fixedSize(horizontal: true, vertical: false)
             Text(metric.value)
                 .font(.title3.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
