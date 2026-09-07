@@ -222,17 +222,18 @@ struct RootView: View {
                 }
             } header: {
                 SidebarSectionHeader(title: "博主", isExpanded: $isCreatorsExpanded)
+                    .padding(.top, SidebarChrome.libraryToCreatorsSpacing)
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .safeAreaInset(edge: .top, spacing: SidebarChrome.downloadToLibrarySpacing) {
             sidebarDownloadEntry
-                .padding(.horizontal, 8)
+                .padding(.horizontal, SidebarChrome.moduleHorizontalInset)
                 .padding(.top, 8)
-                .padding(.bottom, 5)
+                .padding(.bottom, 2)
                 .background(.bar)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .safeAreaInset(edge: .bottom, spacing: 8) {
             SidebarStatusCard(
                 isRunning: model.isRunning,
                 statusText: model.isRunning ? model.progress.stage : model.statusMessage,
@@ -242,8 +243,8 @@ struct RootView: View {
                 configureImageHost: { model.presentConnectionSetup(focusing: .imageHost) },
                 switchDirectory: { model.chooseArchiveFolder() }
             )
-            .padding(.horizontal, 8)
-            .padding(.top, 5)
+            .padding(.horizontal, SidebarChrome.moduleHorizontalInset)
+            .padding(.top, 4)
             .padding(.bottom, 8)
             .background(.bar)
         }
@@ -823,7 +824,8 @@ private struct SidebarSectionHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.bottom, 5)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
         .help(isExpanded ? "折叠\(title)" : "展开\(title)")
     }
 }
@@ -1020,6 +1022,12 @@ private struct CreatorProfileToolbarHeader: View {
         .frame(height: 36, alignment: .center)
         .padding(.leading, 12)
     }
+}
+
+private enum SidebarChrome {
+    static let moduleHorizontalInset: CGFloat = 4
+    static let downloadToLibrarySpacing: CGFloat = 14
+    static let libraryToCreatorsSpacing: CGFloat = 18
 }
 
 private enum SidebarAccentPanel {
