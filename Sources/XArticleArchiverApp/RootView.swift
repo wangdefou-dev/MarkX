@@ -21,9 +21,6 @@ struct RootView: View {
         }
         .toolbar { toolbar }
         .onOpenURL { model.handleOpenURL($0) }
-        .onChange(of: model.sidebarSelection) { _, _ in
-            model.synchronizeSelectedArticleWithSidebar()
-        }
         .sheet(isPresented: $model.showingAddCreators) {
             AddCreatorsView()
                 .environmentObject(model)
@@ -367,20 +364,14 @@ struct RootView: View {
     }
 
     private var articleList: some View {
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             Group {
                 if !model.filteredArticles.isEmpty {
-                    List {
+                    List(selection: $model.selectedArticleID) {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
                             let creator = model.creators.first(where: { $0.id == article.creatorID })
                             ArticleRow(article: article, index: index + 1, creator: creator)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    model.selectedArticleID = article.id
-                                }
-                                .accessibilityAction {
-                                    model.selectedArticleID = article.id
-                                }
+                                .tag(article.id)
                                 .contextMenu {
                                     if article.pipelineState == .subscriptionRequired {
                                         Button {
@@ -432,10 +423,6 @@ struct RootView: View {
                         }
                     }
                     .listStyle(.inset)
-                    // Recreate the list when the sidebar filter changes. The list
-                    // has no selection binding, so status-only filters cannot leave
-                    // a stale selected row layer behind.
-                    .id(model.sidebarSelection)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
                 } else {
@@ -677,7 +664,7 @@ struct RootView: View {
                 }
                 .background(Color(nsColor: .textBackgroundColor))
             }
-            .id(article.id)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         } else {
             ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
         }

@@ -66,4 +66,18 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
             || article.pipelineState == .subscriptionRequired
             || article.lastError != nil
     }
+
+    /// Keep the current article when it still belongs to the active sidebar
+    /// filter; otherwise select the first visible row. Call this in the same
+    /// update as the filter change so the article list never renders with a
+    /// selection that is missing from the current rows.
+    public static func resolvedArticleSelection(
+        current: UUID?,
+        visibleIDs: [UUID]
+    ) -> UUID? {
+        if let current, visibleIDs.contains(current) {
+            return current
+        }
+        return visibleIDs.first
+    }
 }

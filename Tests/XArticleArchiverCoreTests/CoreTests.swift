@@ -1818,6 +1818,40 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
         XCTAssertFalse(ArchiveSidebarStatistics.isPublishedToday(previousNight, now: now, calendar: calendar))
     }
 
+    func testResolvedArticleSelectionKeepsCurrentRowWhenStillVisible() {
+        let current = UUID()
+        let visible = [UUID(), current, UUID()]
+
+        XCTAssertEqual(
+            ArchiveSidebarStatistics.resolvedArticleSelection(current: current, visibleIDs: visible),
+            current
+        )
+    }
+
+    func testResolvedArticleSelectionMovesToFirstVisibleRowAfterStatusFilter() {
+        let previous = UUID()
+        let firstFailed = UUID()
+        let secondFailed = UUID()
+
+        XCTAssertEqual(
+            ArchiveSidebarStatistics.resolvedArticleSelection(
+                current: previous,
+                visibleIDs: [firstFailed, secondFailed]
+            ),
+            firstFailed
+        )
+        XCTAssertNil(
+            ArchiveSidebarStatistics.resolvedArticleSelection(current: previous, visibleIDs: [])
+        )
+        XCTAssertEqual(
+            ArchiveSidebarStatistics.resolvedArticleSelection(
+                current: nil,
+                visibleIDs: [firstFailed, secondFailed]
+            ),
+            firstFailed
+        )
+    }
+
     private func makeArticle(
         creatorID: UUID,
         state: PipelineState,

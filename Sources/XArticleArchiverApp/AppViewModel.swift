@@ -54,7 +54,12 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var pinnedCreatorIDs: [UUID] = []
     @Published var articles: [ArchivedArticle] = []
     @Published var selectedArticleID: UUID?
-    @Published var sidebarSelection: SidebarSelection? = .all
+    @Published var sidebarSelection: SidebarSelection? = .all {
+        didSet {
+            guard oldValue != sidebarSelection else { return }
+            synchronizeSelectedArticleWithSidebar()
+        }
+    }
     @Published var archiveRoot: URL?
     @Published var isRunning = false
     @Published var statusMessage = "准备就绪"
@@ -203,24 +208,13 @@ final class AppViewModel: ObservableObject {
     }
 
     /// Keep the detail selection inside the active sidebar filter. Without this,
-    /// switching to a status-only filter can leave the detail pane showing an
-    /// article from the previous filter while the list has a different source.
+    /// switching to a status-only filter can leave the list bound to an article
+    /// that is no longer in the current rows, which breaks NavigationSplitView.
     func synchronizeSelectedArticleWithSidebar() {
-        let visibleArticles = filteredArticles
-        guard let nextID = visibleArticles.first?.id else {
-            selectedArticleID = nil
-            return
-        }
-        guard selectedArticleID == nil || !visibleArticles.contains(where: { $0.id == selectedArticleID }) else { return }
-
-        // Let the native List finish removing the old selection before applying
-        // the first row from the new filter. Updating both identities in one
-        // transaction can leave a NavigationSplitView row layer unrendered.
-        selectedArticleID = nil
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.filteredArticles.contains(where: { $0.id == nextID }) else { return }
-            self.selectedArticleID = nextID
-        }
+        selectedArticleID = ArchiveSidebarStatistics.resolvedArticleSelection(
+            current: selectedArticleID,
+            visibleIDs: filteredArticles.map(\.id)
+        )
     }
 
     var currentBrowserCaptureRequest: BrowserCaptureRequest? {
@@ -2337,15 +2331,11 @@ final class AppViewModel: ObservableObject {
             if lhs.publishedAt != rhs.publishedAt { return lhs.publishedAt > rhs.publishedAt }
             return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
         }
-        if let selectedArticleID, !articles.contains(where: { $0.id == selectedArticleID }) {
-            self.selectedArticleID = articles.first?.id
-        } else if selectedArticleID == nil {
-            selectedArticleID = articles.first?.id
-        }
         if case .creator(let creatorID) = sidebarSelection,
            !creators.contains(where: { $0.id == creatorID }) {
             sidebarSelection = .all
         }
+        synchronizeSelectedArticleWithSidebar()
     }
 
     /// Re-renders only files that still carry a valid exporter checksum. This
