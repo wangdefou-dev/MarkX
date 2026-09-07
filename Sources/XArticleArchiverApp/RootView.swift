@@ -853,96 +853,81 @@ private struct DownloadResultView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 14) {
                 Image(systemName: statusImage)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(statusColor)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 44, height: 44)
                     .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
                             .fill(statusColor.opacity(0.12))
                     )
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(notice.title)
-                        .font(.headline.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
                     Text(hasDanger
                         ? "任务未完全完成，已保存的内容仍然保留"
                         : hasWarning
                         ? "部分任务需要继续处理，已完成内容仍然保留"
                         : "任务结果已整理完成")
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if !notice.metrics.isEmpty {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
-                    ForEach(Array(metricRows.enumerated()), id: \.offset) { _, row in
-                        GridRow {
-                            ForEach(row) { metric in
-                                DownloadResultMetricText(metric: metric)
-                            }
-                        }
+                Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 16) {
+                    GridRow {
+                        metricCell(id: "queued", label: "进入队列", systemImage: "tray.and.arrow.down.fill")
+                        metricCell(id: "saved", label: "成功保存", systemImage: "checkmark.circle.fill")
+                        metricCell(id: "failed", label: "下载失败", systemImage: "xmark.circle.fill")
+                    }
+                    GridRow {
+                        metricCell(id: "skipped", label: "已跳过", systemImage: "forward.end.fill")
+                        metricCell(id: "subscription", label: "需订阅", systemImage: "lock.fill")
+                        metricCell(id: "pending", label: "待处理", systemImage: "clock.arrow.circlepath")
+                    }
+                    GridRow {
+                        metricCell(id: "images", label: "图片", systemImage: "photo.fill")
+                        metricCell(id: "videos", label: "视频", systemImage: "video.fill")
+                        Color.clear
+                            .gridCellUnsizedAxes([.horizontal, .vertical])
                     }
                 }
-                .padding(.top, 14)
             }
 
             Divider()
-                .padding(.vertical, 10)
 
             ScrollView {
                 Text(notice.message)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineSpacing(3)
+                    .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minHeight: 42, maxHeight: 92)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             HStack {
                 Spacer()
                 Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
+                    .controlSize(.large)
                     .help("关闭任务结果")
             }
-            .padding(.top, 10)
         }
-        .padding(18)
-        .frame(minWidth: 460, idealWidth: 500, minHeight: 260, idealHeight: 320)
+        .padding(22)
+        .frame(width: 560, height: 480, alignment: .topLeading)
     }
 
-    private var metricRows: [[DownloadResultMetric]] {
-        [
-            [
-                displayMetric(id: "queued", label: "进入队列", systemImage: "tray.and.arrow.down.fill"),
-                displayMetric(id: "saved", label: "成功保存", systemImage: "checkmark.circle.fill"),
-                displayMetric(id: "failed", label: "下载失败", systemImage: "xmark.circle.fill")
-            ],
-            [
-                displayMetric(id: "skipped", label: "已跳过", systemImage: "forward.end.fill"),
-                displayMetric(id: "subscription", label: "需订阅", systemImage: "lock.fill"),
-                displayMetric(id: "pending", label: "待处理", systemImage: "clock.arrow.circlepath")
-            ],
-            [
-                displayMetric(id: "images", label: "图片", systemImage: "photo.fill"),
-                displayMetric(id: "videos", label: "视频", systemImage: "video.fill"),
-                DownloadResultMetric(
-                    id: "media-spacer",
-                    label: " ",
-                    value: " ",
-                    systemImage: "",
-                    tone: .neutral
-                )
-            ]
-        ]
+    @ViewBuilder
+    private func metricCell(id: String, label: String, systemImage: String) -> some View {
+        DownloadResultMetricText(metric: displayMetric(id: id, label: label, systemImage: systemImage))
     }
 
     private func displayMetric(
@@ -976,12 +961,8 @@ private struct DownloadResultView: View {
 private struct DownloadResultMetricText: View {
     let metric: DownloadResultMetric
 
-    private let iconWidth: CGFloat = 12
-    private let iconToLabelSpacing: CGFloat = 5
-
-    private var isSpacer: Bool {
-        metric.id.hasSuffix("-spacer")
-    }
+    private let iconWidth: CGFloat = 18
+    private let iconToLabelSpacing: CGFloat = 7
 
     private var color: Color {
         switch metric.tone {
@@ -994,32 +975,26 @@ private struct DownloadResultMetricText: View {
     }
 
     var body: some View {
-        Group {
-            if isSpacer {
-                Color.clear
-            } else {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .center, spacing: iconToLabelSpacing) {
-                        Image(systemName: metric.systemImage)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(color)
-                            .frame(width: iconWidth, height: iconWidth, alignment: .center)
-                        Text(metric.label)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Text(metric.value)
-                        .font(.title3.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .padding(.leading, iconWidth + iconToLabelSpacing)
-                }
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .center, spacing: iconToLabelSpacing) {
+                Image(systemName: metric.systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: iconWidth, height: iconWidth, alignment: .center)
+                Text(metric.label)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
+            Text(metric.value)
+                .font(.title2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.leading, iconWidth + iconToLabelSpacing)
         }
-        .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
-        .accessibilityHidden(isSpacer)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 

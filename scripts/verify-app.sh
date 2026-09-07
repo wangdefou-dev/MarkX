@@ -11,7 +11,7 @@ else
   VERIFY_DIR="$(mktemp -d /tmp/x-article-archiver-app-verify.XXXXXX)"
   MOUNT_DIR="$VERIFY_DIR/mount"
   mkdir -p "$MOUNT_DIR"
-  hdiutil attach "$PROJECT_DIR/dist/MarkX-0.3.7.dmg" -nobrowse -readonly -mountpoint "$MOUNT_DIR" -quiet
+  hdiutil attach "$PROJECT_DIR/dist/MarkX-0.3.8.dmg" -nobrowse -readonly -mountpoint "$MOUNT_DIR" -quiet
   MOUNTED=1
   APP_BUNDLE="$MOUNT_DIR/MarkX.app"
 fi
@@ -30,8 +30,8 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 file "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp" | grep -q 'arm64'
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleDisplayName)" = "MarkX"
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleName)" = "MarkX"
-test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleShortVersionString)" = "0.3.7"
-test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleVersion)" = "94"
+test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleShortVersionString)" = "0.3.8"
+test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleVersion)" = "95"
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleURLTypes | grep -c xarticlearchiver)" -ge 1
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleIconFile)" = "AppIcon.icns"
 file "$APP_BUNDLE/Contents/Resources/AppIcon.icns" | grep -q 'Mac OS X icon'
