@@ -1131,7 +1131,11 @@ private struct SidebarStatusCard: View {
             .disabled(isRunning)
         }
         .padding(10)
-        .background(SidebarAccentPanel.shape.fill(SidebarAccentPanel.fill))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.separator.opacity(0.55), lineWidth: 0.7)
+        }
     }
 }
 
