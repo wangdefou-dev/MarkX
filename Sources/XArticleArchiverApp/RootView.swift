@@ -8,16 +8,29 @@ struct RootView: View {
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
     @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 210, ideal: 235)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 235, max: 280)
         } content: {
             articleList
-                .navigationSplitViewColumnWidth(min: 360, ideal: 430)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 500)
         } detail: {
             detail
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .animation(nil, value: model.sidebarSelection)
+        .animation(nil, value: model.selectedArticleID)
+        .onChange(of: model.sidebarSelection) { _, _ in
+            columnVisibility = .all
+        }
+        .onChange(of: model.selectedArticleID) { _, _ in
+            columnVisibility = .all
         }
         .toolbar { toolbar }
         .onOpenURL { model.handleOpenURL($0) }
@@ -423,6 +436,7 @@ struct RootView: View {
                         }
                     }
                     .listStyle(.inset)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
                 } else {
@@ -486,187 +500,211 @@ struct RootView: View {
     private var detail: some View {
         if let article = model.selectedArticle {
             VStack(spacing: 0) {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(article.title)
-                            .font(.title2.bold())
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                        HStack(spacing: 8) {
-                            Button {
-                                model.openCreatorProfile(handle: article.authorHandle)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
-                                    Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
-                                    Image(systemName: "arrow.up.right")
-                                        .font(.caption2.weight(.semibold))
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .help("查看 @\(article.authorHandle) 的 X 主页")
-                            Text("·")
-                            Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        HStack {
-                            StatusPill(
-                                article.pipelineState.displayName,
-                                color: article.pipelineState == .committed
-                                    ? .green
-                                    : article.pipelineState == .subscriptionRequired ? .purple : .orange
-                            )
-                            StatusPill("\(article.imageCount) 张图片", color: .blue)
-                            if article.videoCount > 0 {
-                                StatusPill("\(article.videoCount) 个视频", color: .purple)
-                            }
-                            Button {
-                                model.openSource()
-                            } label: {
-                                Label("查看文章原文", systemImage: "arrow.up.right.square")
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("在默认浏览器打开当前 X Article 原页")
-                            if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
-                                FixedReprocessButton(
-                                    isDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                                    help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
-                                ) {
-                                    model.captureSelectedArticleExactly()
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(1)
-                    HStack(spacing: 9) {
-                        HStack(spacing: 3) {
-                            Button {
-                                adjustArticleTextScale(by: -0.1)
-                            } label: {
-                                Text("A−")
-                                    .font(.callout.weight(.semibold))
-                                    .frame(minWidth: 25)
-                            }
-                            .buttonStyle(.borderless)
-                            .help("缩小文章文字")
-                            .disabled(previewTextScale <= 0.8)
-
-                            Button {
-                                articlePreviewTextScale = 1.0
-                            } label: {
-                                Text("\(Int((previewTextScale * 100).rounded()))%")
-                                    .font(.caption.monospacedDigit())
-                                    .frame(minWidth: 38)
-                            }
-                            .buttonStyle(.borderless)
-                            .help("恢复 100% 字号")
-                            .disabled(previewTextScale == 1.0)
-
-                            Button {
-                                adjustArticleTextScale(by: 0.1)
-                            } label: {
-                                Text("A+")
-                                    .font(.callout.weight(.semibold))
-                                    .frame(minWidth: 25)
-                            }
-                            .buttonStyle(.borderless)
-                            .help("放大文章文字")
-                            .disabled(previewTextScale >= 1.6)
-                        }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
-
-                        Menu {
-                            Button("打开 Markdown") { model.openSelectedArticle() }
-                                .help("用默认的 Markdown 应用打开本地文件")
-                            Button("在 Finder 中显示") { model.revealSelectedArticle() }
-                                .help("在 Finder 中定位当前文章的 Markdown 文件")
-                            Divider()
-                            Button("访问原文") { model.openSource() }
-                                .help("在默认浏览器打开当前 X Article 原页")
-                            if article.pipelineState == .subscriptionRequired {
-                                Button("在 Chrome 订阅 @\(article.authorHandle)") {
-                                    model.openSubscriptionPage(for: article)
-                                }
-                                .help("使用 MarkX 会读取登录状态的同一个 Chrome 完成订阅")
-                            }
-                            if model.isArticleActivelyProcessing(article) {
-                                Button("停止处理", role: .cancel) { model.stopProcessing(article) }
-                            } else {
-                                Button("重新处理") { model.restartProcessing(article) }
-                                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                                    .help("重新打开原页并严格校验完整排版")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle").font(.title2)
-                        }
-                        .menuStyle(.borderlessButton)
-                        .help("更多文章操作：打开文件、定位、访问原文或重新采集")
-                    }
-                }
-                .padding(22)
+                articleDetailHeader(article)
                 Divider()
-                if article.pipelineState != .committed || article.lastError != nil {
-                    ArticleProcessingPanel(
-                        article: article,
-                        isActive: model.isArticleActivelyProcessing(article),
-                        isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                        stop: { model.stopProcessing(article) },
-                        restart: { model.restartProcessing(article) },
-                        openSubscription: { model.openSubscriptionPage(for: article) }
-                    )
-                    Divider()
-                }
                 ScrollView {
-                    if let document = model.previewDocument(for: article) {
-                        ArticleDocumentPreview(document: document, textScale: previewTextScale)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 26 * previewTextScale)
-                    } else if article.pipelineState != .committed || article.lastError != nil {
-                        if article.markdownPath != nil {
-                            Text(model.markdownPreview(for: article))
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                                .padding(24)
-                        } else {
-                            ContentUnavailableView(
-                                "正文尚未生成",
-                                systemImage: "doc.badge.clock",
-                                description: Text("当前状态、错误原因和处理日志已显示在上方。")
+                    VStack(spacing: 0) {
+                        if article.pipelineState != .committed || article.lastError != nil {
+                            ArticleProcessingPanel(
+                                article: article,
+                                isActive: model.isArticleActivelyProcessing(article),
+                                isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                                stop: { model.stopProcessing(article) },
+                                restart: { model.restartProcessing(article) },
+                                openSubscription: { model.openSubscriptionPage(for: article) }
                             )
-                            .frame(maxWidth: .infinity, minHeight: 240)
                         }
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("文章预览不可用", systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.orange)
-                            Text("当前记录缺少可用于应用内预览的完整来源快照；本地 Markdown 仍显示在下方，可以重新处理以恢复预览。")
-                                .foregroundStyle(.secondary)
-                            FixedReprocessButton(
-                                isDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                                help: "重新打开这篇 X Article 并恢复完整预览"
-                            ) {
-                                model.restartProcessing(article)
-                            }
-                            Text(model.markdownPreview(for: article))
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(24)
+                        articleDetailBody(article)
                     }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
                 }
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .textBackgroundColor))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
         } else {
             ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+        }
+    }
+
+    private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(article.title)
+                    .font(.title2.bold())
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                    .textSelection(.enabled)
+                HStack(spacing: 8) {
+                    Button {
+                        model.openCreatorProfile(handle: article.authorHandle)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
+                                .lineLimit(1)
+                            Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
+                                .lineLimit(1)
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption2.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("查看 @\(article.authorHandle) 的 X 主页")
+                    Text("·")
+                    Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
+                        .lineLimit(1)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 20, alignment: .leading)
+                HStack(spacing: 8) {
+                    StatusPill(
+                        article.pipelineState.displayName,
+                        color: article.pipelineState == .committed
+                            ? .green
+                            : article.pipelineState == .subscriptionRequired ? .purple : .orange
+                    )
+                    StatusPill("\(article.imageCount) 张图片", color: .blue)
+                    if article.videoCount > 0 {
+                        StatusPill("\(article.videoCount) 个视频", color: .purple)
+                    }
+                    Button {
+                        model.openSource()
+                    } label: {
+                        Label("查看文章原文", systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("在默认浏览器打开当前 X Article 原页")
+                    if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
+                        FixedReprocessButton(
+                            isDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                            help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
+                        ) {
+                            model.captureSelectedArticleExactly()
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+
+            HStack(spacing: 9) {
+                HStack(spacing: 3) {
+                    Button {
+                        adjustArticleTextScale(by: -0.1)
+                    } label: {
+                        Text("A−")
+                            .font(.callout.weight(.semibold))
+                            .frame(minWidth: 25)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("缩小文章文字")
+                    .disabled(previewTextScale <= 0.8)
+
+                    Button {
+                        articlePreviewTextScale = 1.0
+                    } label: {
+                        Text("\(Int((previewTextScale * 100).rounded()))%")
+                            .font(.caption.monospacedDigit())
+                            .frame(minWidth: 38)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("恢复 100% 字号")
+                    .disabled(previewTextScale == 1.0)
+
+                    Button {
+                        adjustArticleTextScale(by: 0.1)
+                    } label: {
+                        Text("A+")
+                            .font(.callout.weight(.semibold))
+                            .frame(minWidth: 25)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("放大文章文字")
+                    .disabled(previewTextScale >= 1.6)
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
+
+                Menu {
+                    Button("打开 Markdown") { model.openSelectedArticle() }
+                        .help("用默认的 Markdown 应用打开本地文件")
+                    Button("在 Finder 中显示") { model.revealSelectedArticle() }
+                        .help("在 Finder 中定位当前文章的 Markdown 文件")
+                    Divider()
+                    Button("访问原文") { model.openSource() }
+                        .help("在默认浏览器打开当前 X Article 原页")
+                    if article.pipelineState == .subscriptionRequired {
+                        Button("在 Chrome 订阅 @\(article.authorHandle)") {
+                            model.openSubscriptionPage(for: article)
+                        }
+                        .help("使用 MarkX 会读取登录状态的同一个 Chrome 完成订阅")
+                    }
+                    if model.isArticleActivelyProcessing(article) {
+                        Button("停止处理", role: .cancel) { model.stopProcessing(article) }
+                    } else {
+                        Button("重新处理") { model.restartProcessing(article) }
+                            .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                            .help("重新打开原页并严格校验完整排版")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.title2)
+                }
+                .menuStyle(.borderlessButton)
+                .help("更多文章操作：打开文件、定位、访问原文或重新采集")
+            }
+            .fixedSize()
+        }
+        .padding(22)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func articleDetailBody(_ article: ArchivedArticle) -> some View {
+        if let document = model.previewDocument(for: article) {
+            ArticleDocumentPreview(document: document, textScale: previewTextScale)
+                .padding(.horizontal, 30)
+                .padding(.vertical, 26 * previewTextScale)
+        } else if article.pipelineState != .committed || article.lastError != nil {
+            if article.markdownPath != nil {
+                Text(model.markdownPreview(for: article))
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+                    .padding(24)
+            } else {
+                ContentUnavailableView(
+                    "正文尚未生成",
+                    systemImage: "doc.badge.clock",
+                    description: Text("当前状态、错误原因和处理日志已显示在上方。")
+                )
+                .frame(maxWidth: .infinity, minHeight: 240)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("文章预览不可用", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text("当前记录缺少可用于应用内预览的完整来源快照；本地 Markdown 仍显示在下方，可以重新处理以恢复预览。")
+                    .foregroundStyle(.secondary)
+                FixedReprocessButton(
+                    isDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                    help: "重新打开这篇 X Article 并恢复完整预览"
+                ) {
+                    model.restartProcessing(article)
+                }
+                Text(model.markdownPreview(for: article))
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+            .padding(24)
         }
     }
 
@@ -1174,8 +1212,8 @@ private struct ArticleDocumentPreview: View {
                 .padding(.top, 8 * typography.scale)
             }
         }
-        .frame(maxWidth: 860, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
         .textSelection(.enabled)
     }
 
@@ -1241,6 +1279,7 @@ private struct ArticleBlockView: View {
                 .font(bodyFont)
                 .lineSpacing(typography.bodyLineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         case .blankLine:
             Color.clear.frame(height: typography.explicitBlankLineHeight)
         case .heading:
@@ -1248,6 +1287,7 @@ private struct ArticleBlockView: View {
                 .font(headingFont)
                 .lineSpacing(3 * typography.scale)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         case .unorderedListItem:
             listRow(marker: unorderedListMarker)
         case .orderedListItem:
@@ -1263,6 +1303,7 @@ private struct ArticleBlockView: View {
                     .foregroundStyle(.secondary)
                     .lineSpacing(typography.bodyLineSpacing)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 4 * typography.scale)
         case .code:
@@ -1354,6 +1395,7 @@ private struct ArticleBlockView: View {
                     .font(bodyFont)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -1547,6 +1589,8 @@ private struct ArticleRow: View {
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(2)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
                     Text(creator?.displayName ?? "@\(article.authorHandle)")
                     Text("·")
@@ -1566,9 +1610,10 @@ private struct ArticleRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
@@ -1728,13 +1773,14 @@ private struct ArticleProcessingPanel: View {
                     Text(title)
                         .font(.headline)
                         .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     Spacer(minLength: 0)
                 }
                 Text(detail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
 
             HStack(spacing: 8) {
@@ -1769,6 +1815,7 @@ private struct ArticleProcessingPanel: View {
                     Text(lastError)
                         .font(.callout)
                         .textSelection(.enabled)
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1799,6 +1846,7 @@ private struct ArticleProcessingPanel: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 14)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.035))
         .contextMenu {
             if isActive {

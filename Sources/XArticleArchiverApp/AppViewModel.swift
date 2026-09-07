@@ -57,7 +57,11 @@ final class AppViewModel: ObservableObject {
     @Published var sidebarSelection: SidebarSelection? = .all {
         didSet {
             guard oldValue != sidebarSelection else { return }
-            synchronizeSelectedArticleWithSidebar()
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                synchronizeSelectedArticleWithSidebar()
+            }
         }
     }
     @Published var archiveRoot: URL?
