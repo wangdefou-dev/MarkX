@@ -176,6 +176,7 @@ public struct BrowserCapturedBlock: Codable, Hashable, Sendable {
         case table
         case image
         case embeddedPost = "embedded_post"
+        case unavailableEmbeddedPost = "unavailable_embedded_post"
         case embeddedMedia = "embedded_media"
     }
 
@@ -316,6 +317,7 @@ public enum BrowserArticleCaptureDecoder {
         var usedMediaIDs = Set<String>()
         var usedVideoIDs = Set<String>()
         var embeddedMediaCounts: [String: Int] = [:]
+        var unavailableEmbeddedPostCount = 0
 
         for captured in payload.blocks {
             let canonicalKind: CanonicalBlockKind
@@ -331,6 +333,7 @@ public enum BrowserArticleCaptureDecoder {
             case .table: canonicalKind = .table
             case .image: canonicalKind = .image
             case .embeddedPost: canonicalKind = .embeddedPost
+            case .unavailableEmbeddedPost: canonicalKind = .embeddedPost
             case .embeddedMedia: canonicalKind = .video
             }
 
@@ -372,6 +375,17 @@ public enum BrowserArticleCaptureDecoder {
                     links: [LinkRange(offset: 0, length: linkText.utf16.count, url: referenceURL)],
                     sourceEntityType: "browser-rendered-article-link"
                 ))
+                continue
+            }
+
+            if captured.kind == .unavailableEmbeddedPost {
+                let detail = captured.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                blocks.append(CanonicalBlock(
+                    kind: .embeddedPost,
+                    text: detail.isEmpty ? "引用内容已不可用" : detail,
+                    sourceEntityType: "browser-rendered-unavailable-post"
+                ))
+                unavailableEmbeddedPostCount += 1
                 continue
             }
 
@@ -510,6 +524,9 @@ public enum BrowserArticleCaptureDecoder {
             .reduce(0) { $0 + $1.value }
         if otherEmbeddedMediaCount > 0 {
             warnings.append("文章包含 \(otherEmbeddedMediaCount) 个暂不支持转存的嵌入媒体，已在原位置保留原文查看入口")
+        }
+        if unavailableEmbeddedPostCount > 0 {
+            warnings.append("文章包含 \(unavailableEmbeddedPostCount) 条已不可用的引用内容，已按页面原位置保留占位说明")
         }
 
         let document = CanonicalDocument(

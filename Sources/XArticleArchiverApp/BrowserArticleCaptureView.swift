@@ -103,7 +103,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             pageStatus = "正在按页面顺序读取段落、列表、表格、代码和图片…"
         }
         defer { isCapturing = false }
-        let raw = try await webView.evaluateJavaScript(Self.extractionScript)
+        let raw = try await webView.evaluateJavaScript(BrowserArticleExtractionScript.source)
         guard let json = raw as? String else {
             throw BrowserArticleCaptureError.pageNotReady("页面返回了无法识别的结果")
         }
@@ -271,7 +271,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     /// `longformRichTextComponent`. We intentionally read only those explicit
     /// blocks, rather than broad page text, so replies/navigation never leak
     /// into the archive. Unknown block types fail closed in Core.
-    private static let extractionScript = #"""
+    fileprivate static let extractionScript = #"""
     (() => {
       const ERROR = "__X_CAPTURE_ERROR__:";
       const DIAGNOSTIC = "__X_CAPTURE_DIAGNOSTIC__:";
@@ -530,6 +530,16 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       };
 
       const blocks = [];
+      const capturedImageKeys = new Set();
+      const appendImage = image => {
+        const captured = imageBlock(image);
+        if (!captured) return false;
+        const key = captured.imageID || captured.imageURL;
+        if (!key || capturedImageKeys.has(key)) return false;
+        capturedImageKeys.add(key);
+        blocks.push(captured);
+        return true;
+      };
       let unsupportedBlockCount = 0;
       const cover = [...articleView.querySelectorAll('[data-testid="tweetPhoto"] img')]
         .find(img => {
@@ -537,8 +547,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
           return articleMediaURL(img) !== null;
         });
       if (cover) {
-        const capturedCover = imageBlock(cover);
-        if (capturedCover) blocks.push(capturedCover);
+        appendImage(cover);
       }
 
       const renderedBlocks = [...richRoot.querySelectorAll('[data-block="true"]')]
@@ -551,6 +560,15 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         const depth = depthMatch ? Number(depthMatch[1]) : 0;
 
         if (tag === 'section') {
+          const tombstone = node.querySelector('[data-testid="tombstone"]');
+          if (tombstone) {
+            const detail = (tombstone.innerText || '').trim() || '引用内容已不可用';
+            blocks.push({
+              kind:'unavailable_embedded_post', text:detail, level:0, depth:0,
+              styles:[], links:[], imageURL:null, imageID:null, altText:null, language:null
+            });
+            continue;
+          }
           const table = node.querySelector('table');
           if (table) {
             const tableRows = [...table.rows]
@@ -634,10 +652,11 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             });
             continue;
           }
-          const image = node.querySelector('[data-testid="tweetPhoto"] img, img');
-          if (image) {
-            const capturedImage = imageBlock(image);
-            if (capturedImage) { blocks.push(capturedImage); continue; }
+          const images = [...node.querySelectorAll('[data-testid="tweetPhoto"] img, img')]
+            .filter(image => !belongsToQuotedCard(image) && articleMediaURL(image) !== null);
+          if (images.length) {
+            images.forEach(appendImage);
+            continue;
           }
           const code = node.querySelector('pre code, pre');
           if (code) {
@@ -718,7 +737,9 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       const capturedMediaIDs = new Set(
         blocks.filter(block => block.kind === 'image').map(block => block.imageID).filter(Boolean)
       );
-      if (capturedMediaIDs.size < expectedMediaIDs.size)
+      const missingMediaIDs = [...expectedMediaIDs]
+        .filter(mediaID => !capturedMediaIDs.has(mediaID));
+      if (missingMediaIDs.length)
         return ERROR + `文章图片尚未齐全（${capturedMediaIDs.size}/${expectedMediaIDs.size}）。`;
 
       return JSON.stringify({
@@ -728,6 +749,11 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       });
     })()
     """#
+}
+
+@MainActor
+enum BrowserArticleExtractionScript {
+    static let source = BrowserArticleCaptureController.extractionScript
 }
 
 struct BrowserWebView: NSViewRepresentable {

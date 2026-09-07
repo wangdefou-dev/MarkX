@@ -26,6 +26,10 @@ let package = Package(
         .testTarget(
             name: "XArticleArchiverCoreTests",
             dependencies: ["XArticleArchiverCore"]
+        ),
+        .testTarget(
+            name: "XArticleArchiverAppTests",
+            dependencies: ["XArticleArchiverApp", "XArticleArchiverCore"]
         )
     ]
 )
