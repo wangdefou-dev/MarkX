@@ -7,7 +7,7 @@ public enum ArchiveMode: String, Codable, CaseIterable, Sendable {
     public var displayName: String {
         switch self {
         case .recentWindow: "最近范围"
-        case .fullArchive: "下载全部"
+        case .fullArchive: "全部文章"
         }
     }
 }
@@ -148,7 +148,8 @@ public struct Creator: Identifiable, Codable, Hashable, Sendable {
 
 /// Selects every enabled tracked creator for a batch sync. There is
 /// intentionally no `prefix`, page-size, or creator-count ceiling here: the
-/// 1...100 control in the UI limits Articles per creator, never creators.
+/// The 1...100 control limits Articles per creator, never creators.
+/// Choosing “全部文章” leaves that cap unused and scrolls the Articles list to the end.
 public enum SyncAllCreatorPolicy {
     public static func enabledUsernames(from creators: [Creator]) -> [String] {
         var seen = Set<String>()

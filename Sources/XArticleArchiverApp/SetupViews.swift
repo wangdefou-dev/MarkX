@@ -174,14 +174,14 @@ struct AddCreatorsView: View {
             }
         }
         .pickerStyle(.segmented)
-        .help("选择只下载最近指定数量，或自动滚动 Articles 列表下载全部文章")
+        .help("选择只下载最近指定数量，或自动滚动 Articles 列表下载全部可见文章")
 
         if mode == .recentWindow {
             recentRangeControls
             totalCountOption
         } else {
             Label(
-                "下载全部会扫描到 Articles 列表底部，并同时更新线上文章总数。",
+                "全部文章会扫描到 Articles 列表底部，不受 100 篇限制，并同时更新线上文章总数。",
                 systemImage: "number"
             )
             .font(.caption)
@@ -197,7 +197,7 @@ struct AddCreatorsView: View {
                 HStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("每位博主下载数量").font(.headline)
-                        Text("默认保存最近 10 篇 X Article。")
+                        Text("默认最近 10 篇；超过 100 篇请选全部文章。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -208,6 +208,8 @@ struct AddCreatorsView: View {
                     }
                     .fixedSize()
                     .help("调整每位博主要下载的最近 X Article 数量，范围 1–100 篇")
+                    Button("全部文章") { mode = .fullArchive }
+                        .help("不限 100 篇，滚动到列表底部并下载该博主全部可见 X Article")
                 }
                 Label(
                     "数量只针对 Articles 专属列表中的文章，不会读取或扫描普通 Post。",
@@ -221,18 +223,36 @@ struct AddCreatorsView: View {
 
     private var articleLimitMenu: some View {
         Menu("快捷选择") {
-            Button("5 篇") { articleLimit = 5 }
+            Button("5 篇") {
+                articleLimit = 5
+                mode = .recentWindow
+            }
                 .help("将每位博主的下载数量设为最近 5 篇")
-            Button("10 篇") { articleLimit = 10 }
+            Button("10 篇") {
+                articleLimit = 10
+                mode = .recentWindow
+            }
                 .help("将每位博主的下载数量设为默认的最近 10 篇")
-            Button("20 篇") { articleLimit = 20 }
+            Button("20 篇") {
+                articleLimit = 20
+                mode = .recentWindow
+            }
                 .help("将每位博主的下载数量设为最近 20 篇")
-            Button("50 篇") { articleLimit = 50 }
+            Button("50 篇") {
+                articleLimit = 50
+                mode = .recentWindow
+            }
                 .help("将每位博主的下载数量设为最近 50 篇")
-            Button("100 篇") { articleLimit = 100 }
+            Button("100 篇") {
+                articleLimit = 100
+                mode = .recentWindow
+            }
                 .help("将每位博主的下载数量设为最近 100 篇")
+            Divider()
+            Button("全部文章") { mode = .fullArchive }
+                .help("不限 100 篇，下载 Articles 列表中的全部可见文章")
         }
-        .help("快速设置每位博主要下载的文章数量")
+        .help("快速设置每位博主要下载的文章数量，或改为下载全部")
     }
 
     private var totalCountOption: some View {
@@ -258,7 +278,7 @@ struct AddCreatorsView: View {
                      ? (resolveTotalCount
                          ? "应用会先完整扫描 x.com/<博主>/articles 更新线上总数，再取前 \(articleLimit) 个官方 Article 链接逐篇保存。X API 调用为 0。"
                          : "应用会直接打开 x.com/<博主>/articles，只读取前 \(articleLimit) 个官方 Article 链接，再逐篇保存完整排版。线上总数可稍后刷新。X API 调用为 0。")
-                     : "应用会自动滚动 x.com/<博主>/articles 直到列表底部，再逐篇保存。不会调用 Full-Archive Search，也不会扫描普通 Post，X API 调用为 0。")
+                     : "应用会自动滚动 x.com/<博主>/articles 直到列表底部，再逐篇保存全部可见文章，不受 100 篇限制。不会调用 Full-Archive Search，也不会扫描普通 Post，X API 调用为 0。")
                     .font(.callout)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

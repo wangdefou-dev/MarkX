@@ -18,7 +18,7 @@ private enum ArticleDeletionError: LocalizedError {
 final class AppViewModel: ObservableObject {
     private enum ActiveArchiveOperation {
         case download
-        case syncAll(creatorCount: Int, articleLimit: Int, resolvesTotalCount: Bool)
+        case syncAll(creatorCount: Int, articleLimit: Int?, resolvesTotalCount: Bool)
         case refreshCounts(creatorCount: Int)
     }
 
@@ -984,10 +984,10 @@ final class AppViewModel: ObservableObject {
         showingSyncAllConfiguration = true
     }
 
-    func startSyncAll(articleLimit: Int, resolveTotalCount: Bool = false) {
+    func startSyncAll(articleLimit: Int?, resolveTotalCount: Bool = false) {
         guard !isRunning else { return }
-        guard (1...100).contains(articleLimit) else {
-            errorMessage = "同步数量必须在 1 到 100 之间"
+        if let articleLimit, !(1...100).contains(articleLimit) {
+            errorMessage = "同步数量必须在 1 到 100 之间，或选择全部文章"
             return
         }
         guard archiveRoot != nil else {
@@ -1004,15 +1004,16 @@ final class AppViewModel: ObservableObject {
             errorMessage = "还没有可同步的已跟踪博主"
             return
         }
+        let downloadAll = articleLimit == nil
         activeArchiveOperation = .syncAll(
             creatorCount: handles.count,
             articleLimit: articleLimit,
-            resolvesTotalCount: resolveTotalCount
+            resolvesTotalCount: resolveTotalCount || downloadAll
         )
         beginCreatorArticleDiscovery(
             handles: handles,
             maximumArticles: articleLimit,
-            resolvesTotalCount: resolveTotalCount,
+            resolvesTotalCount: resolveTotalCount || downloadAll,
             countOnly: false
         )
     }
@@ -1045,6 +1046,7 @@ final class AppViewModel: ObservableObject {
         beginDownloadProgressSession()
 
         let isClosingInputSheet = showingAddCreators || showingSyncAllConfiguration
+        let downloadingAll = maximumArticles == nil && !countOnly
         creatorArticleDiscoveryRequests = uniqueHandles.map {
             CreatorArticleDiscoveryRequest(
                 username: $0,
@@ -1059,23 +1061,29 @@ final class AppViewModel: ObservableObject {
         progress = SyncProgress(
             stage: isRefreshingCreatorCounts
                 ? "正在刷新 \(uniqueHandles.count) 位博主的线上文章总数"
-                : isSyncingTrackedCreators
-                    ? (resolvesTotalCount
-                        ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主并获取线上总数"
-                        : "正在后台快速同步 \(uniqueHandles.count) 位已跟踪博主")
-                    : (resolvesTotalCount
-                        ? "正在打开 X Articles 专属列表并获取线上总数"
-                        : "正在打开 X Articles 专属列表并读取最近文章")
+                : downloadingAll
+                    ? (isSyncingTrackedCreators
+                        ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主的全部文章"
+                        : "正在打开 X Articles 专属列表并读取全部文章")
+                    : isSyncingTrackedCreators
+                        ? (resolvesTotalCount
+                            ? "正在后台同步 \(uniqueHandles.count) 位已跟踪博主并获取线上总数"
+                            : "正在后台快速同步 \(uniqueHandles.count) 位已跟踪博主")
+                        : (resolvesTotalCount
+                            ? "正在打开 X Articles 专属列表并获取线上总数"
+                            : "正在打开 X Articles 专属列表并读取最近文章")
         )
         statusMessage = isRefreshingCreatorCounts
             ? "正在完整扫描 Articles 列表，只更新线上总数，不下载文章；X API 调用为 0"
-            : isSyncingTrackedCreators
-                ? (resolvesTotalCount
-                    ? "后台同步已开始；先获取每位博主线上总数，再按范围处理文章；X API 调用为 0"
-                    : "后台快速同步已开始；只读取每位博主最近文章，不扫描完整历史；X API 调用为 0")
-                : (resolvesTotalCount
-                    ? "先读取完整 Articles 列表获取线上总数，再按范围下载；不扫描普通 Post，X API 调用为 0"
-                    : "只读取 Articles 列表最近文章，再逐篇下载；线上总数可稍后手动刷新；X API 调用为 0")
+            : downloadingAll
+                ? "将滚动到 Articles 列表底部，处理全部可见文章；不扫描普通 Post，X API 调用为 0"
+                : isSyncingTrackedCreators
+                    ? (resolvesTotalCount
+                        ? "后台同步已开始；先获取每位博主线上总数，再按范围处理文章；X API 调用为 0"
+                        : "后台快速同步已开始；只读取每位博主最近文章，不扫描完整历史；X API 调用为 0")
+                    : (resolvesTotalCount
+                        ? "先读取完整 Articles 列表获取线上总数，再按范围下载；不扫描普通 Post，X API 调用为 0"
+                        : "只读取 Articles 列表最近文章，再逐篇下载；线上总数可稍后手动刷新；X API 调用为 0")
         isRunning = true
         showingAddCreators = false
         showingSyncAllConfiguration = false
@@ -1183,13 +1191,13 @@ final class AppViewModel: ObservableObject {
 
         guard !discovered.isEmpty else {
             finishDownloadProgressWindow()
-            if let creatorCount = activeSyncCreatorCount,
-               let articleLimit = activeSyncArticleLimit {
+            if let creatorCount = activeSyncCreatorCount {
+                let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
                 progress.stage = "同步完成：没有发现可检查的 X Article"
                 statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
                 publishSyncResult(
                     title: "同步完成",
-                    message: "已检查 \(creatorCount) 位已跟踪博主的最近 \(articleLimit) 篇 X Article，未发现可下载文章。本次 X API 调用为 0。",
+                    message: "已检查 \(creatorCount) 位已跟踪博主的\(range) X Article，未发现可下载文章。本次 X API 调用为 0。",
                     metrics: [
                         DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
                         DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
@@ -1431,8 +1439,8 @@ final class AppViewModel: ObservableObject {
             browserCaptureSubscriptionPostIDs.removeAll()
             browserCaptureSkippedSubscriptionCount = 0
             finishDownloadProgressWindow()
-            if let creatorCount = activeSyncCreatorCount,
-               let articleLimit = activeSyncArticleLimit {
+            if let creatorCount = activeSyncCreatorCount {
+                let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
                 let checked = total + skipped
                 progress.stage = hasUnfinishedWork ? "本次同步结束，资料库仍有未完成文章" : "全部博主同步完成"
                 statusMessage = hasUnfinishedWork
@@ -1453,7 +1461,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
                         title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
+                        message: "已检查 \(creatorCount) 位博主，每位检查\(range)；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
                         metrics: metrics
                     )
                 }
@@ -2131,13 +2139,13 @@ final class AppViewModel: ObservableObject {
                 progress.skippedArticles = localHits
                 guard !requests.isEmpty else {
                     finishDownloadProgressWindow()
-                    if let creatorCount = activeSyncCreatorCount,
-                       let articleLimit = activeSyncArticleLimit {
+                    if let creatorCount = activeSyncCreatorCount {
+                        let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
                         progress.stage = "全部博主同步完成"
                         statusMessage = "同步完成：\(localHits) 篇已有完整归档，全部跳过"
                         publishSyncResult(
                             title: "全部博主已经是最新状态",
-                            message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或存储媒体。\n\n本次 X API 调用为 0。",
+                            message: "已检查 \(creatorCount) 位博主，每位检查\(range)；识别到的 \(localHits) 篇 X Article 都已经完整归档，因此全部跳过，没有重复下载或存储媒体。\n\n本次 X API 调用为 0。",
                             metrics: [
                                 DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
                                 DownloadResultMetric(id: "checked", label: "检查文章", value: "\(localHits)", systemImage: "doc.text.magnifyingglass", tone: .accent),

@@ -14,4 +14,8 @@ public enum CreatorArticleDiscoveryPolicy {
         guard let maximumArticles else { return discoveredCount }
         return min(discoveredCount, maximumArticles)
     }
+
+    public static func rangeDescription(maximumArticles: Int?) -> String {
+        maximumArticles.map { "最近 \($0) 篇" } ?? "全部可见文章"
+    }
 }

@@ -19,6 +19,7 @@ struct SyncAllCreatorsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var mode: Mode = .now
     @State private var articleLimit = 10
+    @State private var downloadAllArticles = false
     @State private var resolveTotalCount = false
     @State private var scheduleEnabled = false
     @State private var scheduleTime = Date()
@@ -78,7 +79,9 @@ struct SyncAllCreatorsView: View {
     private var immediateContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             quantityCard(limit: $articleLimit)
-            totalCountOption
+            if !downloadAllArticles {
+                totalCountOption
+            }
             VStack(alignment: .leading, spacing: 10) {
                 SyncInfoRow(
                     symbol: "person.3.fill",
@@ -189,34 +192,52 @@ struct SyncAllCreatorsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("每位博主检查的文章数量")
                     .font(.system(size: 13, weight: .semibold))
-                Text("全部 \(model.enabledCreatorCount) 位博主，预计最多检查 \(model.enabledCreatorCount * limit.wrappedValue) 篇 X Article。")
+                Text(downloadAllArticles
+                     ? "全部 \(model.enabledCreatorCount) 位博主都会扫描 Articles 列表底部，下载全部可见文章，不受 100 篇限制。"
+                     : "全部 \(model.enabledCreatorCount) 位博主，预计最多检查 \(model.enabledCreatorCount * limit.wrappedValue) 篇 X Article。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            compactLimitControl(limit: limit)
+            compactLimitControl(limit: limit, allowsDownloadAll: true)
         }
         .padding(16)
         .cardBackground()
     }
 
-    private func compactLimitControl(limit: Binding<Int>) -> some View {
+    private func compactLimitControl(limit: Binding<Int>, allowsDownloadAll: Bool = false) -> some View {
         HStack(spacing: 8) {
             Menu("快捷选择") {
                 ForEach([5, 10, 20, 50, 100], id: \.self) { value in
-                    Button("最近 \(value) 篇") { limit.wrappedValue = value }
+                    Button("最近 \(value) 篇") {
+                        if allowsDownloadAll { downloadAllArticles = false }
+                        limit.wrappedValue = value
+                    }
                         .help("将每位博主的检查范围设为最近 \(value) 篇")
                 }
+                if allowsDownloadAll {
+                    Divider()
+                    Button("全部文章") { downloadAllArticles = true }
+                        .help("完整扫描每位博主的 Articles 列表，下载全部可见文章")
+                }
             }
-            .help("快速选择每位博主的文章数量")
-            Stepper(value: limit, in: 1...100) {
-                Text("\(limit.wrappedValue) 篇")
+            .help(allowsDownloadAll
+                  ? "快速选择每位博主的文章数量，或改为全部文章"
+                  : "快速选择每位博主的文章数量")
+            if allowsDownloadAll && downloadAllArticles {
+                Text("全部")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .monospacedDigit()
                     .frame(minWidth: 48, alignment: .trailing)
+            } else {
+                Stepper(value: limit, in: 1...100) {
+                    Text("\(limit.wrappedValue) 篇")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                        .frame(minWidth: 48, alignment: .trailing)
+                }
+                .fixedSize()
+                .help("每位博主检查 1–100 篇 X Article")
             }
-            .fixedSize()
-            .help("每位博主检查 1–100 篇 X Article")
         }
     }
 
@@ -246,7 +267,9 @@ struct SyncAllCreatorsView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Text(mode == .now
-                 ? "1–100 是每位博主的文章数，不是博主数。"
+                 ? (downloadAllArticles
+                    ? "全部文章会滚动到每位博主的列表底部，不受 100 篇限制。"
+                    : "1–100 是每位博主的文章数，不是博主数。超过 100 篇请选全部文章。")
                  : "完全关机时无法执行；睡眠错过后会在唤醒时补执行。")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
@@ -259,8 +282,8 @@ struct SyncAllCreatorsView: View {
             if mode == .now {
                 Button("开始后台同步") {
                     model.startSyncAll(
-                        articleLimit: articleLimit,
-                        resolveTotalCount: resolveTotalCount
+                        articleLimit: downloadAllArticles ? nil : articleLimit,
+                        resolveTotalCount: downloadAllArticles || resolveTotalCount
                     )
                 }
                 .buttonStyle(.borderedProminent)

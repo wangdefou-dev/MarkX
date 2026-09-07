@@ -1925,6 +1925,26 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
             resolvesTotalCount: false
         ))
     }
+
+    func testUnlimitedDiscoveryKeepsEveryVisibleArticle() {
+        XCTAssertFalse(CreatorArticleDiscoveryPolicy.shouldStopAtRequestedLimit(
+            discoveredCount: 250,
+            maximumArticles: nil,
+            resolvesTotalCount: false
+        ))
+        XCTAssertEqual(
+            CreatorArticleDiscoveryPolicy.selectedCount(discoveredCount: 250, maximumArticles: nil),
+            250
+        )
+        XCTAssertEqual(
+            CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: nil),
+            "全部可见文章"
+        )
+        XCTAssertEqual(
+            CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: 20),
+            "最近 20 篇"
+        )
+    }
 }
 
 final class ExactCaptureQueuePolicyTests: XCTestCase {
