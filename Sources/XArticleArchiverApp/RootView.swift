@@ -880,7 +880,7 @@ private struct DownloadResultView: View {
             }
 
             if !notice.metrics.isEmpty {
-                Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 16) {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {
                     GridRow {
                         metricCell(id: "queued", label: "进入队列", systemImage: "tray.and.arrow.down.fill")
                         metricCell(id: "saved", label: "成功保存", systemImage: "checkmark.circle.fill")
@@ -961,9 +961,6 @@ private struct DownloadResultView: View {
 private struct DownloadResultMetricText: View {
     let metric: DownloadResultMetric
 
-    private let iconWidth: CGFloat = 18
-    private let iconToLabelSpacing: CGFloat = 7
-
     private var color: Color {
         switch metric.tone {
         case .accent: .blue
@@ -975,26 +972,24 @@ private struct DownloadResultMetricText: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .center, spacing: iconToLabelSpacing) {
-                Image(systemName: metric.systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(color)
-                    .frame(width: iconWidth, height: iconWidth, alignment: .center)
-                Text(metric.label)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: metric.systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 14, height: 14, alignment: .center)
+            Text(metric.label)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 6)
             Text(metric.value)
-                .font(.title2.monospacedDigit().weight(.semibold))
+                .font(.title3.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .padding(.leading, iconWidth + iconToLabelSpacing)
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
