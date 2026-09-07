@@ -124,38 +124,6 @@ struct RootView: View {
         let statistics = model.sidebarStatistics
         return List(selection: $model.sidebarSelection) {
             Section {
-                Button {
-                    model.presentDownloadSheet()
-                } label: {
-                    HStack(alignment: .center, spacing: 10) {
-                        Image(systemName: "square.and.arrow.down.fill")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.orange)
-                            .frame(width: 18, alignment: .center)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("开始下载文章")
-                                .fontWeight(.semibold)
-                            Text("博主主页或文章链接")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.orange.opacity(0.18))
-                    )
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 8, trailing: 10))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                .help("输入博主主页或一个及多个 X Article 链接开始下载")
-            }
-            Section {
                 if isLibraryExpanded {
                 SidebarCountRow(
                     title: "全部文章",
@@ -241,21 +209,12 @@ struct RootView: View {
             Section {
                 if isCreatorsExpanded {
                     if !model.pinnedCreators.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "pin.fill")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.orange)
-                            Text("置顶")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                            Text("\(model.pinnedCreators.count)/5")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.leading, 22)
-                        .padding(.top, 4)
-                        .padding(.bottom, 2)
+                        Text("置顶")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 22)
+                            .padding(.top, 4)
+                            .padding(.bottom, 2)
                         ForEach(model.pinnedCreators) { creator in
                             creatorSidebarRow(creator, statistics: statistics)
                         }
@@ -272,7 +231,14 @@ struct RootView: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            sidebarDownloadEntry
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 5)
+                .background(.bar)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             SidebarStatusCard(
                 isRunning: model.isRunning,
                 statusText: model.isRunning ? model.progress.stage : model.statusMessage,
@@ -287,6 +253,36 @@ struct RootView: View {
             .padding(.bottom, 8)
             .background(.bar)
         }
+    }
+
+    private var sidebarDownloadEntry: some View {
+        Button {
+            model.presentDownloadSheet()
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "square.and.arrow.down.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 18, alignment: .center)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("开始下载文章")
+                        .fontWeight(.semibold)
+                    Text("博主主页或文章链接")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.orange.opacity(0.18))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        .help("输入博主主页或一个及多个 X Article 链接开始下载")
     }
 
     @ViewBuilder
