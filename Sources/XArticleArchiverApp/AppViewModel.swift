@@ -2059,17 +2059,31 @@ final class AppViewModel: ObservableObject {
                 runningTask = nil
             }
             do {
+                var articlesByPostID: [String: ArchivedArticle] = [:]
+                for article in try await database.loadArticles() {
+                    articlesByPostID[article.sourcePostID] = article
+                }
+                var creatorsByUsername: [String: Creator] = [:]
+                for creator in try await database.loadCreators() {
+                    creatorsByUsername[creator.username.lowercased()] = creator
+                }
+
                 var requests: [BrowserCaptureRequest] = []
                 var localHits = 0
-                for link in links {
+                for (index, link) in links.enumerated() {
+                    try Task.checkCancellation()
+                    if index == 0 || (index + 1).isMultiple(of: 25) || index + 1 == links.count {
+                        progress.stage = "正在建立本地采集队列 \(index + 1)/\(links.count)"
+                        await Task.yield()
+                    }
                     if !refreshExisting,
-                       let existing = try await database.article(sourcePostID: link.postID),
+                       let existing = articlesByPostID[link.postID],
                        Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
                         localHits += 1
                         continue
                     }
 
-                    var creator = try await database.creator(username: link.username)
+                    var creator = creatorsByUsername[link.username.lowercased()]
                         ?? Creator(
                             xUserID: "browser:\(link.username.lowercased())",
                             username: link.username,
@@ -2077,19 +2091,22 @@ final class AppViewModel: ObservableObject {
                         )
                     creator.isEnabled = true
                     try await database.upsertCreator(creator)
-                    let existing = try await database.article(sourcePostID: link.postID)
+                    creatorsByUsername[creator.username.lowercased()] = creator
+                    let existing = articlesByPostID[link.postID]
                     let title = existing?.title
                         ?? preferredTitles[link.postID]
                         ?? "待读取的 X Article · \(link.postID.suffix(8))"
                     let sourcePublishedAt = XArticleURLParser.publishedAt(forPostID: link.postID)
-                    try await savePendingReferenceIfNeeded(
-                        link: link,
-                        creator: creator,
-                        title: title,
-                        publishedAt: sourcePublishedAt ?? existing?.publishedAt ?? Date(),
-                        sourceArticleID: existing?.sourceArticleID,
-                        database: database
-                    )
+                    if existing == nil {
+                        try await savePendingReferenceIfNeeded(
+                            link: link,
+                            creator: creator,
+                            title: title,
+                            publishedAt: sourcePublishedAt ?? Date(),
+                            sourceArticleID: nil,
+                            database: database
+                        )
+                    }
                     requests.append(BrowserCaptureRequest(
                         link: link,
                         creator: creator,

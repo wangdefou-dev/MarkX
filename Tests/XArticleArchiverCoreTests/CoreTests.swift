@@ -1683,6 +1683,38 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(remaining.map(\.id), [second.id])
     }
 
+    func testLooksUpOneArticleBySourcePostIDWithoutLoadingTheWholeTable() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "x-archive-lookup-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try ArchiveDatabase(url: root.appending(path: "archive.sqlite"))
+        let creator = Creator(xUserID: "u1", username: "writer", displayName: "作者")
+        try await database.upsertCreator(creator)
+
+        for index in 1...40 {
+            try await database.upsertArticle(ArchivedArticle(
+                stableSourceKey: "article-\(index)",
+                creatorID: creator.id,
+                title: "文章 \(index)",
+                authorHandle: creator.username,
+                contentType: .xArticle,
+                sourceURL: URL(string: "https://x.com/writer/status/\(index)")!,
+                sourcePostID: "\(index)",
+                publishedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                sourceChecksum: "sum-\(index)"
+            ))
+        }
+
+        let found = try await database.article(sourcePostID: "27")
+        let missing = try await database.article(sourcePostID: "missing")
+        let byHandle = try await database.creator(username: "WRITER")
+        XCTAssertEqual(found?.title, "文章 27")
+        XCTAssertEqual(found?.sourcePostID, "27")
+        XCTAssertNil(missing)
+        XCTAssertEqual(byHandle?.xUserID, "u1")
+    }
+
     func testSoftDeletingCreatorKeepsArticlesAndAllowsReenableWithSameIdentity() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "x-archive-creator-delete-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

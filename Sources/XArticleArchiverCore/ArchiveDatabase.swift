@@ -19,6 +19,7 @@ public actor ArchiveDatabase {
     nonisolated(unsafe) private var database: OpaquePointer?
     public let url: URL
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    private let iso8601Formatter = ISO8601DateFormatter()
 
     public init(url: URL) throws {
         self.url = url
@@ -64,7 +65,7 @@ public actor ArchiveDatabase {
         bind(creator.profileImageURL?.absoluteString, to: 5, in: statement)
         sqlite3_bind_int(statement, 6, creator.isProtected ? 1 : 0)
         sqlite3_bind_int(statement, 7, creator.isEnabled ? 1 : 0)
-        bind(creator.lastSyncAt.map(Self.iso8601), to: 8, in: statement)
+        bind(creator.lastSyncAt.map(iso8601), to: 8, in: statement)
         bind(creator.lastSeenPostID, to: 9, in: statement)
         bind(creator.completeness.rawValue, to: 10, in: statement)
         bind(creator.knownArticleCount, to: 11, in: statement)
@@ -76,33 +77,27 @@ public actor ArchiveDatabase {
         defer { sqlite3_finalize(statement) }
         var output: [Creator] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            guard let id = UUID(uuidString: text(statement, 0) ?? ""),
-                  let xUserID = text(statement, 1),
-                  let username = text(statement, 2),
-                  let displayName = text(statement, 3) else { continue }
-            output.append(Creator(
-                id: id,
-                xUserID: xUserID,
-                username: username,
-                displayName: displayName,
-                profileImageURL: text(statement, 4).flatMap(URL.init(string:)),
-                isProtected: sqlite3_column_int(statement, 5) != 0,
-                isEnabled: sqlite3_column_int(statement, 6) != 0,
-                lastSyncAt: text(statement, 7).flatMap(Self.parseDate),
-                lastSeenPostID: text(statement, 8),
-                completeness: CompletenessStatus(rawValue: text(statement, 9) ?? "") ?? .unknown,
-                knownArticleCount: optionalInt(statement, 10)
-            ))
+            if let creator = creator(from: statement) {
+                output.append(creator)
+            }
         }
         return output
     }
 
     public func creator(xUserID: String) throws -> Creator? {
-        try loadCreators().first { $0.xUserID == xUserID }
+        let statement = try prepare("SELECT id, x_user_id, username, display_name, profile_image_url, is_protected, is_enabled, last_sync_at, last_seen_post_id, completeness, known_article_count FROM creators WHERE x_user_id = ? LIMIT 1;")
+        defer { sqlite3_finalize(statement) }
+        bind(xUserID, to: 1, in: statement)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return creator(from: statement)
     }
 
     public func creator(username: String) throws -> Creator? {
-        try loadCreators().first { $0.username.caseInsensitiveCompare(username) == .orderedSame }
+        let statement = try prepare("SELECT id, x_user_id, username, display_name, profile_image_url, is_protected, is_enabled, last_sync_at, last_seen_post_id, completeness, known_article_count FROM creators WHERE username = ? COLLATE NOCASE LIMIT 1;")
+        defer { sqlite3_finalize(statement) }
+        bind(username, to: 1, in: statement)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return creator(from: statement)
     }
 
     /// Soft-removes a creator from the tracking list. Existing article rows
@@ -134,7 +129,7 @@ public actor ArchiveDatabase {
         bind(creator.profileImageURL?.absoluteString, to: 4, in: statement)
         sqlite3_bind_int(statement, 5, creator.isProtected ? 1 : 0)
         sqlite3_bind_int(statement, 6, creator.isEnabled ? 1 : 0)
-        bind(creator.lastSyncAt.map(Self.iso8601), to: 7, in: statement)
+        bind(creator.lastSyncAt.map(iso8601), to: 7, in: statement)
         bind(creator.lastSeenPostID, to: 8, in: statement)
         bind(creator.completeness.rawValue, to: 9, in: statement)
         bind(creator.knownArticleCount, to: 10, in: statement)
@@ -183,9 +178,9 @@ public actor ArchiveDatabase {
         bind(article.sourceURL.absoluteString, to: 7, in: statement)
         bind(article.sourcePostID, to: 8, in: statement)
         bind(article.sourceArticleID, to: 9, in: statement)
-        bind(Self.iso8601(article.publishedAt), to: 10, in: statement)
-        bind(Self.iso8601(article.archivedAt), to: 11, in: statement)
-        bind(Self.iso8601(article.lastSyncedAt), to: 12, in: statement)
+        bind(iso8601(article.publishedAt), to: 10, in: statement)
+        bind(iso8601(article.archivedAt), to: 11, in: statement)
+        bind(iso8601(article.lastSyncedAt), to: 12, in: statement)
         bind(article.sourceStatus.rawValue, to: 13, in: statement)
         bind(article.sourceChecksum, to: 14, in: statement)
         bind(article.markdownPath, to: 15, in: statement)
@@ -204,58 +199,93 @@ public actor ArchiveDatabase {
         defer { sqlite3_finalize(statement) }
         var output: [ArchivedArticle] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            guard let id = UUID(uuidString: text(statement, 0) ?? ""),
-                  let creatorID = UUID(uuidString: text(statement, 2) ?? ""),
-                  let stableKey = text(statement, 1),
-                  let title = text(statement, 3),
-                  let handle = text(statement, 4),
-                  let type = LongformContentType(rawValue: text(statement, 5) ?? ""),
-                  let sourceURLString = text(statement, 6),
-                  let sourceURL = URL(string: sourceURLString),
-                  let postID = text(statement, 7),
-                  let publishedAt = text(statement, 9).flatMap(Self.parseDate),
-                  let archivedAt = text(statement, 10).flatMap(Self.parseDate),
-                  let lastSyncedAt = text(statement, 11).flatMap(Self.parseDate),
-                  let sourceStatus = SourceStatus(rawValue: text(statement, 12) ?? ""),
-                  let checksum = text(statement, 13),
-                  let pipeline = PipelineState(rawValue: text(statement, 17) ?? "") else { continue }
-            let warningData = Data((text(statement, 18) ?? "[]").utf8)
-            let warnings = (try? JSONDecoder().decode([String].self, from: warningData)) ?? []
-            let processingLogData = Data((text(statement, 20) ?? "[]").utf8)
-            let processingLog = (try? JSONDecoder().decode([String].self, from: processingLogData)) ?? []
-            output.append(ArchivedArticle(
-                id: id,
-                stableSourceKey: stableKey,
-                creatorID: creatorID,
-                title: title,
-                authorHandle: handle,
-                contentType: type,
-                sourceURL: sourceURL,
-                sourcePostID: postID,
-                sourceArticleID: text(statement, 8),
-                publishedAt: publishedAt,
-                archivedAt: archivedAt,
-                lastSyncedAt: lastSyncedAt,
-                sourceStatus: sourceStatus,
-                sourceChecksum: checksum,
-                markdownPath: text(statement, 14),
-                imageCount: Int(sqlite3_column_int(statement, 15)),
-                videoCount: Int(sqlite3_column_int(statement, 16)),
-                pipelineState: pipeline,
-                warnings: warnings,
-                lastError: text(statement, 19),
-                processingLog: processingLog
-            ))
+            if let article = article(from: statement) {
+                output.append(article)
+            }
         }
         return output
     }
 
     public func article(stableSourceKey: String) throws -> ArchivedArticle? {
-        try loadArticles().first(where: { $0.stableSourceKey == stableSourceKey })
+        try article(matching: "stable_source_key", value: stableSourceKey)
     }
 
     public func article(sourcePostID: String) throws -> ArchivedArticle? {
-        try loadArticles().first(where: { $0.sourcePostID == sourcePostID })
+        try article(matching: "source_post_id", value: sourcePostID)
+    }
+
+    private func article(matching column: String, value: String) throws -> ArchivedArticle? {
+        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log FROM articles WHERE \(column) = ? LIMIT 1;"
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind(value, to: 1, in: statement)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return article(from: statement)
+    }
+
+    private func article(from statement: OpaquePointer?) -> ArchivedArticle? {
+        guard let id = UUID(uuidString: text(statement, 0) ?? ""),
+              let creatorID = UUID(uuidString: text(statement, 2) ?? ""),
+              let stableKey = text(statement, 1),
+              let title = text(statement, 3),
+              let handle = text(statement, 4),
+              let type = LongformContentType(rawValue: text(statement, 5) ?? ""),
+              let sourceURLString = text(statement, 6),
+              let sourceURL = URL(string: sourceURLString),
+              let postID = text(statement, 7),
+              let publishedAt = text(statement, 9).flatMap(parseDate),
+              let archivedAt = text(statement, 10).flatMap(parseDate),
+              let lastSyncedAt = text(statement, 11).flatMap(parseDate),
+              let sourceStatus = SourceStatus(rawValue: text(statement, 12) ?? ""),
+              let checksum = text(statement, 13),
+              let pipeline = PipelineState(rawValue: text(statement, 17) ?? "") else { return nil }
+        let warningData = Data((text(statement, 18) ?? "[]").utf8)
+        let warnings = (try? JSONDecoder().decode([String].self, from: warningData)) ?? []
+        let processingLogData = Data((text(statement, 20) ?? "[]").utf8)
+        let processingLog = (try? JSONDecoder().decode([String].self, from: processingLogData)) ?? []
+        return ArchivedArticle(
+            id: id,
+            stableSourceKey: stableKey,
+            creatorID: creatorID,
+            title: title,
+            authorHandle: handle,
+            contentType: type,
+            sourceURL: sourceURL,
+            sourcePostID: postID,
+            sourceArticleID: text(statement, 8),
+            publishedAt: publishedAt,
+            archivedAt: archivedAt,
+            lastSyncedAt: lastSyncedAt,
+            sourceStatus: sourceStatus,
+            sourceChecksum: checksum,
+            markdownPath: text(statement, 14),
+            imageCount: Int(sqlite3_column_int(statement, 15)),
+            videoCount: Int(sqlite3_column_int(statement, 16)),
+            pipelineState: pipeline,
+            warnings: warnings,
+            lastError: text(statement, 19),
+            processingLog: processingLog
+        )
+    }
+
+    private func creator(from statement: OpaquePointer?) -> Creator? {
+        guard let id = UUID(uuidString: text(statement, 0) ?? ""),
+              let xUserID = text(statement, 1),
+              let username = text(statement, 2),
+              let displayName = text(statement, 3) else { return nil }
+        return Creator(
+            id: id,
+            xUserID: xUserID,
+            username: username,
+            displayName: displayName,
+            profileImageURL: text(statement, 4).flatMap(URL.init(string:)),
+            isProtected: sqlite3_column_int(statement, 5) != 0,
+            isEnabled: sqlite3_column_int(statement, 6) != 0,
+            lastSyncAt: text(statement, 7).flatMap(parseDate),
+            lastSeenPostID: text(statement, 8),
+            completeness: CompletenessStatus(rawValue: text(statement, 9) ?? "") ?? .unknown,
+            knownArticleCount: optionalInt(statement, 10)
+        )
     }
 
     public func deleteArticle(id: UUID) throws {
@@ -325,6 +355,8 @@ public actor ArchiveDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_creator_id ON articles(creator_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_source_post_id ON articles(source_post_id);
+        CREATE INDEX IF NOT EXISTS idx_creators_username ON creators(username COLLATE NOCASE);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
         PRAGMA user_version=4;
         """)
@@ -396,6 +428,6 @@ public actor ArchiveDatabase {
         return String(cString: pointer)
     }
 
-    private static func iso8601(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
-    private static func parseDate(_ value: String) -> Date? { ISO8601DateFormatter().date(from: value) }
+    private func iso8601(_ date: Date) -> String { iso8601Formatter.string(from: date) }
+    private func parseDate(_ value: String) -> Date? { iso8601Formatter.date(from: value) }
 }
