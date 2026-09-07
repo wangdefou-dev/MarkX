@@ -379,8 +379,60 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         };
       };
       const belongsToQuotedCard = element => {
-        const card = element.closest('article, [data-testid="tweet"]');
-        return Boolean(card && richRoot.contains(card));
+        const card = element.closest('article, [data-testid="tweet"], [data-testid="card.wrapper"]');
+        return Boolean(
+          card &&
+          card !== articleView &&
+          card !== outerArticle &&
+          richRoot.contains(card)
+        );
+      };
+      const isVideoChromeAnchor = anchor => Boolean(
+        anchor.closest('video, audio, [data-testid="videoPlayer"], [data-testid="videoComponent"], [data-testid="previewInterstitial"]')
+      );
+      const pbsMediaURLFromNode = element => {
+        const seen = new WeakSet();
+        let remaining = 8000;
+        let found = null;
+        const visit = (value, depth) => {
+          if (found || value == null || --remaining < 0 || depth > 8) return;
+          if (typeof value === 'string') {
+            try {
+              const parsed = new URL(value, location.href);
+              if (parsed.protocol === 'https:'
+                  && parsed.hostname.toLowerCase() === 'pbs.twimg.com'
+                  && parsed.pathname.startsWith('/media/')) {
+                found = parsed.href;
+              }
+            } catch (_) {}
+            return;
+          }
+          if ((typeof value !== 'object' && typeof value !== 'function') || seen.has(value)) return;
+          seen.add(value);
+          let keys = [];
+          try { keys = Object.keys(value); } catch (_) { return; }
+          for (const key of keys.slice(0, 120)) {
+            try { visit(value[key], depth + 1); } catch (_) {}
+          }
+        };
+        let current = element;
+        for (let i = 0; i < 5 && current; i++) {
+          Object.keys(current).filter(key => key.startsWith('__react')).forEach(key => {
+            try { visit(current[key], 0); } catch (_) {}
+          });
+          current = current.parentElement;
+        }
+        return found;
+      };
+      const appendCapturedImage = (imageURL, imageID, altText) => {
+        const key = imageID || imageURL;
+        if (!imageURL || !key || capturedImageKeys.has(key)) return false;
+        capturedImageKeys.add(key);
+        blocks.push({
+          kind:'image', text:'', level:0, depth:0, styles:[], links:[],
+          imageURL, imageID:imageID || null, altText:altText || null, language:null
+        });
+        return true;
       };
       const embeddedMediaID = element => {
         const values = [
@@ -656,6 +708,23 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             .filter(image => !belongsToQuotedCard(image) && articleMediaURL(image) !== null);
           if (images.length) {
             images.forEach(appendImage);
+            if (!node.querySelector('[data-testid="ScrollSnap-SwipeableList"]')) continue;
+          }
+          const carousel = node.querySelector('[data-testid="ScrollSnap-SwipeableList"]');
+          if (carousel) {
+            const slides = [...carousel.querySelectorAll('a[href*="/media/"]')];
+            let pendingCarousel = false;
+            for (const slide of slides) {
+              const id = currentArticleMediaID(slide);
+              if (id && capturedImageKeys.has(id)) continue;
+              const img = slide.querySelector('img');
+              if (img && appendImage(img)) continue;
+              const reactURL = pbsMediaURLFromNode(slide);
+              if (reactURL && appendCapturedImage(reactURL, id, img?.getAttribute('alt'))) continue;
+              slide.scrollIntoView({inline:'center', block:'nearest'});
+              pendingCarousel = true;
+            }
+            if (pendingCarousel) return ERROR + "轮播图片还没有完整加载。";
             continue;
           }
           const code = node.querySelector('pre code, pre');
@@ -678,9 +747,46 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
           // article content and must not be reported as an unknown block.
           // A real lazy placeholder normally reserves height or has children;
           // those still fail closed until their content finishes loading.
-          if (!node.firstElementChild
-              && !(node.textContent || '').trim()
-              && node.getBoundingClientRect().height <= 0.5) {
+          const leftoverText = (node.innerText || '').trim();
+          const leftoverMedia = node.querySelector('img, video, audio, iframe, table, pre');
+          if (!node.firstElementChild && !leftoverText && node.getBoundingClientRect().height <= 0.5) {
+            continue;
+          }
+          if (!leftoverText && !leftoverMedia) continue;
+
+          const quotedHref = [...node.querySelectorAll('a[href]')]
+            .map(anchor => canonicalXContentURL(anchor.getAttribute('href')))
+            .find(href => {
+              if (!href) return false;
+              const id = href.match(/\/(?:status|article)\/(\d{1,19})(?:\/|$)/)?.[1];
+              return id && id !== pathMatch[1];
+            });
+          if (quotedHref) {
+            blocks.push({
+              kind:'embedded_post', text:quotedHref, level:0, depth:0, styles:[],
+              links:[{offset:0, length:quotedHref.length, url:quotedHref}],
+              imageURL:null, imageID:null, altText:null, language:null
+            });
+            continue;
+          }
+
+          const externalHref = [...node.querySelectorAll('a[href]')]
+            .map(anchor => absoluteURL(anchor.getAttribute('href')))
+            .find(href => {
+              if (!href) return false;
+              try {
+                const host = new URL(href).hostname.toLowerCase().replace(/^(?:www\.|mobile\.)/, '');
+                return host !== 'x.com' && host !== 'twitter.com' && host !== 't.co';
+              } catch (_) { return false; }
+            });
+          if (externalHref) {
+            const label = leftoverText.split('\n').map(line => line.trim()).find(Boolean) || externalHref;
+            const text = label.slice(0, 300);
+            blocks.push({
+              kind:'paragraph', text, level:0, depth:0, styles:[],
+              links:[{offset:0, length:text.length, url:externalHref}],
+              imageURL:null, imageID:null, altText:null, language:null
+            });
             continue;
           }
           unsupportedBlockCount += 1;
@@ -709,6 +815,18 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
               : start + Math.max(0, siblings.indexOf(node));
             listMarker = `${ordinal}.`;
           }
+        } else if ((tag === 'ul' || tag === 'ol') && node.querySelector(':scope > [data-block="true"]')) {
+          continue;
+        } else if (tag === 'figure') {
+          const figureImages = [...node.querySelectorAll('img')]
+            .filter(image => articleMediaURL(image) !== null);
+          if (figureImages.length) {
+            figureImages.forEach(appendImage);
+            continue;
+          }
+        } else if (tag === 'hr') {
+          blocks.push({kind:'divider', text:'', level:0, depth:0, styles:[], links:[], imageURL:null, imageID:null, altText:null, language:null});
+          continue;
         } else if (!inline.text) kind = 'blank_line';
         else if (tag !== 'div' && tag !== 'p') { unsupportedBlockCount += 1; continue; }
 
@@ -729,8 +847,14 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       const expectedMediaIDs = new Set(
         [...articleView.querySelectorAll('a[href*="/media/"]')]
           .filter(anchor => !belongsToQuotedCard(anchor))
-          // Article prose can contain an ordinary link to another Article's
-          // media page. Count only media owned by the post being captured.
+          .filter(anchor => !isVideoChromeAnchor(anchor))
+          .filter(anchor => {
+            const img = anchor.querySelector('img');
+            if (img) return articleMediaURL(img) !== null;
+            // Virtualized carousel slides keep their /media/ links even when
+            // the <img> has not mounted. Those still belong to the Article.
+            return Boolean(anchor.closest('[data-testid="ScrollSnap-SwipeableList"]'));
+          })
           .map(currentArticleMediaID)
           .filter(Boolean)
       );

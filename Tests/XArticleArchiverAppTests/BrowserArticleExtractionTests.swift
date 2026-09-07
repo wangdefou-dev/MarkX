@@ -86,6 +86,115 @@ final class BrowserArticleExtractionTests: XCTestCase {
         XCTAssertEqual(document.blocks[5].text, "Post unavailable")
         XCTAssertEqual(document.warnings, ["文章包含 1 条已不可用的引用内容，已按页面原位置保留占位说明"])
     }
+
+    func testDoesNotTreatVideoMediaLinksAsMissingArticleImages() async throws {
+        let postID = "2049065078843195696"
+        let html = """
+        <!doctype html>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'">
+        <script>
+          Object.defineProperty(HTMLImageElement.prototype, 'complete', {get: () => true});
+          Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {get: () => 1200});
+        </script>
+        <article>
+          <a href="/writer">测试作者</a>
+          <time datetime="2026-09-02T03:04:00.000Z"></time>
+          <div data-testid="twitterArticleReadView">
+            <h1 data-testid="twitter-article-title">正文图与视频链接</h1>
+            <div data-testid="videoPlayer">
+              <a href="/writer/status/\(postID)/media/201"></a>
+              <a href="/writer/status/\(postID)/media/202"></a>
+              <a href="/writer/status/\(postID)/media/203"></a>
+            </div>
+            <div data-testid="longformRichTextComponent">
+              <div class="longform-unstyled" data-block="true">
+                <span data-text="true">配图说明</span>
+              </div>
+              <section data-block="true">
+                <a href="/writer/status/\(postID)/media/101"><img src="https://pbs.twimg.com/media/a?format=jpg&amp;name=medium"></a>
+              </section>
+              <section data-block="true">
+                <a href="/writer/status/\(postID)/media/102"><img src="https://pbs.twimg.com/media/b?format=jpg&amp;name=medium"></a>
+              </section>
+            </div>
+          </div>
+        </article>
+        """
+
+        let payload = try await extractPayload(html: html, postID: postID)
+        XCTAssertEqual(payload.unsupportedBlockCount, 0)
+        XCTAssertEqual(payload.blocks.compactMap(\.imageID), ["101", "102"])
+        XCTAssertEqual(payload.blocks.filter { $0.kind == .image }.count, 2)
+    }
+
+    func testEmbeddedStatusCardWithoutTweetTestIDIsQuotedLink() async throws {
+        let postID = "2075260912223830183"
+        let quotedID = "2075260912223830001"
+        let html = """
+        <!doctype html>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'">
+        <article>
+          <a href="/writer">测试作者</a>
+          <time datetime="2026-09-02T03:04:00.000Z"></time>
+          <div data-testid="twitterArticleReadView">
+            <h1 data-testid="twitter-article-title">含引用推文</h1>
+            <div data-testid="longformRichTextComponent">
+              <div class="longform-unstyled" data-block="true">
+                <span data-text="true">引用前</span>
+              </div>
+              <section data-block="true">
+                <div>
+                  <a href="/quoted_writer/status/\(quotedID)">
+                    <div>quoted_writer</div>
+                    <div>被引用的普通推文</div>
+                  </a>
+                </div>
+              </section>
+              <section data-block="true"><div><div></div></div></section>
+              <div class="longform-unstyled" data-block="true">
+                <span data-text="true">引用后</span>
+              </div>
+            </div>
+          </div>
+        </article>
+        """
+
+        let payload = try await extractPayload(html: html, postID: postID)
+        XCTAssertEqual(payload.unsupportedBlockCount, 0)
+        XCTAssertEqual(payload.blocks.map(\.kind), [.paragraph, .embeddedPost, .paragraph])
+        XCTAssertEqual(
+            payload.blocks[1].text,
+            "https://x.com/quoted_writer/status/\(quotedID)"
+        )
+
+        let creator = Creator(xUserID: "writer-id", username: "writer", displayName: "测试作者")
+        let link = try XCTUnwrap(XArticleURLParser.parse("https://x.com/writer/status/\(postID)").first)
+        let document = try BrowserArticleCaptureDecoder.decode(
+            payload,
+            context: BrowserArticleCaptureContext(
+                link: link,
+                creator: creator,
+                expectedPlainText: "引用前\n引用后"
+            )
+        )
+        XCTAssertEqual(document.blocks.map(\.kind), [.paragraph, .embeddedPost, .paragraph])
+        XCTAssertEqual(document.blocks[1].text, "https://x.com/quoted_writer/status/\(quotedID)")
+    }
+
+    private func extractPayload(html: String, postID: String) async throws -> BrowserArticleCapturePayload {
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let navigation = NavigationWaiter()
+        webView.navigationDelegate = navigation
+        await navigation.load(
+            html,
+            in: webView,
+            baseURL: URL(string: "https://x.com/writer/status/\(postID)")!
+        )
+        let raw = try await webView.evaluateJavaScript(BrowserArticleExtractionScript.source)
+        let json = try XCTUnwrap(raw as? String)
+        XCTAssertFalse(json.hasPrefix("__X_CAPTURE_ERROR__:"), json)
+        return try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
+    }
 }
 
 @MainActor
