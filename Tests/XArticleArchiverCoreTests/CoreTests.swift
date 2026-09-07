@@ -1977,6 +1977,46 @@ final class ExactCaptureQueuePolicyTests: XCTestCase {
         XCTAssertFalse(ExactCaptureQueuePolicy.needsCapture(article))
     }
 
+    func testReprocessPartitionSkipsDetectedSubscriptionAndRetriesOtherAttention() {
+        let failed = makeArticle(pipelineState: .failed, lastError: "timeout")
+        let subscription = makeArticle(
+            pipelineState: .subscriptionRequired,
+            lastError: "需要订阅才能访问"
+        )
+        let waiting = makeArticle(
+            pipelineState: .discovered,
+            warnings: ["等待在应用内打开 X Article 并保存精确排版"]
+        )
+        let complete = makeArticle(markdownPath: "/tmp/ok.md", pipelineState: .committed)
+        let leftoverError = makeArticle(
+            markdownPath: "/tmp/old.md",
+            pipelineState: .committed,
+            lastError: "旧错误"
+        )
+
+        let partition = ExactCaptureQueuePolicy.partitionNeedsAttentionForReprocess([
+            failed, subscription, waiting, complete, leftoverError
+        ])
+
+        XCTAssertEqual(partition.retryable.map(\.id), [failed.id, leftoverError.id])
+        XCTAssertEqual(partition.subscriptionRequired.map(\.id), [subscription.id])
+        XCTAssertEqual(partition.skippedSubscriptionCount, 1)
+    }
+
+    func testReprocessPartitionWhenEveryAttentionArticleNeedsSubscription() {
+        let first = makeArticle(pipelineState: .subscriptionRequired, lastError: "订阅")
+        let second = makeArticle(pipelineState: .subscriptionRequired, lastError: "订阅")
+        let waiting = makeArticle(pipelineState: .discovered)
+
+        let partition = ExactCaptureQueuePolicy.partitionNeedsAttentionForReprocess([
+            first, second, waiting
+        ])
+
+        XCTAssertTrue(partition.retryable.isEmpty)
+        XCTAssertEqual(partition.subscriptionRequired.map(\.id), [first.id, second.id])
+        XCTAssertEqual(partition.skippedSubscriptionCount, 2)
+    }
+
     func testDismissalSurvivesDatabaseReload() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "x-exact-capture-dismiss-\(UUID().uuidString)")

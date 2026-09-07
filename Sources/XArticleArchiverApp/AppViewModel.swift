@@ -111,6 +111,7 @@ final class AppViewModel: ObservableObject {
     private var browserCaptureSavedPostIDs = Set<String>()
     private var browserCaptureFailurePostIDs = Set<String>()
     private var browserCaptureSubscriptionPostIDs = Set<String>()
+    private var browserCaptureSkippedSubscriptionCount = 0
     private var browserCaptureFailureDetails: [String] = []
     private var discoveredCreatorArticles: [CreatorArticleListItem] = []
     private var browserCaptureStopRequested = false
@@ -1347,24 +1348,7 @@ final class AppViewModel: ObservableObject {
 
     func resumePendingBrowserCaptures() {
         guard !isRunning else { return }
-        let pending = pendingExactCaptureArticles
-        let requests = pending.compactMap { article -> BrowserCaptureRequest? in
-            guard let link = XArticleURLParser.parse(article.sourceURL.absoluteString).first else { return nil }
-            let creator = creators.first(where: { $0.id == article.creatorID })
-                ?? Creator(
-                    id: article.creatorID,
-                    xUserID: "browser:\(article.authorHandle.lowercased())",
-                    username: article.authorHandle,
-                    displayName: "@\(article.authorHandle)"
-                )
-            return BrowserCaptureRequest(
-                link: link,
-                creator: creator,
-                displayTitle: article.title,
-                publishedAt: article.publishedAt,
-                sourceArticleID: article.sourceArticleID
-            )
-        }
+        let requests = browserCaptureRequests(from: pendingExactCaptureArticles)
         guard !requests.isEmpty else {
             statusMessage = "没有待完成的精确排版采集"
             return
@@ -1372,6 +1356,27 @@ final class AppViewModel: ObservableObject {
         activeArchiveOperation = .download
         beginDownloadProgressSession()
         beginBrowserCapture(requests)
+    }
+
+    func reprocessNeedsAttentionArticles() {
+        guard !isRunning else { return }
+        let partition = ExactCaptureQueuePolicy.partitionNeedsAttentionForReprocess(articles)
+        let requests = browserCaptureRequests(from: partition.retryable)
+        let skippedSubscription = partition.skippedSubscriptionCount
+        guard !requests.isEmpty else {
+            if skippedSubscription == 0 {
+                statusMessage = "没有需要重新处理的文章"
+                return
+            }
+            presentSkippedSubscriptionNotice(count: skippedSubscription)
+            return
+        }
+        activeArchiveOperation = .download
+        beginDownloadProgressSession()
+        if skippedSubscription > 0 {
+            statusMessage = "已跳过 \(skippedSubscription) 篇需订阅文章，正在重新处理其余 \(requests.count) 篇"
+        }
+        beginBrowserCapture(requests, skippedSubscriptionCount: skippedSubscription)
     }
 
     func advanceBrowserCapture() {
@@ -1392,8 +1397,9 @@ final class AppViewModel: ObservableObject {
         } else {
             let total = browserCaptureRequests.count
             let completed = browserCaptureSavedPostIDs.count
-            let subscriptionRequired = browserCaptureSubscriptionPostIDs.count
-            let failed = max(0, browserCaptureFailurePostIDs.count - subscriptionRequired)
+            let skippedSubscription = browserCaptureSkippedSubscriptionCount
+            let subscriptionRequired = browserCaptureSubscriptionPostIDs.count + skippedSubscription
+            let failed = max(0, browserCaptureFailurePostIDs.count - browserCaptureSubscriptionPostIDs.count)
             let accountedPostIDs = browserCaptureSavedPostIDs.union(browserCaptureFailurePostIDs)
             let unaccounted = browserCaptureRequests.lazy.filter {
                 !accountedPostIDs.contains($0.link.postID)
@@ -1415,11 +1421,15 @@ final class AppViewModel: ObservableObject {
             let unaccountedNote = unaccounted == 0
                 ? ""
                 : "\n\n另有 \(unaccounted) 篇没有得到已保存或明确失败结果，系统未把它们计为完成。"
+            let skippedSubscriptionNote = skippedSubscription == 0
+                ? ""
+                : "\n\n重新处理时已跳过 \(skippedSubscription) 篇先前确认需要订阅才能访问的文章。"
             showingBrowserCapture = false
             browserCaptureRequests = []
             browserCaptureIndex = 0
             browserCaptureSavedPostIDs.removeAll()
             browserCaptureSubscriptionPostIDs.removeAll()
+            browserCaptureSkippedSubscriptionCount = 0
             finishDownloadProgressWindow()
             if let creatorCount = activeSyncCreatorCount,
                let articleLimit = activeSyncArticleLimit {
@@ -1443,7 +1453,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.publishSyncResult(
                         title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(outstandingNote)",
+                        message: "已检查 \(creatorCount) 位博主，每位最多检查最近 \(articleLimit) 篇；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
                         metrics: metrics
                     )
                 }
@@ -1466,7 +1476,7 @@ final class AppViewModel: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(220))
                     self?.downloadResultNotice = DownloadResultNotice(
                         title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(outstandingNote)",
+                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
                         metrics: metrics
                     )
                 }
@@ -1532,6 +1542,7 @@ final class AppViewModel: ObservableObject {
         showingBrowserCapture = false
         browserCaptureRequests = []
         browserCaptureIndex = 0
+        browserCaptureSkippedSubscriptionCount = 0
         finishDownloadProgressWindow()
         statusMessage = isSyncingTrackedCreators
             ? "已停止同步；已完成归档保留，未完成任务可继续"
@@ -2201,7 +2212,8 @@ final class AppViewModel: ObservableObject {
 
     private func beginBrowserCapture(
         _ requests: [BrowserCaptureRequest],
-        skippedCount: Int = 0
+        skippedCount: Int = 0,
+        skippedSubscriptionCount: Int = 0
     ) {
         browserCaptureStopRequested = false
         var seen = Set<String>()
@@ -2210,6 +2222,7 @@ final class AppViewModel: ObservableObject {
         browserCaptureSavedPostIDs.removeAll()
         browserCaptureFailurePostIDs.removeAll()
         browserCaptureSubscriptionPostIDs.removeAll()
+        browserCaptureSkippedSubscriptionCount = skippedSubscriptionCount
         browserCaptureFailureDetails.removeAll()
         progress.skippedArticles = skippedCount
         progress.completedArticles = 0
@@ -2220,6 +2233,44 @@ final class AppViewModel: ObservableObject {
         browserCaptureIndex = 0
         showingBrowserCapture = !browserCaptureRequests.isEmpty
         presentDownloadProgressWindowIfAllowed()
+    }
+
+    private func browserCaptureRequests(from articles: [ArchivedArticle]) -> [BrowserCaptureRequest] {
+        articles.compactMap { article in
+            guard let link = XArticleURLParser.parse(article.sourceURL.absoluteString).first else { return nil }
+            let creator = creators.first(where: { $0.id == article.creatorID })
+                ?? Creator(
+                    id: article.creatorID,
+                    xUserID: "browser:\(article.authorHandle.lowercased())",
+                    username: article.authorHandle,
+                    displayName: "@\(article.authorHandle)"
+                )
+            return BrowserCaptureRequest(
+                link: link,
+                creator: creator,
+                displayTitle: article.title,
+                publishedAt: article.publishedAt,
+                sourceArticleID: article.sourceArticleID
+            )
+        }
+    }
+
+    private func presentSkippedSubscriptionNotice(count: Int) {
+        statusMessage = "有 \(count) 篇文章需要订阅才能访问，本次已跳过"
+        downloadResultNotice = DownloadResultNotice(
+            title: "有 \(count) 篇需要订阅才能访问",
+            message: "「需要处理」里有 \(count) 篇已经确认需要订阅才能访问，本次重新处理已直接跳过，不会再次打开页面。订阅对应博主后，可在文章详情中单独重新处理。",
+            metrics: [
+                DownloadResultMetric(id: "queued", label: "进入队列", value: "0", systemImage: "tray.and.arrow.down.fill", tone: .accent),
+                DownloadResultMetric(id: "saved", label: "成功保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive),
+                DownloadResultMetric(id: "skipped", label: "已跳过", value: "0", systemImage: "forward.end.fill", tone: .neutral),
+                DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(count)", systemImage: "lock.fill", tone: .warning),
+                DownloadResultMetric(id: "failed", label: "失败", value: "0", systemImage: "xmark.circle.fill", tone: .neutral),
+                DownloadResultMetric(id: "images", label: "图片", value: "0", systemImage: "photo.fill", tone: .accent),
+                DownloadResultMetric(id: "videos", label: "视频", value: "0", systemImage: "video.fill", tone: .accent),
+                DownloadResultMetric(id: "pending", label: "待处理", value: "\(count)", systemImage: "clock.arrow.circlepath", tone: .warning)
+            ]
+        )
     }
 
     private func reactivateExactCaptureTasks(for requests: [BrowserCaptureRequest]) {

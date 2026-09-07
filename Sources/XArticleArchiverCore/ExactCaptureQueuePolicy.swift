@@ -19,6 +19,37 @@ public enum ExactCaptureQueuePolicy {
         }
     }
 
+    public struct NeedsAttentionReprocessPartition: Equatable, Sendable {
+        public let retryable: [ArchivedArticle]
+        public let subscriptionRequired: [ArchivedArticle]
+
+        public var skippedSubscriptionCount: Int { subscriptionRequired.count }
+    }
+
+    /// Splits「需要处理」rows for a bulk reprocess.
+    ///
+    /// Articles already marked `.subscriptionRequired` stay in the library but
+    /// are not opened again; only failures and leftover errors go back into the
+    /// capture queue. A single-article restart still recaptures a paywalled
+    /// article, because the user may have subscribed since the last attempt.
+    public static func partitionNeedsAttentionForReprocess(
+        _ articles: [ArchivedArticle]
+    ) -> NeedsAttentionReprocessPartition {
+        var retryable: [ArchivedArticle] = []
+        var subscriptionRequired: [ArchivedArticle] = []
+        for article in articles where ArchiveSidebarStatistics.needsAttention(article) {
+            if article.pipelineState == .subscriptionRequired {
+                subscriptionRequired.append(article)
+            } else {
+                retryable.append(article)
+            }
+        }
+        return NeedsAttentionReprocessPartition(
+            retryable: retryable,
+            subscriptionRequired: subscriptionRequired
+        )
+    }
+
     /// Returns the archived record that should remain after deleting only the
     /// task. `nil` means this is merely an unfinished placeholder and its
     /// database row can be removed safely.

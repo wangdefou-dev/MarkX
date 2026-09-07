@@ -127,7 +127,11 @@ struct RootView: View {
                 Button {
                     model.presentDownloadSheet()
                 } label: {
-                    Label {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "square.and.arrow.down.fill")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .frame(width: 18, alignment: .center)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("开始下载文章")
                                 .fontWeight(.semibold)
@@ -135,12 +139,19 @@ struct RootView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    } icon: {
-                        Image(systemName: "square.and.arrow.down.fill")
-                            .foregroundStyle(.tint)
+                        Spacer(minLength: 0)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.orange.opacity(0.18))
+                    )
                 }
                 .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 8, trailing: 10))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
                 .disabled(model.isRunning || model.hasActiveDownloadProgress)
                 .help("输入博主主页或一个及多个 X Article 链接开始下载")
             }
@@ -210,11 +221,11 @@ struct RootView: View {
                 .tag(AppViewModel.SidebarSelection.failed)
                 .contextMenu {
                     Button {
-                        model.resumePendingBrowserCaptures()
+                        model.reprocessNeedsAttentionArticles()
                     } label: {
                         Label("重新处理", systemImage: "arrow.clockwise")
                     }
-                    .disabled(model.isRunning || model.hasActiveDownloadProgress || model.pendingExactCaptureCount == 0)
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress || statistics.needsAttentionArticleCount == 0)
                     Divider()
                     Button(role: .destructive) {
                         model.requestDeleteAllExactCaptureTasks()
@@ -856,15 +867,19 @@ private struct DownloadResultView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
                 Image(systemName: statusImage)
-                    .font(.title3.weight(.semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(statusColor)
-                    .frame(width: 34, height: 34)
-                    .background(statusColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 4) {
+                    .frame(width: 36, height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(statusColor.opacity(0.12))
+                    )
+                VStack(alignment: .leading, spacing: 3) {
                     Text(notice.title)
-                        .font(.headline.weight(.bold))
+                        .font(.headline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(hasDanger
                         ? "任务未完全完成，已保存的内容仍然保留"
                         : hasWarning
@@ -872,21 +887,22 @@ private struct DownloadResultView: View {
                         : "任务结果已整理完成")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if !notice.metrics.isEmpty {
-                VStack(spacing: 4) {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
                     ForEach(Array(metricRows.enumerated()), id: \.offset) { _, row in
-                        HStack(spacing: 8) {
+                        GridRow {
                             ForEach(row) { metric in
                                 DownloadResultMetricText(metric: metric)
                             }
                         }
                     }
                 }
-                .padding(.top, 12)
+                .padding(.top, 14)
             }
 
             Divider()
@@ -930,7 +946,14 @@ private struct DownloadResultView: View {
             ],
             [
                 displayMetric(id: "images", label: "图片", systemImage: "photo.fill"),
-                displayMetric(id: "videos", label: "视频", systemImage: "video.fill")
+                displayMetric(id: "videos", label: "视频", systemImage: "video.fill"),
+                DownloadResultMetric(
+                    id: "media-spacer",
+                    label: " ",
+                    value: " ",
+                    systemImage: "",
+                    tone: .neutral
+                )
             ]
         ]
     }
@@ -966,6 +989,13 @@ private struct DownloadResultView: View {
 private struct DownloadResultMetricText: View {
     let metric: DownloadResultMetric
 
+    private let iconWidth: CGFloat = 12
+    private let iconToLabelSpacing: CGFloat = 5
+
+    private var isSpacer: Bool {
+        metric.id.hasSuffix("-spacer")
+    }
+
     private var color: Color {
         switch metric.tone {
         case .accent: .blue
@@ -977,20 +1007,32 @@ private struct DownloadResultMetricText: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: metric.systemImage)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(color)
-            Text(metric.label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(metric.value)
-                .font(.headline.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+        Group {
+            if isSpacer {
+                Color.clear
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .center, spacing: iconToLabelSpacing) {
+                        Image(systemName: metric.systemImage)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(color)
+                            .frame(width: iconWidth, height: iconWidth, alignment: .center)
+                        Text(metric.label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(metric.value)
+                        .font(.title3.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.leading, iconWidth + iconToLabelSpacing)
+                }
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
+        .accessibilityHidden(isSpacer)
     }
 }
 
