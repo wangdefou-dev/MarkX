@@ -19,13 +19,26 @@ final class DownloadProgressWindowDelegate: NSObject, NSWindowDelegate {
 struct DownloadProgressRootView: View {
     @EnvironmentObject private var model: AppViewModel
 
+    private enum Content: Hashable {
+        case discovery
+        case capture
+        case switching
+    }
+
+    private var content: Content {
+        if model.showingCreatorArticleDiscovery { return .discovery }
+        if model.showingBrowserCapture { return .capture }
+        return .switching
+    }
+
     var body: some View {
         Group {
-            if model.showingCreatorArticleDiscovery {
+            switch content {
+            case .discovery:
                 BrowserCreatorArticleDiscoveryView()
-            } else if model.showingBrowserCapture {
+            case .capture:
                 BrowserArticleCaptureView()
-            } else {
+            case .switching:
                 ContentUnavailableView(
                     "下载阶段切换中",
                     systemImage: "arrow.triangle.2.circlepath",
@@ -34,6 +47,7 @@ struct DownloadProgressRootView: View {
                 .frame(minWidth: 760, minHeight: 590)
             }
         }
+        .id(content)
         .environmentObject(model)
     }
 }

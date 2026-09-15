@@ -429,11 +429,14 @@ final class AppViewModel: ObservableObject {
             // unchanged origin would make the window visibly drift off-center.
             hostingController.sizingOptions = []
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "MarkX 下载进度"
+            window.title = MarkXWindowPolicy.progressWindowTitle
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 860, height: 680))
             window.minSize = NSSize(width: 760, height: 590)
             window.isReleasedWhenClosed = false
+            window.isRestorable = false
+            window.tabbingMode = .disallowed
+            window.identifier = NSUserInterfaceItemIdentifier("ai.defou.xarticlearchiver.download-progress")
             let delegate = DownloadProgressWindowDelegate(model: self)
             window.delegate = delegate
             downloadProgressWindowDelegate = delegate
@@ -450,6 +453,8 @@ final class AppViewModel: ObservableObject {
         progressWindow.deminiaturize(nil)
         progressWindow.makeKeyAndOrderFront(nil)
         isDownloadProgressWindowVisible = true
+        MarkXWindowPolicy.enforceSingleMainWindow()
+        MarkXWindowPolicy.closeDuplicateProgressWindows(keeping: progressWindow)
     }
 
     private func resolveDownloadProgressAnchorWindow(excluding progressWindow: NSWindow?) -> NSWindow? {
@@ -459,6 +464,10 @@ final class AppViewModel: ObservableObject {
                   rootWindow !== progressWindow,
                   rootWindow.styleMask.contains(.titled) else { continue }
             return rootWindow
+        }
+
+        if let mainLibrary = MarkXWindowPolicy.mainLibraryWindow(excluding: progressWindow) {
+            return mainLibrary
         }
 
         return NSApp.windows.first { window in
@@ -1095,12 +1104,10 @@ final class AppViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(220))
                 guard let self, self.isRunning,
                       !self.creatorArticleDiscoveryRequests.isEmpty else { return }
-                self.showingCreatorArticleDiscovery = true
-                self.presentDownloadProgressWindowIfAllowed()
+                self.beginCreatorArticleDiscoveryPresentation()
             }
         } else {
-            showingCreatorArticleDiscovery = true
-            presentDownloadProgressWindowIfAllowed()
+            beginCreatorArticleDiscoveryPresentation()
         }
     }
 
@@ -2239,7 +2246,14 @@ final class AppViewModel: ObservableObject {
         progress.failedArticles = 0
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
+        showingCreatorArticleDiscovery = false
         showingBrowserCapture = !browserCaptureRequests.isEmpty
+        presentDownloadProgressWindowIfAllowed()
+    }
+
+    private func beginCreatorArticleDiscoveryPresentation() {
+        showingBrowserCapture = false
+        showingCreatorArticleDiscovery = true
         presentDownloadProgressWindowIfAllowed()
     }
 

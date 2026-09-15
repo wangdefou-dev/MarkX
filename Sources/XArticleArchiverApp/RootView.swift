@@ -34,6 +34,10 @@ struct RootView: View {
         }
         .toolbar { toolbar }
         .onOpenURL { model.handleOpenURL($0) }
+        .handlesExternalEvents(
+            preferring: MarkXWindowPolicy.externalEventKeys,
+            allowing: MarkXWindowPolicy.externalEventKeys
+        )
         .sheet(isPresented: $model.showingAddCreators) {
             AddCreatorsView()
                 .environmentObject(model)
