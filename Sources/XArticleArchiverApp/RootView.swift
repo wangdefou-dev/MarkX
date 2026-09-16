@@ -159,12 +159,12 @@ struct RootView: View {
                 .help("按 X 原始发布时间显示今天发布的文章")
 
                 SidebarCountRow(
-                    title: "商业内容",
+                    title: "商单内容",
                     systemImage: "tag.fill",
                     count: statistics.commercialArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.commercial)
-                .help("显示带有 X 官方 Paid partnership 付费合作标记的文章")
+                .help("显示带有 X 官方 Paid partnership 标记的商单内容")
 
                 SidebarCountRow(
                     title: "等待继续",
@@ -585,9 +585,9 @@ struct RootView: View {
                             : article.pipelineState == .subscriptionRequired ? .purple : .orange
                     )
                     if article.isPaidPartnership {
-                        StatusPill("商业内容", color: .orange)
-                            .help("X 官方 Paid partnership 付费合作标记")
-                            .accessibilityLabel("商业内容，X 官方付费合作标记")
+                        StatusPill("商单内容", color: .orange)
+                            .help("X 官方 Paid partnership 商单内容标记")
+                            .accessibilityLabel("商单内容，X 官方付费合作标记")
                     }
                     StatusPill("\(article.imageCount) 张图片", color: .blue)
                     if article.videoCount > 0 {
@@ -800,7 +800,7 @@ struct RootView: View {
         switch model.sidebarSelection {
         case .all, .none: "全部文章"
         case .today: "今日推文"
-        case .commercial: "商业内容"
+        case .commercial: "商单内容"
         case .pending: "等待继续"
         case .failed: "需要处理"
         case .creator(let id): model.creators.first(where: { $0.id == id })?.displayName ?? "博主"
@@ -810,7 +810,7 @@ struct RootView: View {
     private var emptyFilterTitle: String {
         switch model.sidebarSelection {
         case .today: "今天还没有新文章"
-        case .commercial: "还没有商业内容"
+        case .commercial: "还没有商单内容"
         case .pending: "没有等待继续的文章"
         case .failed: "没有需要处理的文章"
         case .creator: "这位博主还没有归档文章"
@@ -834,7 +834,7 @@ struct RootView: View {
         case .today:
             "“今日推文”只显示 X 原始发布时间为今天的文章。"
         case .commercial:
-            "这里只列出带有 X 官方 Paid partnership 标记的文章。重新处理已归档文章后，标记会补齐。"
+            "这里只列出带有 X 官方 Paid partnership 标记的商单内容。重新处理已归档文章后，标记会补齐。"
         case .pending:
             "没有尚未完成的采集任务。"
         case .failed:
@@ -1962,14 +1962,14 @@ private struct SetupStatusRow: View {
 
 private struct CommercialContentBadge: View {
     var body: some View {
-        Text("商业内容")
+        Text("商单内容")
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(Color.orange.opacity(0.13), in: Capsule())
             .foregroundStyle(.orange)
             .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("商业内容，X 官方付费合作标记")
+            .accessibilityLabel("商单内容，X 官方付费合作标记")
     }
 }
 
