@@ -49,6 +49,13 @@ public actor ArchivePipeline {
         let existing = try await database.article(stableSourceKey: stableKey)
         if let existing, existing.sourceChecksum == sourceChecksum, existing.pipelineState == .committed,
            let path = existing.markdownPath, FileManager.default.fileExists(atPath: path) {
+            let isPaid = sourceDocument.isPaidPartnership == true
+            if existing.isPaidPartnership != isPaid {
+                var updated = existing
+                updated.isPaidPartnership = isPaid
+                try await database.upsertArticle(updated)
+                return updated
+            }
             return existing
         }
 
@@ -70,10 +77,14 @@ public actor ArchivePipeline {
             videoCount: document.videos?.count ?? 0,
             pipelineState: .parsed,
             warnings: document.warnings,
-            processingLog: existing?.processingLog ?? []
+            processingLog: existing?.processingLog ?? [],
+            isPaidPartnership: document.isPaidPartnership == true
         )
         record.lastError = nil
         record.appendProcessingLog("开始处理文章：\(document.title)")
+        if record.isPaidPartnership {
+            record.appendProcessingLog("已识别 X 官方付费合作（Paid partnership）标记")
+        }
         try await database.upsertArticle(record)
 
         let internalRoot = root.appending(path: ".x-article-archiver", directoryHint: .isDirectory)

@@ -145,8 +145,8 @@ public actor ArchiveDatabase {
         let sql = """
         INSERT INTO articles
           (id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id,
-           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(stable_source_key) DO UPDATE SET
           creator_id=excluded.creator_id,
           title=excluded.title,
@@ -165,7 +165,8 @@ public actor ArchiveDatabase {
           pipeline_state=excluded.pipeline_state,
           warnings=excluded.warnings,
           last_error=excluded.last_error,
-          processing_log=excluded.processing_log;
+          processing_log=excluded.processing_log,
+          is_paid_partnership=excluded.is_paid_partnership;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -190,11 +191,12 @@ public actor ArchiveDatabase {
         bind(warnings, to: 19, in: statement)
         bind(article.lastError, to: 20, in: statement)
         bind(processingLog, to: 21, in: statement)
+        sqlite3_bind_int(statement, 22, article.isPaidPartnership ? 1 : 0)
         try step(statement)
     }
 
     public func loadArticles() throws -> [ArchivedArticle] {
-        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log FROM articles ORDER BY published_at DESC;"
+        let sql = "SELECT \(Self.articleSelectColumns) FROM articles ORDER BY published_at DESC;"
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
         var output: [ArchivedArticle] = []
@@ -215,7 +217,7 @@ public actor ArchiveDatabase {
     }
 
     private func article(matching column: String, value: String) throws -> ArchivedArticle? {
-        let sql = "SELECT id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log FROM articles WHERE \(column) = ? LIMIT 1;"
+        let sql = "SELECT \(Self.articleSelectColumns) FROM articles WHERE \(column) = ? LIMIT 1;"
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
         bind(value, to: 1, in: statement)
@@ -264,7 +266,8 @@ public actor ArchiveDatabase {
             pipelineState: pipeline,
             warnings: warnings,
             lastError: text(statement, 19),
-            processingLog: processingLog
+            processingLog: processingLog,
+            isPaidPartnership: sqlite3_column_int(statement, 21) != 0
         )
     }
 
@@ -351,6 +354,7 @@ public actor ArchiveDatabase {
           warnings TEXT NOT NULL DEFAULT '[]',
           last_error TEXT,
           processing_log TEXT NOT NULL DEFAULT '[]',
+          is_paid_partnership INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (creator_id) REFERENCES creators(id)
         );
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
@@ -358,7 +362,7 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_articles_source_post_id ON articles(source_post_id);
         CREATE INDEX IF NOT EXISTS idx_creators_username ON creators(username COLLATE NOCASE);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
-        PRAGMA user_version=4;
+        PRAGMA user_version=5;
         """)
         if !columnExists(on: database, table: "articles", column: "video_count") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
@@ -369,8 +373,13 @@ public actor ArchiveDatabase {
         if !columnExists(on: database, table: "creators", column: "known_article_count") {
             try execute(on: database, sql: "ALTER TABLE creators ADD COLUMN known_article_count INTEGER;")
         }
-        try execute(on: database, sql: "PRAGMA user_version=4;")
+        if !columnExists(on: database, table: "articles", column: "is_paid_partnership") {
+            try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN is_paid_partnership INTEGER NOT NULL DEFAULT 0;")
+        }
+        try execute(on: database, sql: "PRAGMA user_version=5;")
     }
+
+    private static let articleSelectColumns = "id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership"
 
     private static func columnExists(on database: OpaquePointer?, table: String, column: String) -> Bool {
         var statement: OpaquePointer?

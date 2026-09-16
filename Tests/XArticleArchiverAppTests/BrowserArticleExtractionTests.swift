@@ -181,6 +181,65 @@ final class BrowserArticleExtractionTests: XCTestCase {
         XCTAssertEqual(document.blocks[1].text, "https://x.com/quoted_writer/status/\(quotedID)")
     }
 
+    func testExtractsPaidPartnershipFromArticleChrome() async throws {
+        let postID = "2049065078843195696"
+        let html = """
+        <!doctype html>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'">
+        <article>
+          <a href="/writer">测试作者</a>
+          <div data-testid="paidPartnership">Paid partnership</div>
+          <time datetime="2026-09-02T03:04:00.000Z"></time>
+          <div data-testid="twitterArticleReadView">
+            <h1 data-testid="twitter-article-title">官方付费合作</h1>
+            <div data-testid="longformRichTextComponent">
+              <div class="longform-unstyled" data-block="true">
+                <span data-text="true">第一段</span>
+              </div>
+            </div>
+          </div>
+        </article>
+        """
+
+        let payload = try await extractPayload(html: html, postID: postID)
+        XCTAssertTrue(payload.isPaidPartnership)
+        XCTAssertTrue((payload.disclosureChromeText ?? "").localizedCaseInsensitiveContains("Paid partnership"))
+        XCTAssertTrue((payload.disclosureTestIDs ?? []).contains("paidPartnership"))
+        XCTAssertFalse((payload.disclosureChromeText ?? "").contains("第一段"))
+
+        let creator = Creator(xUserID: "writer-id", username: "writer", displayName: "测试作者")
+        let link = try XCTUnwrap(XArticleURLParser.parse("https://x.com/writer/status/\(postID)").first)
+        let document = try BrowserArticleCaptureDecoder.decode(
+            payload,
+            context: BrowserArticleCaptureContext(link: link, creator: creator)
+        )
+        XCTAssertEqual(document.isPaidPartnership, true)
+    }
+
+    func testDoesNotTreatBodyMentionsAsPaidPartnership() async throws {
+        let postID = "2049065078843195696"
+        let html = """
+        <!doctype html>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'">
+        <article>
+          <a href="/writer">测试作者</a>
+          <time datetime="2026-09-02T03:04:00.000Z"></time>
+          <div data-testid="twitterArticleReadView">
+            <h1 data-testid="twitter-article-title">政策说明</h1>
+            <div data-testid="longformRichTextComponent">
+              <div class="longform-unstyled" data-block="true">
+                <span data-text="true">这篇文章讲解 Paid partnership 政策和付费合作开关。</span>
+              </div>
+            </div>
+          </div>
+        </article>
+        """
+
+        let payload = try await extractPayload(html: html, postID: postID)
+        XCTAssertFalse(payload.isPaidPartnership)
+        XCTAssertFalse((payload.disclosureChromeText ?? "").localizedCaseInsensitiveContains("Paid partnership"))
+    }
+
     private func extractPayload(html: String, postID: String) async throws -> BrowserArticleCapturePayload {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         let navigation = NavigationWaiter()

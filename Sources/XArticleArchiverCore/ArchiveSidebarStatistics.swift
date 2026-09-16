@@ -2,6 +2,7 @@ import Foundation
 
 public struct ArchiveSidebarStatistics: Equatable, Sendable {
     public let allArticleCount: Int
+    public let commercialArticleCount: Int
     public let waitingArticleCount: Int
     public let needsAttentionArticleCount: Int
 
@@ -15,6 +16,7 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
 
     public init(articles: [ArchivedArticle]) {
         allArticleCount = articles.count
+        commercialArticleCount = articles.lazy.filter(Self.isCommercialContent).count
         waitingArticleCount = articles.lazy.filter(Self.isWaiting).count
         needsAttentionArticleCount = articles.lazy.filter(Self.needsAttention).count
 
@@ -48,6 +50,10 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
         calendar: Calendar = .autoupdatingCurrent
     ) -> Bool {
         calendar.isDate(date, inSameDayAs: now)
+    }
+
+    public static func isCommercialContent(_ article: ArchivedArticle) -> Bool {
+        article.isPaidPartnership
     }
 
     public static func isProcessing(_ article: ArchivedArticle) -> Bool {

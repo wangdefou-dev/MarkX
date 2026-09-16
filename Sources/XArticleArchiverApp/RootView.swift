@@ -159,6 +159,14 @@ struct RootView: View {
                 .help("按 X 原始发布时间显示今天发布的文章")
 
                 SidebarCountRow(
+                    title: "商业内容",
+                    systemImage: "tag.fill",
+                    count: statistics.commercialArticleCount
+                )
+                .tag(AppViewModel.SidebarSelection.commercial)
+                .help("显示带有 X 官方 Paid partnership 付费合作标记的文章")
+
+                SidebarCountRow(
                     title: "等待继续",
                     systemImage: "clock.arrow.circlepath",
                     count: statistics.waitingArticleCount
@@ -442,7 +450,7 @@ struct RootView: View {
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
-                } else {
+                } else if model.articles.isEmpty {
                     ContentUnavailableView {
                         Label("还没有归档 X Article", systemImage: "tray")
                     } description: {
@@ -453,6 +461,12 @@ struct RootView: View {
                             .help("输入博主主页或 X Article 链接开始下载")
                         Button("生成体验样例") { model.installDemo() }
                             .help("在本地归档目录生成一篇可预览的演示文章")
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label(emptyFilterTitle, systemImage: emptyFilterIcon)
+                    } description: {
+                        Text(emptyFilterDescription)
                     }
                 }
             }
@@ -570,6 +584,11 @@ struct RootView: View {
                             ? .green
                             : article.pipelineState == .subscriptionRequired ? .purple : .orange
                     )
+                    if article.isPaidPartnership {
+                        StatusPill("商业内容", color: .orange)
+                            .help("X 官方 Paid partnership 付费合作标记")
+                            .accessibilityLabel("商业内容，X 官方付费合作标记")
+                    }
                     StatusPill("\(article.imageCount) 张图片", color: .blue)
                     if article.videoCount > 0 {
                         StatusPill("\(article.videoCount) 个视频", color: .purple)
@@ -781,9 +800,49 @@ struct RootView: View {
         switch model.sidebarSelection {
         case .all, .none: "全部文章"
         case .today: "今日推文"
+        case .commercial: "商业内容"
         case .pending: "等待继续"
         case .failed: "需要处理"
         case .creator(let id): model.creators.first(where: { $0.id == id })?.displayName ?? "博主"
+        }
+    }
+
+    private var emptyFilterTitle: String {
+        switch model.sidebarSelection {
+        case .today: "今天还没有新文章"
+        case .commercial: "还没有商业内容"
+        case .pending: "没有等待继续的文章"
+        case .failed: "没有需要处理的文章"
+        case .creator: "这位博主还没有归档文章"
+        default: "还没有归档 X Article"
+        }
+    }
+
+    private var emptyFilterIcon: String {
+        switch model.sidebarSelection {
+        case .today: "sun.max"
+        case .commercial: "tag"
+        case .pending: "clock.arrow.circlepath"
+        case .failed: "exclamationmark.triangle"
+        case .creator: "person.crop.circle"
+        default: "tray"
+        }
+    }
+
+    private var emptyFilterDescription: String {
+        switch model.sidebarSelection {
+        case .today:
+            "“今日推文”只显示 X 原始发布时间为今天的文章。"
+        case .commercial:
+            "这里只列出带有 X 官方 Paid partnership 标记的文章。重新处理已归档文章后，标记会补齐。"
+        case .pending:
+            "没有尚未完成的采集任务。"
+        case .failed:
+            "没有失败或需要订阅后才能继续的文章。"
+        case .creator:
+            "可以从右键菜单重新拉取该博主的 X Article。"
+        default:
+            "添加一个或多个 X 博主，程序只会保存官方 X Article。"
         }
     }
 
@@ -1610,6 +1669,9 @@ private struct ArticleRow: View {
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
+                    if article.isPaidPartnership {
+                        CommercialContentBadge()
+                    }
                     Text(creator?.displayName ?? "@\(article.authorHandle)")
                     Text("·")
                     Text("@\(creator?.username ?? article.authorHandle)")
@@ -1895,6 +1957,19 @@ private struct SetupStatusRow: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
         }
+    }
+}
+
+private struct CommercialContentBadge: View {
+    var body: some View {
+        Text("商业内容")
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Color.orange.opacity(0.13), in: Capsule())
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("商业内容，X 官方付费合作标记")
     }
 }
 

@@ -384,6 +384,9 @@ public struct CanonicalDocument: Codable, Hashable, Sendable {
     /// Optional for backward-compatible decoding of snapshots written by
     /// earlier builds.
     public var layoutFidelity: LayoutFidelity?
+    /// `true` only when X's official Paid partnership disclosure is present.
+    /// Left `nil` for ordinary articles so older source checksums stay stable.
+    public var isPaidPartnership: Bool?
 
     public init(
         title: String,
@@ -402,7 +405,8 @@ public struct CanonicalDocument: Codable, Hashable, Sendable {
         sourcePlainText: String? = nil,
         sourceMediaIDs: [String]? = nil,
         sourceVideoIDs: [String]? = nil,
-        layoutFidelity: LayoutFidelity? = nil
+        layoutFidelity: LayoutFidelity? = nil,
+        isPaidPartnership: Bool? = nil
     ) {
         self.title = title
         self.titleSource = titleSource
@@ -421,6 +425,7 @@ public struct CanonicalDocument: Codable, Hashable, Sendable {
         self.sourceMediaIDs = sourceMediaIDs
         self.sourceVideoIDs = sourceVideoIDs
         self.layoutFidelity = layoutFidelity
+        self.isPaidPartnership = isPaidPartnership == true ? true : nil
     }
 }
 
@@ -446,6 +451,7 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
     public var warnings: [String]
     public var lastError: String?
     public var processingLog: [String]
+    public var isPaidPartnership: Bool
 
     public init(
         id: UUID = UUID(),
@@ -468,7 +474,8 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
         pipelineState: PipelineState = .discovered,
         warnings: [String] = [],
         lastError: String? = nil,
-        processingLog: [String] = []
+        processingLog: [String] = [],
+        isPaidPartnership: Bool = false
     ) {
         self.id = id
         self.stableSourceKey = stableSourceKey
@@ -491,6 +498,7 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
         self.warnings = warnings
         self.lastError = lastError
         self.processingLog = processingLog
+        self.isPaidPartnership = isPaidPartnership
     }
 
     public mutating func appendProcessingLog(_ message: String, at date: Date = Date()) {

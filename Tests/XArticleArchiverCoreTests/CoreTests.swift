@@ -359,6 +359,62 @@ final class MarkdownRendererTests: XCTestCase {
         try MarkdownRenderer.validateRenderedText(document: document, markdown: markdown)
     }
 
+    func testWritesPaidPartnershipFrontMatterOnlyWhenPresent() throws {
+        let unpaid = CanonicalDocument(
+            title: "普通文章",
+            authorName: "作者",
+            authorHandle: "writer",
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/123")!,
+            sourcePostID: "123",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [CanonicalBlock(kind: .paragraph, text: "正文")]
+        )
+        let unpaidMarkdown = try MarkdownRenderer.render(document: unpaid, archivedAt: Date(timeIntervalSince1970: 1))
+        XCTAssertFalse(unpaidMarkdown.contains("paid_partnership:"))
+
+        let paid = CanonicalDocument(
+            title: "商业合作文章",
+            authorName: "作者",
+            authorHandle: "writer",
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/124")!,
+            sourcePostID: "124",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [CanonicalBlock(kind: .paragraph, text: "正文")],
+            isPaidPartnership: true
+        )
+        let paidMarkdown = try MarkdownRenderer.render(document: paid, archivedAt: Date(timeIntervalSince1970: 1))
+        XCTAssertTrue(paidMarkdown.contains("paid_partnership: true"))
+        XCTAssertTrue(paidMarkdown.contains("content_type: x_article"))
+    }
+
+    func testPaidPartnershipFlagKeepsOrdinaryChecksumsStable() throws {
+        let unpaid = CanonicalDocument(
+            title: "普通文章",
+            authorName: "作者",
+            authorHandle: "writer",
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/123")!,
+            sourcePostID: "123",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [CanonicalBlock(kind: .paragraph, text: "正文")]
+        )
+        var alsoUnpaid = unpaid
+        alsoUnpaid.isPaidPartnership = nil
+        XCTAssertEqual(
+            try ContentHasher.sourceChecksum(for: unpaid),
+            try ContentHasher.sourceChecksum(for: alsoUnpaid)
+        )
+
+        var paid = unpaid
+        paid.isPaidPartnership = true
+        XCTAssertNotEqual(
+            try ContentHasher.sourceChecksum(for: unpaid),
+            try ContentHasher.sourceChecksum(for: paid)
+        )
+    }
+
     func testNumbersOrderedListsPreservesNestingAndSeparatesFollowingParagraph() throws {
         let blocks = [
             CanonicalBlock(kind: .orderedListItem, text: "第一项", sourceEntityType: "ordered-marker:1."),
@@ -814,6 +870,47 @@ final class BrowserArticleAccessGateDetectorTests: XCTestCase {
     }
 }
 
+final class PaidPartnershipDetectorTests: XCTestCase {
+    func testRecognizesOfficialChromeLabels() {
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(chromeText: "Paid partnership"))
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(chromeText: "Paid Partnership with @brand"))
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(chromeText: "作者\n@writer\n付费合作\n3小时"))
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(chromeText: "有料パートナーシップ"))
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(
+            chromeText: "Author @writer · 3h Paid partnership 1.2K views"
+        ))
+    }
+
+    func testIgnoresBodyLengthMentionsAndUnrelatedChrome() {
+        let educationalBody = """
+        这篇文章讲解 Paid partnership 政策。
+        创作者需要打开付费合作开关，才能在时间线上显示官方标签。
+        下面继续说明普通广告和付费合作的区别，以及为什么不能只靠 #ad。
+        """
+        XCTAssertFalse(PaidPartnershipDetector.isPaidPartnership(chromeText: educationalBody))
+        XCTAssertFalse(PaidPartnershipDetector.isPaidPartnership(chromeText: "作者\n@writer\n3小时"))
+        XCTAssertFalse(PaidPartnershipDetector.isPaidPartnership(
+            chromeText: "",
+            testIDs: ["socialContext", "tweetText"]
+        ))
+    }
+
+    func testRecognizesHelpURLAndDedicatedTestID() {
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(
+            chromeText: "Learn more",
+            linkURLs: ["https://help.x.com/en/rules-and-policies/paid-partnerships-policy"]
+        ))
+        XCTAssertTrue(PaidPartnershipDetector.isPaidPartnership(
+            chromeText: "",
+            testIDs: ["paidPartnership"]
+        ))
+        XCTAssertFalse(PaidPartnershipDetector.isPaidPartnership(
+            chromeText: "Learn more",
+            linkURLs: ["https://help.x.com/en/rules-and-policies/x-rules"]
+        ))
+    }
+}
+
 final class XArticleNavigationURLTests: XCTestCase {
     func testBuildsCanonicalArticleAndCurrentSubscriptionURLs() {
         XCTAssertEqual(
@@ -977,6 +1074,35 @@ final class BrowserArticleCaptureDecoderTests: XCTestCase {
             ),
             context: context
         ))
+    }
+
+    func testMarksPaidPartnershipFromArticleChromeOnly() throws {
+        let creator = Creator(xUserID: "u1", username: "writer", displayName: "作者")
+        let context = BrowserArticleCaptureContext(link: link, creator: creator)
+        let paid = try BrowserArticleCaptureDecoder.decode(
+            BrowserArticleCapturePayload(
+                postID: link.postID,
+                title: "商业合作长文",
+                publishedAt: "2026-09-02T03:04:00.000Z",
+                pageURL: link.originalURL.absoluteString,
+                blocks: [BrowserCapturedBlock(kind: .paragraph, text: "正文")],
+                disclosureChromeText: "作者\n@writer\nPaid partnership"
+            ),
+            context: context
+        )
+        XCTAssertEqual(paid.isPaidPartnership, true)
+
+        let unpaid = try BrowserArticleCaptureDecoder.decode(
+            BrowserArticleCapturePayload(
+                postID: link.postID,
+                title: "普通长文",
+                publishedAt: "2026-09-02T03:04:00.000Z",
+                pageURL: link.originalURL.absoluteString,
+                blocks: [BrowserCapturedBlock(kind: .paragraph, text: "正文讲解 Paid partnership 政策")]
+            ),
+            context: context
+        )
+        XCTAssertNil(unpaid.isPaidPartnership)
     }
 
     func testQuotedArticleCardKeepsOnlyCanonicalArticleLinkAtItsOriginalPosition() throws {
@@ -1589,7 +1715,8 @@ final class ArchiveDatabaseTests: XCTestCase {
             sourceChecksum: "abc",
             videoCount: 2,
             pipelineState: .committed,
-            processingLog: ["2026-09-05T07:00:00Z  开始处理", "2026-09-05T07:00:01Z  处理完成"]
+            processingLog: ["2026-09-05T07:00:00Z  开始处理", "2026-09-05T07:00:01Z  处理完成"],
+            isPaidPartnership: true
         )
         try await database.upsertArticle(article)
         let loadedCreators = try await database.loadCreators()
@@ -1608,6 +1735,7 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(loaded.first?.stableSourceKey, "a1")
         XCTAssertEqual(loaded.first?.videoCount, 2)
         XCTAssertEqual(loaded.first?.processingLog, article.processingLog)
+        XCTAssertEqual(loaded.first?.isPaidPartnership, true)
     }
 
     func testMigratesVersionThreeCreatorTableForKnownArticleCount() async throws {
@@ -1643,6 +1771,60 @@ final class ArchiveDatabaseTests: XCTestCase {
 
         let migratedCreator = try await database.creator(xUserID: "legacy-user")
         XCTAssertEqual(migratedCreator?.knownArticleCount, 125)
+    }
+
+    func testMigratesLegacyArticlesTableForPaidPartnership() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "x-archive-paid-migration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "archive.sqlite")
+        var pointer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &pointer), SQLITE_OK)
+        defer { if let pointer { sqlite3_close(pointer) } }
+        let legacySQL = """
+        CREATE TABLE creators (
+          id TEXT PRIMARY KEY, x_user_id TEXT NOT NULL UNIQUE,
+          username TEXT NOT NULL, display_name TEXT NOT NULL,
+          profile_image_url TEXT, is_protected INTEGER NOT NULL DEFAULT 0,
+          is_enabled INTEGER NOT NULL DEFAULT 1, last_sync_at TEXT,
+          last_seen_post_id TEXT, completeness TEXT NOT NULL DEFAULT 'UNKNOWN'
+        );
+        CREATE TABLE articles (
+          id TEXT PRIMARY KEY, stable_source_key TEXT NOT NULL UNIQUE,
+          creator_id TEXT NOT NULL, title TEXT NOT NULL, author_handle TEXT NOT NULL,
+          content_type TEXT NOT NULL, source_url TEXT NOT NULL, source_post_id TEXT NOT NULL,
+          source_article_id TEXT, published_at TEXT NOT NULL, archived_at TEXT NOT NULL,
+          last_synced_at TEXT NOT NULL, source_status TEXT NOT NULL, source_checksum TEXT NOT NULL,
+          markdown_path TEXT, image_count INTEGER NOT NULL DEFAULT 0,
+          video_count INTEGER NOT NULL DEFAULT 0, pipeline_state TEXT NOT NULL,
+          warnings TEXT NOT NULL DEFAULT '[]', last_error TEXT,
+          processing_log TEXT NOT NULL DEFAULT '[]',
+          FOREIGN KEY (creator_id) REFERENCES creators(id)
+        );
+        PRAGMA user_version=4;
+        """
+        XCTAssertEqual(sqlite3_exec(pointer, legacySQL, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(pointer), SQLITE_OK)
+        pointer = nil
+
+        let database = try ArchiveDatabase(url: databaseURL)
+        let creator = Creator(xUserID: "legacy-user", username: "legacy_writer", displayName: "旧版作者")
+        try await database.upsertCreator(creator)
+        let article = ArchivedArticle(
+            stableSourceKey: "legacy-article",
+            creatorID: creator.id,
+            title: "旧文章",
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/legacy_writer/status/1")!,
+            sourcePostID: "1",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            sourceChecksum: "legacy",
+            isPaidPartnership: true
+        )
+        try await database.upsertArticle(article)
+        let loaded = try await database.article(sourcePostID: "1")
+        XCTAssertEqual(loaded?.isPaidPartnership, true)
     }
 
     func testDeletesOnlyTheRequestedArticle() async throws {
@@ -1763,12 +1945,14 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
             makeArticle(creatorID: firstCreatorID, state: .fetched),
             makeArticle(creatorID: secondCreatorID, state: .discovered, lastError: "等待重试"),
             makeArticle(creatorID: secondCreatorID, state: .failed),
-            makeArticle(creatorID: secondCreatorID, state: .subscriptionRequired)
+            makeArticle(creatorID: secondCreatorID, state: .subscriptionRequired),
+            makeArticle(creatorID: firstCreatorID, state: .committed, isPaidPartnership: true)
         ]
 
         let statistics = ArchiveSidebarStatistics(articles: articles)
 
-        XCTAssertEqual(statistics.allArticleCount, 6)
+        XCTAssertEqual(statistics.allArticleCount, 7)
+        XCTAssertEqual(statistics.commercialArticleCount, 1)
         XCTAssertEqual(statistics.waitingArticleCount, 1)
         XCTAssertEqual(statistics.processingArticleCount, statistics.waitingArticleCount)
         XCTAssertEqual(statistics.needsAttentionArticleCount, 4)
@@ -1887,7 +2071,8 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
     private func makeArticle(
         creatorID: UUID,
         state: PipelineState,
-        lastError: String? = nil
+        lastError: String? = nil,
+        isPaidPartnership: Bool = false
     ) -> ArchivedArticle {
         ArchivedArticle(
             stableSourceKey: UUID().uuidString,
@@ -1900,7 +2085,8 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
             publishedAt: .distantPast,
             sourceChecksum: "checksum",
             pipelineState: state,
-            lastError: lastError
+            lastError: lastError,
+            isPaidPartnership: isPaidPartnership
         )
     }
 }
@@ -2288,6 +2474,45 @@ final class ArchiveLayoutTests: XCTestCase {
 }
 
 final class ArchivePipelineTests: XCTestCase {
+    func testPersistsPaidPartnershipFlagAndMarkdownFrontMatter() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "x-archive-paid-partnership-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let database = try ArchiveDatabase(
+            url: root.appending(path: ".x-article-archiver/archive.sqlite")
+        )
+        let creator = Creator(xUserID: "paid-user", username: "writer", displayName: "作者")
+        try await database.upsertCreator(creator)
+        let document = CanonicalDocument(
+            title: "付费合作长文",
+            authorName: creator.displayName,
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/321")!,
+            sourcePostID: "321",
+            sourceArticleID: "article-paid-321",
+            publishedAt: Date(timeIntervalSince1970: 0),
+            blocks: [CanonicalBlock(kind: .paragraph, text: "这是一篇带官方付费合作标记的文章。")],
+            layoutFidelity: .renderedPageVerified,
+            isPaidPartnership: true
+        )
+        let pipeline = ArchivePipeline(
+            database: database,
+            imageHost: LocalMediaHostAdapter(archiveRoot: root)
+        )
+        let article = try await pipeline.archive(document: document, creator: creator, root: root)
+        XCTAssertTrue(article.isPaidPartnership)
+        let loaded = try await database.article(sourcePostID: "321")
+        XCTAssertEqual(loaded?.isPaidPartnership, true)
+        let markdownPath = try XCTUnwrap(article.markdownPath)
+        let markdown = try String(contentsOfFile: markdownPath, encoding: .utf8)
+        XCTAssertTrue(markdown.contains("paid_partnership: true"))
+    }
+
     func testLocalMediaStorageCopiesImageAndVideoAndWritesPortableMarkdownPaths() async throws {
         let root = FileManager.default.temporaryDirectory.appending(
             path: "x-archive-local-media-test-\(UUID().uuidString)",

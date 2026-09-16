@@ -347,6 +347,9 @@ public enum MarkdownRenderer {
         lines.append("author_name: \(yamlQuoted(document.authorName))")
         lines.append("author_handle: \(yamlQuoted(normalizedHandle(document.authorHandle)))")
         lines.append("content_type: \(document.contentType.rawValue)")
+        if document.isPaidPartnership == true {
+            lines.append("paid_partnership: true")
+        }
         lines.append("source_url: \(yamlQuoted(document.sourceURL.absoluteString))")
         lines.append("source_post_id: \(yamlQuoted(document.sourcePostID))")
         if let sourceArticleID = document.sourceArticleID {

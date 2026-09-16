@@ -141,6 +141,9 @@ public struct BrowserArticleCapturePayload: Codable, Hashable, Sendable {
     public var pageURL: String
     public var blocks: [BrowserCapturedBlock]
     public var unsupportedBlockCount: Int
+    public var disclosureChromeText: String?
+    public var disclosureLinkURLs: [String]?
+    public var disclosureTestIDs: [String]?
 
     public init(
         postID: String,
@@ -150,7 +153,10 @@ public struct BrowserArticleCapturePayload: Codable, Hashable, Sendable {
         publishedAt: String? = nil,
         pageURL: String,
         blocks: [BrowserCapturedBlock],
-        unsupportedBlockCount: Int = 0
+        unsupportedBlockCount: Int = 0,
+        disclosureChromeText: String? = nil,
+        disclosureLinkURLs: [String]? = nil,
+        disclosureTestIDs: [String]? = nil
     ) {
         self.postID = postID
         self.title = title
@@ -160,6 +166,17 @@ public struct BrowserArticleCapturePayload: Codable, Hashable, Sendable {
         self.pageURL = pageURL
         self.blocks = blocks
         self.unsupportedBlockCount = unsupportedBlockCount
+        self.disclosureChromeText = disclosureChromeText
+        self.disclosureLinkURLs = disclosureLinkURLs
+        self.disclosureTestIDs = disclosureTestIDs
+    }
+
+    public var isPaidPartnership: Bool {
+        PaidPartnershipDetector.isPaidPartnership(
+            chromeText: disclosureChromeText ?? "",
+            linkURLs: disclosureLinkURLs ?? [],
+            testIDs: disclosureTestIDs ?? []
+        )
     }
 }
 
@@ -546,7 +563,8 @@ public enum BrowserArticleCaptureDecoder {
             sourcePlainText: context.expectedPlainText,
             sourceMediaIDs: media.map(\.id),
             sourceVideoIDs: videos.map(\.id),
-            layoutFidelity: .renderedPageVerified
+            layoutFidelity: .renderedPageVerified,
+            isPaidPartnership: payload.isPaidPartnership ? true : nil
         )
         try ContentFidelityValidator.validateCanonical(document)
         return document

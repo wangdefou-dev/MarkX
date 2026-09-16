@@ -313,6 +313,48 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         .map(x => (x.a.innerText || '').trim())
         .find(x => x && !x.startsWith('@')) || null;
 
+      const collectDisclosureSignals = (root, ignoredRoots) => {
+        const ignored = node => ignoredRoots.some(ignoredRoot => ignoredRoot && ignoredRoot.contains(node));
+        const hidden = [];
+        const hide = node => {
+          if (!node) return;
+          hidden.push([node, node.style.display]);
+          node.style.display = 'none';
+        };
+        ignoredRoots.forEach(hide);
+        let chromeText = '';
+        let linkURLs = [];
+        let testIDs = [];
+        try {
+          const ariaLabels = [...root.querySelectorAll('[aria-label]')]
+            .filter(node => !ignored(node))
+            .map(node => node.getAttribute('aria-label') || '')
+            .filter(Boolean);
+          chromeText = [(root.innerText || ''), ...ariaLabels]
+            .join('\n')
+            .replace(/\u00a0/g, ' ')
+            .trim()
+            .slice(0, 4000);
+          linkURLs = [...root.querySelectorAll('a[href]')]
+            .filter(anchor => !ignored(anchor))
+            .map(anchor => {
+              try { return new URL(anchor.getAttribute('href') || '', location.href).href; }
+              catch (_) { return null; }
+            })
+            .filter(Boolean)
+            .slice(0, 80);
+          testIDs = [...root.querySelectorAll('[data-testid]')]
+            .filter(node => !ignored(node))
+            .map(node => node.getAttribute('data-testid') || '')
+            .filter(Boolean)
+            .slice(0, 80);
+        } finally {
+          hidden.forEach(([node, display]) => { node.style.display = display; });
+        }
+        return { chromeText, linkURLs, testIDs };
+      };
+      const disclosure = collectDisclosureSignals(outerArticle, [richRoot, titleNode]);
+
       const absoluteURL = value => {
         try { return new URL(value, location.href).href; } catch (_) { return null; }
       };
@@ -869,7 +911,10 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       return JSON.stringify({
         postID:pathMatch[1], title, authorHandle, authorName,
         publishedAt:timeNode?.getAttribute('datetime') || null,
-        pageURL:location.href, blocks, unsupportedBlockCount
+        pageURL:location.href, blocks, unsupportedBlockCount,
+        disclosureChromeText: disclosure.chromeText,
+        disclosureLinkURLs: disclosure.linkURLs,
+        disclosureTestIDs: disclosure.testIDs
       });
     })()
     """#

@@ -40,6 +40,7 @@ final class AppViewModel: ObservableObject {
     enum SidebarSelection: Hashable {
         case all
         case today
+        case commercial
         case pending
         case failed
         case creator(UUID)
@@ -188,6 +189,8 @@ final class AppViewModel: ObservableObject {
             articles.filter {
                 ArchiveSidebarStatistics.isPublishedToday($0.publishedAt, now: todayRefreshDate)
             }
+        case .commercial:
+            articles.filter(ArchiveSidebarStatistics.isCommercialContent)
         case .pending:
             articles.filter(ArchiveSidebarStatistics.isProcessing)
         case .failed:
