@@ -50,9 +50,28 @@ public actor ArchivePipeline {
         if let existing, existing.sourceChecksum == sourceChecksum, existing.pipelineState == .committed,
            let path = existing.markdownPath, FileManager.default.fileExists(atPath: path) {
             let isPaid = sourceDocument.isPaidPartnership == true
-            if existing.isPaidPartnership != isPaid {
+            if existing.isPaidPartnership != isPaid || !existing.paidPartnershipChecked {
                 var updated = existing
                 updated.isPaidPartnership = isPaid
+                updated.paidPartnershipChecked = true
+                updated.lastSyncedAt = Date()
+                if isPaid != existing.isPaidPartnership {
+                    updated.appendProcessingLog(
+                        isPaid
+                            ? "已识别 X 官方付费合作（Paid partnership）标记"
+                            : "已核对：不是商单内容"
+                    )
+                }
+                if let path = existing.markdownPath,
+                   FileManager.default.fileExists(atPath: path),
+                   let markdown = try? String(contentsOfFile: path, encoding: .utf8),
+                   MarkdownRenderer.isUnmodifiedExport(markdown) {
+                    let patched = MarkdownRenderer.applyingPaidPartnershipFrontMatter(
+                        to: markdown,
+                        isPaid: isPaid
+                    )
+                    try Data(patched.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+                }
                 try await database.upsertArticle(updated)
                 return updated
             }
@@ -78,7 +97,8 @@ public actor ArchivePipeline {
             pipelineState: .parsed,
             warnings: document.warnings,
             processingLog: existing?.processingLog ?? [],
-            isPaidPartnership: document.isPaidPartnership == true
+            isPaidPartnership: document.isPaidPartnership == true,
+            paidPartnershipChecked: true
         )
         record.lastError = nil
         record.appendProcessingLog("开始处理文章：\(document.title)")

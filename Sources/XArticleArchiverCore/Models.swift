@@ -452,6 +452,8 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
     public var lastError: String?
     public var processingLog: [String]
     public var isPaidPartnership: Bool
+    /// `false` for archives captured before Paid partnership inspection existed.
+    public var paidPartnershipChecked: Bool
 
     public init(
         id: UUID = UUID(),
@@ -475,7 +477,8 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
         warnings: [String] = [],
         lastError: String? = nil,
         processingLog: [String] = [],
-        isPaidPartnership: Bool = false
+        isPaidPartnership: Bool = false,
+        paidPartnershipChecked: Bool = false
     ) {
         self.id = id
         self.stableSourceKey = stableSourceKey
@@ -499,6 +502,7 @@ public struct ArchivedArticle: Identifiable, Codable, Hashable, Sendable {
         self.lastError = lastError
         self.processingLog = processingLog
         self.isPaidPartnership = isPaidPartnership
+        self.paidPartnershipChecked = paidPartnershipChecked
     }
 
     public mutating func appendProcessingLog(_ message: String, at date: Date = Date()) {

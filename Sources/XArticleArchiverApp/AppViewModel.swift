@@ -1505,11 +1505,15 @@ final class AppViewModel: ObservableObject {
     func browserCaptureState(for request: BrowserCaptureRequest) -> BackgroundDownloadItemState {
         if browserCaptureSubscriptionPostIDs.contains(request.link.postID) { return .subscriptionRequired }
         if browserCaptureFailurePostIDs.contains(request.link.postID) { return .failed }
-        if browserCaptureSavedPostIDs.contains(request.link.postID) { return .saved }
+        if browserCaptureSavedPostIDs.contains(request.link.postID) {
+            return request.disclosureOnly ? .checked : .saved
+        }
         guard let index = browserCaptureRequests.firstIndex(where: { $0.id == request.id }) else {
             return .queued
         }
-        if index == browserCaptureIndex { return .running }
+        if index == browserCaptureIndex {
+            return request.disclosureOnly ? .checking : .running
+        }
         return .queued
     }
 
@@ -1568,14 +1572,87 @@ final class AppViewModel: ObservableObject {
         guard let stoppedRequest, let database else { return }
         Task {
             if var stopped = try? await database.article(sourcePostID: stoppedRequest.link.postID) {
-                stopped.pipelineState = .cancelled
-                stopped.lastError = nil
+                if stoppedRequest.disclosureOnly {
+                    stopped.appendProcessingLog("用户停止商单内容核对；本地归档保留")
+                } else {
+                    stopped.pipelineState = .cancelled
+                    stopped.lastError = nil
+                    stopped.appendProcessingLog("用户停止处理；已完成步骤和本地媒体均保留")
+                }
                 stopped.lastSyncedAt = Date()
-                stopped.appendProcessingLog("用户停止处理；已完成步骤和本地媒体均保留")
                 try? await database.upsertArticle(stopped)
                 try? await reload()
             }
         }
+    }
+
+    private func applyPaidPartnershipDisclosure(
+        _ payload: BrowserArticleCapturePayload,
+        request: BrowserCaptureRequest
+    ) async -> BrowserCaptureArchiveOutcome {
+        guard !browserCaptureStopRequested else { return .stopped }
+        guard let database else {
+            await recordDisclosureCheckSkipped(
+                BrowserArticleCaptureError.pageNotReady("资料库尚未就绪"),
+                request: request
+            )
+            return .saved
+        }
+        do {
+            guard var article = try await database.article(sourcePostID: request.link.postID) else {
+                await recordDisclosureCheckSkipped(
+                    BrowserArticleCaptureError.pageNotReady("没有找到对应的本地归档"),
+                    request: request
+                )
+                return .saved
+            }
+            let isPaid = payload.isPaidPartnership
+            article.isPaidPartnership = isPaid
+            article.paidPartnershipChecked = true
+            article.lastSyncedAt = Date()
+            article.appendProcessingLog(
+                isPaid
+                    ? "已识别商单内容（Paid partnership），未重复下载正文和媒体"
+                    : "已核对：不是商单内容，未重复下载正文和媒体"
+            )
+            if let path = article.markdownPath,
+               FileManager.default.fileExists(atPath: path) {
+                let markdown = try String(contentsOfFile: path, encoding: .utf8)
+                if MarkdownRenderer.isUnmodifiedExport(markdown) {
+                    let patched = MarkdownRenderer.applyingPaidPartnershipFrontMatter(
+                        to: markdown,
+                        isPaid: isPaid
+                    )
+                    try Data(patched.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+                }
+            }
+            try await database.upsertArticle(article)
+            progress.skippedArticles += 1
+            browserCaptureSavedPostIDs.insert(request.link.postID)
+            try await reload()
+            selectedArticleID = article.id
+            statusMessage = isPaid
+                ? "已标记商单内容：\(article.title)"
+                : "已核对，不是商单内容：\(article.title)"
+            return .saved
+        } catch is CancellationError {
+            return .stopped
+        } catch {
+            await recordDisclosureCheckSkipped(error, request: request)
+            return .saved
+        }
+    }
+
+    func recordDisclosureCheckSkipped(_ error: Error, request: BrowserCaptureRequest) async {
+        progress.skippedArticles += 1
+        if let database,
+           var article = try? await database.article(sourcePostID: request.link.postID) {
+            article.lastSyncedAt = Date()
+            article.appendProcessingLog("未能核对商单内容：\(error.localizedDescription)")
+            try? await database.upsertArticle(article)
+            try? await reload()
+        }
+        statusMessage = "《\(request.displayTitle)》未能核对商单内容，本地归档已保留，继续下一篇"
     }
 
     func archiveBrowserCapture(
@@ -1583,6 +1660,9 @@ final class AppViewModel: ObservableObject {
         request: BrowserCaptureRequest
     ) async -> BrowserCaptureArchiveOutcome {
         guard !browserCaptureStopRequested else { return .stopped }
+        if request.disclosureOnly {
+            return await applyPaidPartnershipDisclosure(payload, request: request)
+        }
         guard let archiveRoot, let database else {
             await recordBrowserCaptureFailure(
                 BrowserArticleCaptureError.pageNotReady("归档目录或资料库尚未就绪，未写入本地文件"),
@@ -2105,9 +2185,10 @@ final class AppViewModel: ObservableObject {
                         progress.stage = "正在建立本地采集队列 \(index + 1)/\(links.count)"
                         await Task.yield()
                     }
-                    if !refreshExisting,
-                       let existing = articlesByPostID[link.postID],
-                       Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
+                    let existing = articlesByPostID[link.postID]
+                    let alreadyExact = !refreshExisting
+                        && existing.map { Self.hasExactValidatedLocalArchive($0, root: archiveRoot) } == true
+                    if alreadyExact, existing?.paidPartnershipChecked == true {
                         localHits += 1
                         continue
                     }
@@ -2121,7 +2202,6 @@ final class AppViewModel: ObservableObject {
                     creator.isEnabled = true
                     try await database.upsertCreator(creator)
                     creatorsByUsername[creator.username.lowercased()] = creator
-                    let existing = articlesByPostID[link.postID]
                     let title = existing?.title
                         ?? preferredTitles[link.postID]
                         ?? "待读取的 X Article · \(link.postID.suffix(8))"
@@ -2141,7 +2221,8 @@ final class AppViewModel: ObservableObject {
                         creator: creator,
                         displayTitle: title,
                         publishedAt: sourcePublishedAt ?? existing?.publishedAt,
-                        sourceArticleID: existing?.sourceArticleID
+                        sourceArticleID: existing?.sourceArticleID,
+                        disclosureOnly: alreadyExact
                     ))
                 }
                 try await reload()
@@ -2178,10 +2259,21 @@ final class AppViewModel: ObservableObject {
                     }
                     return
                 }
+                let disclosureCount = requests.filter(\.disclosureOnly).count
+                let downloadCount = requests.count - disclosureCount
                 progress.stage = isSyncingTrackedCreators ? "正在后台同步新文章" : "等待精确排版采集"
-                statusMessage = isSyncingTrackedCreators
-                    ? "需要保存 \(requests.count) 篇，已同步跳过 \(localHits) 篇；X API 调用为 0"
-                    : "已建立 \(requests.count) 篇采集队列；X API 调用为 0"
+                if disclosureCount > 0, downloadCount == 0 {
+                    progress.stage = "正在核对已有文章的商单内容标记"
+                    statusMessage = "将核对 \(disclosureCount) 篇已有归档的商单内容，不重复下载正文和媒体；已跳过 \(localHits) 篇"
+                } else if disclosureCount > 0 {
+                    statusMessage = isSyncingTrackedCreators
+                        ? "需要保存 \(downloadCount) 篇，核对商单内容 \(disclosureCount) 篇，已跳过 \(localHits) 篇；X API 调用为 0"
+                        : "已建立 \(downloadCount) 篇下载队列，并将核对 \(disclosureCount) 篇已有归档的商单内容"
+                } else {
+                    statusMessage = isSyncingTrackedCreators
+                        ? "需要保存 \(requests.count) 篇，已同步跳过 \(localHits) 篇；X API 调用为 0"
+                        : "已建立 \(requests.count) 篇采集队列；X API 调用为 0"
+                }
                 beginBrowserCapture(requests, skippedCount: localHits)
             } catch {
                 errorMessage = error.localizedDescription

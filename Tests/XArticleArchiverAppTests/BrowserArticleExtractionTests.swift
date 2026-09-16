@@ -216,6 +216,43 @@ final class BrowserArticleExtractionTests: XCTestCase {
         XCTAssertEqual(document.isPaidPartnership, true)
     }
 
+    func testDisclosureScriptReadsPaidPartnershipWithoutWaitingForBodyImages() async throws {
+        let postID = "2049065078843195696"
+        let html = """
+        <!doctype html>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'">
+        <article>
+          <a href="/writer">测试作者</a>
+          <div data-testid="paidPartnership">Paid partnership</div>
+          <time datetime="2026-09-02T03:04:00.000Z"></time>
+          <div data-testid="twitterArticleReadView">
+            <h1 data-testid="twitter-article-title">官方付费合作</h1>
+            <div data-testid="longformRichTextComponent">
+              <div class="longform-unstyled" data-block="true">
+                <span data-text="true">第一段</span>
+              </div>
+            </div>
+          </div>
+        </article>
+        """
+
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let navigation = NavigationWaiter()
+        webView.navigationDelegate = navigation
+        await navigation.load(
+            html,
+            in: webView,
+            baseURL: URL(string: "https://x.com/writer/status/\(postID)")!
+        )
+        let raw = try await webView.evaluateJavaScript(BrowserArticleDisclosureScript.source)
+        let json = try XCTUnwrap(raw as? String)
+        XCTAssertFalse(json.hasPrefix("__X_CAPTURE_ERROR__:"), json)
+        let payload = try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
+        XCTAssertTrue(payload.isPaidPartnership)
+        XCTAssertTrue((payload.disclosureTestIDs ?? []).contains("paidPartnership"))
+        XCTAssertTrue(payload.blocks.isEmpty)
+    }
+
     func testDoesNotTreatBodyMentionsAsPaidPartnership() async throws {
         let postID = "2049065078843195696"
         let html = """

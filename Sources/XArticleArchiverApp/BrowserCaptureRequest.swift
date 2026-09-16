@@ -88,7 +88,9 @@ enum BrowserCaptureArchiveOutcome: Hashable {
 enum BackgroundDownloadItemState: Hashable {
     case queued
     case running
+    case checking
     case saved
+    case checked
     case subscriptionRequired
     case failed
 
@@ -96,7 +98,9 @@ enum BackgroundDownloadItemState: Hashable {
         switch self {
         case .queued: "等待下载"
         case .running: "正在保存完整排版"
+        case .checking: "正在核对商单内容"
         case .saved: "已保存"
+        case .checked: "已核对"
         case .subscriptionRequired: "需要订阅"
         case .failed: "下载失败"
         }
@@ -106,7 +110,9 @@ enum BackgroundDownloadItemState: Hashable {
         switch self {
         case .queued: "clock"
         case .running: "arrow.triangle.2.circlepath"
+        case .checking: "tag"
         case .saved: "checkmark.circle.fill"
+        case .checked: "tag.fill"
         case .subscriptionRequired: "lock.fill"
         case .failed: "exclamationmark.circle.fill"
         }
@@ -121,6 +127,7 @@ struct BrowserCaptureRequest: Identifiable, Hashable {
     var publishedAt: Date?
     var sourceArticleID: String?
     var expectedPlainText: String?
+    var disclosureOnly: Bool
 
     init(
         link: XArticleLink,
@@ -128,7 +135,8 @@ struct BrowserCaptureRequest: Identifiable, Hashable {
         displayTitle: String,
         publishedAt: Date? = nil,
         sourceArticleID: String? = nil,
-        expectedPlainText: String? = nil
+        expectedPlainText: String? = nil,
+        disclosureOnly: Bool = false
     ) {
         self.link = link
         self.creator = creator
@@ -136,5 +144,6 @@ struct BrowserCaptureRequest: Identifiable, Hashable {
         self.publishedAt = publishedAt
         self.sourceArticleID = sourceArticleID
         self.expectedPlainText = expectedPlainText
+        self.disclosureOnly = disclosureOnly
     }
 }

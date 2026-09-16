@@ -145,8 +145,8 @@ public actor ArchiveDatabase {
         let sql = """
         INSERT INTO articles
           (id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id,
-           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership, paid_partnership_checked)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(stable_source_key) DO UPDATE SET
           creator_id=excluded.creator_id,
           title=excluded.title,
@@ -166,7 +166,8 @@ public actor ArchiveDatabase {
           warnings=excluded.warnings,
           last_error=excluded.last_error,
           processing_log=excluded.processing_log,
-          is_paid_partnership=excluded.is_paid_partnership;
+          is_paid_partnership=excluded.is_paid_partnership,
+          paid_partnership_checked=excluded.paid_partnership_checked;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -192,6 +193,7 @@ public actor ArchiveDatabase {
         bind(article.lastError, to: 20, in: statement)
         bind(processingLog, to: 21, in: statement)
         sqlite3_bind_int(statement, 22, article.isPaidPartnership ? 1 : 0)
+        sqlite3_bind_int(statement, 23, article.paidPartnershipChecked ? 1 : 0)
         try step(statement)
     }
 
@@ -267,7 +269,8 @@ public actor ArchiveDatabase {
             warnings: warnings,
             lastError: text(statement, 19),
             processingLog: processingLog,
-            isPaidPartnership: sqlite3_column_int(statement, 21) != 0
+            isPaidPartnership: sqlite3_column_int(statement, 21) != 0,
+            paidPartnershipChecked: sqlite3_column_int(statement, 22) != 0
         )
     }
 
@@ -355,6 +358,7 @@ public actor ArchiveDatabase {
           last_error TEXT,
           processing_log TEXT NOT NULL DEFAULT '[]',
           is_paid_partnership INTEGER NOT NULL DEFAULT 0,
+          paid_partnership_checked INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (creator_id) REFERENCES creators(id)
         );
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
@@ -362,7 +366,7 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_articles_source_post_id ON articles(source_post_id);
         CREATE INDEX IF NOT EXISTS idx_creators_username ON creators(username COLLATE NOCASE);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
-        PRAGMA user_version=5;
+        PRAGMA user_version=6;
         """)
         if !columnExists(on: database, table: "articles", column: "video_count") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
@@ -376,10 +380,13 @@ public actor ArchiveDatabase {
         if !columnExists(on: database, table: "articles", column: "is_paid_partnership") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN is_paid_partnership INTEGER NOT NULL DEFAULT 0;")
         }
-        try execute(on: database, sql: "PRAGMA user_version=5;")
+        if !columnExists(on: database, table: "articles", column: "paid_partnership_checked") {
+            try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN paid_partnership_checked INTEGER NOT NULL DEFAULT 0;")
+        }
+        try execute(on: database, sql: "PRAGMA user_version=6;")
     }
 
-    private static let articleSelectColumns = "id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership"
+    private static let articleSelectColumns = "id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership, paid_partnership_checked"
 
     private static func columnExists(on database: OpaquePointer?, table: String, column: String) -> Bool {
         var statement: OpaquePointer?

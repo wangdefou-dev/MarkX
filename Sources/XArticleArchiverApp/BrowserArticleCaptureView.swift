@@ -149,6 +149,10 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         isAutomaticCaptureRunning = true
         defer { isAutomaticCaptureRunning = false }
 
+        if request.disclosureOnly {
+            return try await captureDisclosure(request)
+        }
+
         load(request)
         if ChromeXSessionReader.hasLocalChromeProfile() {
             let session = try await importChromeSession()
@@ -201,6 +205,47 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         }
 
         throw BrowserArticleCaptureError.pageNotReady(lastNotReadyReason)
+    }
+
+    private func captureDisclosure(_ request: BrowserCaptureRequest) async throws -> BrowserArticleCapturePayload {
+        load(request)
+        if ChromeXSessionReader.hasLocalChromeProfile() {
+            let session = try await importChromeSession()
+            pageStatus = "已自动使用 Chrome「\(session.profileName)」登录状态，正在核对商单内容…"
+        } else {
+            pageStatus = "未找到 Chrome 配置，正在尝试核对公开文章的商单标记…"
+        }
+        try await Task.sleep(for: .milliseconds(700))
+
+        var lastNotReadyReason = "X Article 页面仍在加载"
+        for _ in 0..<40 {
+            try Task.checkCancellation()
+            if !isLoading {
+                do {
+                    let payload = try await captureDisclosurePayload()
+                    pageStatus = payload.isPaidPartnership
+                        ? "已识别商单内容标记，不重复下载正文和媒体"
+                        : "已核对，不是商单内容，不重复下载正文和媒体"
+                    return payload
+                } catch BrowserArticleCaptureError.pageNotReady(let detail) {
+                    lastNotReadyReason = detail
+                    pageStatus = "正在等待文章页加载，以便核对商单内容…"
+                }
+            }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        throw BrowserArticleCaptureError.pageNotReady(lastNotReadyReason)
+    }
+
+    private func captureDisclosurePayload() async throws -> BrowserArticleCapturePayload {
+        let raw = try await webView.evaluateJavaScript(BrowserArticleDisclosureScript.source)
+        guard let json = raw as? String else {
+            throw BrowserArticleCaptureError.pageNotReady("页面返回了无法识别的结果")
+        }
+        if json.hasPrefix(Self.errorPrefix) {
+            throw BrowserArticleCaptureError.pageNotReady(String(json.dropFirst(Self.errorPrefix.count)))
+        }
+        return try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -918,11 +963,80 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       });
     })()
     """#
+
+    fileprivate static let disclosureScript = #"""
+    (() => {
+      const ERROR = "__X_CAPTURE_ERROR__:";
+      const articleView = document.querySelector('[data-testid="twitterArticleReadView"]');
+      if (!articleView) return ERROR + "文章页还没有加载。";
+      const titleNode = articleView.querySelector('[data-testid="twitter-article-title"]');
+      const title = (titleNode?.innerText || '').trim();
+      if (!title) return ERROR + "文章标题还没有加载。";
+      const pathMatch = location.pathname.match(/\/(?:status|article)\/(\d{1,19})(?:\/|$)/i);
+      if (!pathMatch) return ERROR + "当前地址中没有可识别的 Article Post ID。";
+      const richRoot = articleView.querySelector('[data-testid="longformRichTextComponent"]')
+        || articleView.querySelector('[data-testid="twitterArticleRichTextView"]');
+      const outerArticle = articleView.parentElement?.closest('article') || articleView;
+      const hidden = [];
+      const hide = node => {
+        if (!node) return;
+        hidden.push([node, node.style.display]);
+        node.style.display = 'none';
+      };
+      hide(richRoot);
+      hide(titleNode);
+      let chromeText = '';
+      let linkURLs = [];
+      let testIDs = [];
+      try {
+        const ignored = node => (richRoot && richRoot.contains(node)) || (titleNode && titleNode.contains(node));
+        const ariaLabels = [...outerArticle.querySelectorAll('[aria-label]')]
+          .filter(node => !ignored(node))
+          .map(node => node.getAttribute('aria-label') || '')
+          .filter(Boolean);
+        chromeText = [(outerArticle.innerText || ''), ...ariaLabels]
+          .join('\n')
+          .replace(/\u00a0/g, ' ')
+          .trim()
+          .slice(0, 4000);
+        linkURLs = [...outerArticle.querySelectorAll('a[href]')]
+          .filter(anchor => !ignored(anchor))
+          .map(anchor => {
+            try { return new URL(anchor.getAttribute('href') || '', location.href).href; }
+            catch (_) { return null; }
+          })
+          .filter(Boolean)
+          .slice(0, 80);
+        testIDs = [...outerArticle.querySelectorAll('[data-testid]')]
+          .filter(node => !ignored(node))
+          .map(node => node.getAttribute('data-testid') || '')
+          .filter(Boolean)
+          .slice(0, 80);
+      } finally {
+        hidden.forEach(([node, display]) => { node.style.display = display; });
+      }
+      return JSON.stringify({
+        postID: pathMatch[1],
+        title,
+        pageURL: location.href,
+        blocks: [],
+        unsupportedBlockCount: 0,
+        disclosureChromeText: chromeText,
+        disclosureLinkURLs: linkURLs,
+        disclosureTestIDs: testIDs
+      });
+    })()
+    """#
 }
 
 @MainActor
 enum BrowserArticleExtractionScript {
     static let source = BrowserArticleCaptureController.extractionScript
+}
+
+@MainActor
+enum BrowserArticleDisclosureScript {
+    static let source = BrowserArticleCaptureController.disclosureScript
 }
 
 struct BrowserWebView: NSViewRepresentable {
@@ -982,8 +1096,13 @@ struct BrowserArticleCaptureView: View {
             } catch is CancellationError {
                 return
             } catch {
-                controller.pageStatus = "这篇文章未完成，正在继续下一篇"
-                await model.recordBrowserCaptureFailure(error, request: request)
+                if request.disclosureOnly {
+                    controller.pageStatus = "未能核对商单内容，已保留本地归档，继续下一篇"
+                    await model.recordDisclosureCheckSkipped(error, request: request)
+                } else {
+                    controller.pageStatus = "这篇文章未完成，正在继续下一篇"
+                    await model.recordBrowserCaptureFailure(error, request: request)
+                }
                 model.advanceBrowserCapture()
             }
         }
@@ -1083,7 +1202,7 @@ struct BrowserArticleCaptureView: View {
                 }
                 .padding(.vertical, 7)
                 .contextMenu {
-                    if state != .saved, model.isPendingExactCaptureRequest(item) {
+                    if state != .saved, state != .checked, model.isPendingExactCaptureRequest(item) {
                         Button(role: .destructive) {
                             model.requestDeleteExactCaptureTask(item)
                         } label: {
@@ -1140,8 +1259,8 @@ struct BrowserArticleCaptureView: View {
     private func color(for state: BackgroundDownloadItemState) -> Color {
         switch state {
         case .queued: .secondary
-        case .running: .orange
-        case .saved: .green
+        case .running, .checking: .orange
+        case .saved, .checked: .green
         case .subscriptionRequired: .purple
         case .failed: .red
         }

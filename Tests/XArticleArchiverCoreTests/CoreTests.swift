@@ -387,6 +387,14 @@ final class MarkdownRendererTests: XCTestCase {
         let paidMarkdown = try MarkdownRenderer.render(document: paid, archivedAt: Date(timeIntervalSince1970: 1))
         XCTAssertTrue(paidMarkdown.contains("paid_partnership: true"))
         XCTAssertTrue(paidMarkdown.contains("content_type: x_article"))
+
+        let exported = MarkdownRenderer.addingExportChecksum(to: unpaidMarkdown)
+        let tagged = MarkdownRenderer.applyingPaidPartnershipFrontMatter(to: exported, isPaid: true)
+        XCTAssertTrue(tagged.contains("paid_partnership: true"))
+        XCTAssertTrue(MarkdownRenderer.isUnmodifiedExport(tagged))
+        let restored = MarkdownRenderer.applyingPaidPartnershipFrontMatter(to: tagged, isPaid: false)
+        XCTAssertFalse(restored.contains("paid_partnership:"))
+        XCTAssertTrue(MarkdownRenderer.isUnmodifiedExport(restored))
     }
 
     func testPaidPartnershipFlagKeepsOrdinaryChecksumsStable() throws {
@@ -409,7 +417,7 @@ final class MarkdownRendererTests: XCTestCase {
 
         var paid = unpaid
         paid.isPaidPartnership = true
-        XCTAssertNotEqual(
+        XCTAssertEqual(
             try ContentHasher.sourceChecksum(for: unpaid),
             try ContentHasher.sourceChecksum(for: paid)
         )
@@ -1716,7 +1724,8 @@ final class ArchiveDatabaseTests: XCTestCase {
             videoCount: 2,
             pipelineState: .committed,
             processingLog: ["2026-09-05T07:00:00Z  开始处理", "2026-09-05T07:00:01Z  处理完成"],
-            isPaidPartnership: true
+            isPaidPartnership: true,
+            paidPartnershipChecked: true
         )
         try await database.upsertArticle(article)
         let loadedCreators = try await database.loadCreators()
@@ -1736,6 +1745,7 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(loaded.first?.videoCount, 2)
         XCTAssertEqual(loaded.first?.processingLog, article.processingLog)
         XCTAssertEqual(loaded.first?.isPaidPartnership, true)
+        XCTAssertEqual(loaded.first?.paidPartnershipChecked, true)
     }
 
     func testMigratesVersionThreeCreatorTableForKnownArticleCount() async throws {
@@ -2506,8 +2516,10 @@ final class ArchivePipelineTests: XCTestCase {
         )
         let article = try await pipeline.archive(document: document, creator: creator, root: root)
         XCTAssertTrue(article.isPaidPartnership)
+        XCTAssertTrue(article.paidPartnershipChecked)
         let loaded = try await database.article(sourcePostID: "321")
         XCTAssertEqual(loaded?.isPaidPartnership, true)
+        XCTAssertEqual(loaded?.paidPartnershipChecked, true)
         let markdownPath = try XCTUnwrap(article.markdownPath)
         let markdown = try String(contentsOfFile: markdownPath, encoding: .utf8)
         XCTAssertTrue(markdown.contains("paid_partnership: true"))

@@ -29,10 +29,12 @@ public enum ContentHasher {
     }
 
     public static func sourceChecksum(for document: CanonicalDocument) throws -> String {
+        var stable = document
+        stable.isPaidPartnership = nil
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601
-        return sha256(try encoder.encode(document))
+        return sha256(try encoder.encode(stable))
     }
 }
 
@@ -377,6 +379,24 @@ public enum MarkdownRenderer {
 
         while lines.last == "" { lines.removeLast() }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    public static func applyingPaidPartnershipFrontMatter(to markdown: String, isPaid: Bool) -> String {
+        var lines = markdown.components(separatedBy: "\n")
+        lines.removeAll { $0.hasPrefix("export_checksum:") }
+        let paidIndex = lines.firstIndex { $0.hasPrefix("paid_partnership:") }
+        if isPaid {
+            if let paidIndex {
+                lines[paidIndex] = "paid_partnership: true"
+            } else if let contentTypeIndex = lines.firstIndex(where: { $0.hasPrefix("content_type:") }) {
+                lines.insert("paid_partnership: true", at: contentTypeIndex + 1)
+            }
+        } else if let paidIndex {
+            lines.remove(at: paidIndex)
+        }
+        var unsigned = lines.joined(separator: "\n")
+        if !unsigned.hasSuffix("\n") { unsigned += "\n" }
+        return addingExportChecksum(to: unsigned)
     }
 
     public static func addingExportChecksum(to markdown: String) -> String {
