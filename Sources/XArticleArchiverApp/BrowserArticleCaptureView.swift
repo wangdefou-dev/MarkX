@@ -1060,7 +1060,7 @@ struct BrowserArticleCaptureView: View {
             footer
         }
         .padding(22)
-        .frame(minWidth: 800, minHeight: 620)
+        .frame(minWidth: 800, minHeight: model.showingCreatorArticleDiscovery ? 420 : 620)
         .background(Color(nsColor: .windowBackgroundColor))
         .background {
             // Keep the Article DOM alive at desktop width while fully covering
@@ -1122,7 +1122,9 @@ struct BrowserArticleCaptureView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(model.isSyncingTrackedCreators ? "正在后台同步 X Article" : "正在后台下载 X Article")
                     .font(.title3.weight(.semibold))
-                Text(model.isSyncingTrackedCreators
+                Text(model.showingCreatorArticleDiscovery
+                     ? "列表读取和正文保存同时进行；已发现的文章会立刻入队下载"
+                     : model.isSyncingTrackedCreators
                      ? "已同步文章自动跳过，新文章会保留文字、图片、视频和原始顺序"
                      : "自动使用 Chrome 登录态并保存文字、图片、视频和原始顺序")
                     .font(.callout)
@@ -1214,7 +1216,7 @@ struct BrowserArticleCaptureView: View {
             }
         }
         .listStyle(.inset)
-        .frame(minHeight: 365)
+        .frame(minHeight: model.showingCreatorArticleDiscovery ? 220 : 365)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1226,7 +1228,9 @@ struct BrowserArticleCaptureView: View {
         HStack(spacing: 10) {
             Image(systemName: "eye.slash.fill")
                 .foregroundStyle(.secondary)
-            Text(model.isSyncingTrackedCreators
+            Text(model.showingCreatorArticleDiscovery
+                 ? "列表读取和正文保存同时进行；全部结束后会统一显示结果。"
+                 : model.isSyncingTrackedCreators
                  ? "浏览器页面已隐藏；同步结束后会统一显示成功、跳过和失败结果。"
                  : "浏览器页面已隐藏；全部处理结束后会统一告诉你下载结果。")
                 .font(.caption)

@@ -311,15 +311,19 @@ struct BrowserCreatorArticleDiscoveryView: View {
         model.currentCreatorArticleDiscoveryRequest
     }
 
+    private var isCompact: Bool { model.showingBrowserCapture }
+
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: isCompact ? 10 : 18) {
             header
             statusCard
-            discoveredArticleList
-            footer
+            if !isCompact {
+                discoveredArticleList
+                footer
+            }
         }
-        .padding(22)
-        .frame(minWidth: 760, minHeight: 590)
+        .padding(isCompact ? 14 : 22)
+        .frame(minWidth: 760, minHeight: isCompact ? 128 : 590)
         .background(Color(nsColor: .windowBackgroundColor))
         .background {
             // WebKit must stay mounted at a normal viewport size so X keeps
@@ -373,7 +377,9 @@ struct BrowserCreatorArticleDiscoveryView: View {
                     .font(.title3.weight(.semibold))
                 Text(model.isRefreshingCreatorCounts
                      ? "完整扫描 Articles 列表，只更新总数，不下载文章"
-                     : model.isSyncingTrackedCreators
+                     : isCompact
+                         ? "这位博主的列表读完后会立刻开始保存，下一位博主同时继续读列表"
+                         : model.isSyncingTrackedCreators
                          ? (model.activeSyncResolvesTotalCount
                              ? "先获取完整 Articles 列表总数，再处理选定范围；已有完整归档会自动跳过"
                              : "只读取每位博主最近文章；已有完整归档会自动跳过")

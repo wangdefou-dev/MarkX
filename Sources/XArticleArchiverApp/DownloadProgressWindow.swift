@@ -32,13 +32,17 @@ struct DownloadProgressRootView: View {
     }
 
     var body: some View {
-        Group {
-            switch content {
-            case .discovery:
+        VStack(spacing: 0) {
+            if model.showingCreatorArticleDiscovery {
                 BrowserCreatorArticleDiscoveryView()
-            case .capture:
+            }
+            if model.showingCreatorArticleDiscovery && model.showingBrowserCapture {
+                Divider()
+            }
+            if model.showingBrowserCapture {
                 BrowserArticleCaptureView()
-            case .switching:
+            }
+            if content == .switching {
                 ContentUnavailableView(
                     "下载阶段切换中",
                     systemImage: "arrow.triangle.2.circlepath",

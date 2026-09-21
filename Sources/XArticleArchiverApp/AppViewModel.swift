@@ -115,6 +115,8 @@ final class AppViewModel: ObservableObject {
     private var browserCaptureSkippedSubscriptionCount = 0
     private var browserCaptureFailureDetails: [String] = []
     private var discoveredCreatorArticles: [CreatorArticleListItem] = []
+    private var creatorDiscoveryFinished = true
+    private var captureIdleWaitingForDiscovery = false
     private var browserCaptureStopRequested = false
     private var activeArchiveOperation: ActiveArchiveOperation = .download
     private var scheduledRunActive = false
@@ -1069,6 +1071,11 @@ final class AppViewModel: ObservableObject {
         }
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
+        creatorDiscoveryFinished = false
+        captureIdleWaitingForDiscovery = false
+        showingBrowserCapture = false
+        browserCaptureRequests = []
+        browserCaptureIndex = 0
         errorMessage = nil
         progress = SyncProgress(
             stage: isRefreshingCreatorCounts
@@ -1178,69 +1185,37 @@ final class AppViewModel: ObservableObject {
             return
         }
         var knownPostIDs = Set(discoveredCreatorArticles.map(\.link.postID))
+        var newItems: [CreatorArticleListItem] = []
         for item in result.items where knownPostIDs.insert(item.link.postID).inserted {
             discoveredCreatorArticles.append(item)
+            newItems.append(item)
         }
         progress.discoveredArticles = discoveredCreatorArticles.count
+        await feedDiscoveredArticlesToCaptureQueue(newItems)
 
         let next = creatorArticleDiscoveryIndex + 1
         if creatorArticleDiscoveryRequests.indices.contains(next) {
             creatorArticleDiscoveryIndex = next
             progress.stage = isSyncingTrackedCreators
-                ? "正在同步第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主"
-                : "正在读取第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主的 Articles 列表"
+                ? "正在同步第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主，同时保存已发现文章"
+                : "正在读取第 \(next + 1) / \(creatorArticleDiscoveryRequests.count) 位博主的列表，同时保存已发现文章"
+            statusMessage = showingBrowserCapture
+                ? "已发现 \(progress.discoveredArticles) 篇，正文下载与下一位博主的列表读取同时进行"
+                : "已发现 \(progress.discoveredArticles) 篇；X API 调用为 0"
             return
         }
 
-        let discovered = discoveredCreatorArticles
-        guard !discovered.isEmpty else {
-            showingCreatorArticleDiscovery = false
-            creatorArticleDiscoveryRequests = []
-            creatorArticleDiscoveryIndex = 0
-            discoveredCreatorArticles = []
-            isRunning = false
-            finishDownloadProgressWindow()
-            if let creatorCount = activeSyncCreatorCount {
-                let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
-                progress.stage = "同步完成：没有发现可检查的 X Article"
-                statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
-                publishSyncResult(
-                    title: "同步完成",
-                    message: "已检查 \(creatorCount) 位已跟踪博主的\(range) X Article，未发现可下载文章。本次 X API 调用为 0。",
-                    metrics: [
-                        DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
-                        DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
-                        DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
-                    ]
-                )
-            } else {
-                progress.stage = "没有发现 X Article"
-                statusMessage = "Articles 专属列表中没有发现文章；X API 调用为 0"
-                downloadResultNotice = DownloadResultNotice(
-                    title: "没有发现文章",
-                    message: "目标博主的 Articles 专属列表中没有找到可下载的 X Article。",
-                    metrics: [
-                        DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
-                        DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
-                    ]
-                )
-            }
+        creatorDiscoveryFinished = true
+        showingCreatorArticleDiscovery = false
+        creatorArticleDiscoveryRequests = []
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
+        if showingBrowserCapture, !captureIdleWaitingForDiscovery {
+            progress.stage = "文章列表已读完，正文下载继续进行"
+            statusMessage = "所有博主的 Articles 列表已读完，正在继续保存正文"
             return
         }
-        progress.stage = isSyncingTrackedCreators
-            ? "已检查 \(discovered.count) 篇，正在建立正文下载队列"
-            : "已发现 \(discovered.count) 篇，正在建立正文下载队列"
-        statusMessage = isSyncingTrackedCreators
-            ? "已从 Articles 专属列表检查 \(discovered.count) 篇，正在过滤后开始下载"
-            : "已从 Articles 专属列表发现 \(discovered.count) 篇；X API 调用为 0"
-        await enqueueBrowserCapture(
-            links: discovered.map(\.link),
-            refreshExisting: false,
-            preferredTitles: Dictionary(
-                discovered.map { ($0.link.postID, $0.title) },
-                uniquingKeysWith: { first, _ in first }
-            )
-        )
+        finishSessionIfIdle()
     }
 
     func creatorArticleDiscoveryFailed(_ error: Error) {
@@ -1248,6 +1223,13 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryRequests = []
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
+        creatorDiscoveryFinished = true
+        if showingBrowserCapture, !captureIdleWaitingForDiscovery {
+            errorMessage = error.localizedDescription
+            progress.stage = "文章列表读取中断，已发现的文章继续保存"
+            statusMessage = "列表读取失败：\(error.localizedDescription)。已入队的正文下载会继续。"
+            return
+        }
         isRunning = false
         finishDownloadProgressWindow()
         if isRefreshingCreatorCounts {
@@ -1289,10 +1271,16 @@ final class AppViewModel: ObservableObject {
     }
 
     func closeCreatorArticleDiscovery() {
+        if showingBrowserCapture {
+            closeBrowserCapture()
+            return
+        }
         showingCreatorArticleDiscovery = false
         creatorArticleDiscoveryRequests = []
         creatorArticleDiscoveryIndex = 0
         discoveredCreatorArticles = []
+        creatorDiscoveryFinished = true
+        captureIdleWaitingForDiscovery = false
         isRunning = false
         finishDownloadProgressWindow()
         progress.stage = isRefreshingCreatorCounts
@@ -1411,92 +1399,143 @@ final class AppViewModel: ObservableObject {
         if browserCaptureRequests.indices.contains(next) {
             browserCaptureIndex = next
             statusMessage = "已完成 \(next) / \(browserCaptureRequests.count)，正在自动处理下一篇"
+        } else if !creatorDiscoveryFinished {
+            captureIdleWaitingForDiscovery = true
+            progress.stage = "正文队列暂时处理完，正在继续读取下一位博主的文章列表"
+            statusMessage = "已保存的文章保留；正在读取下一位博主的 Articles 列表"
         } else {
-            let total = browserCaptureRequests.count
-            let completed = browserCaptureSavedPostIDs.count
-            let skippedSubscription = browserCaptureSkippedSubscriptionCount
-            let subscriptionRequired = browserCaptureSubscriptionPostIDs.count + skippedSubscription
-            let failed = max(0, browserCaptureFailurePostIDs.count - browserCaptureSubscriptionPostIDs.count)
-            let accountedPostIDs = browserCaptureSavedPostIDs.union(browserCaptureFailurePostIDs)
-            let unaccounted = browserCaptureRequests.lazy.filter {
-                !accountedPostIDs.contains($0.link.postID)
-            }.count
-            let skipped = progress.skippedArticles
-            let images = progress.uploadedImages
-            let videos = progress.uploadedVideos
-            let failureNote = browserCaptureFailureDetails.isEmpty
-                ? ""
-                : "\n\n未完成：\(browserCaptureFailureDetails.prefix(3).joined(separator: "；"))"
-            let pending = pendingExactCaptureArticles
-            let attentionRemaining = pending.lazy.filter(ArchiveSidebarStatistics.needsAttention).count
-            let waitingRemaining = max(0, pending.count - attentionRemaining)
-            let pendingTotal = waitingRemaining + attentionRemaining + unaccounted
-            let outstandingNote = pending.isEmpty
-                ? ""
-                : "\n\n资料库仍有等待继续 \(waitingRemaining) 篇、需要处理 \(attentionRemaining) 篇；本次队列结束不代表这些文章已经完成。可在左侧对应分类中重新开始。"
-            let hasUnfinishedWork = !pending.isEmpty || unaccounted > 0
-            let unaccountedNote = unaccounted == 0
-                ? ""
-                : "\n\n另有 \(unaccounted) 篇没有得到已保存或明确失败结果，系统未把它们计为完成。"
-            let skippedSubscriptionNote = skippedSubscription == 0
-                ? ""
-                : "\n\n重新处理时已跳过 \(skippedSubscription) 篇先前确认需要订阅才能访问的文章。"
-            showingBrowserCapture = false
-            browserCaptureRequests = []
-            browserCaptureIndex = 0
-            browserCaptureSavedPostIDs.removeAll()
-            browserCaptureSubscriptionPostIDs.removeAll()
-            browserCaptureSkippedSubscriptionCount = 0
-            finishDownloadProgressWindow()
+            presentCaptureSessionResults()
+        }
+    }
+
+    private func finishSessionIfIdle() {
+        let captureIdle = !showingBrowserCapture
+            || captureIdleWaitingForDiscovery
+            || browserCaptureRequests.isEmpty
+        guard ParallelCreatorArchivePolicy.shouldFinishSession(
+            discoveryFinished: creatorDiscoveryFinished,
+            captureIdle: captureIdle
+        ) else { return }
+        presentCaptureSessionResults()
+    }
+
+    private func presentCaptureSessionResults() {
+        let total = browserCaptureRequests.count
+        let completed = browserCaptureSavedPostIDs.count
+        let skippedSubscription = browserCaptureSkippedSubscriptionCount
+        let subscriptionRequired = browserCaptureSubscriptionPostIDs.count + skippedSubscription
+        let failed = max(0, browserCaptureFailurePostIDs.count - browserCaptureSubscriptionPostIDs.count)
+        let accountedPostIDs = browserCaptureSavedPostIDs.union(browserCaptureFailurePostIDs)
+        let unaccounted = browserCaptureRequests.lazy.filter {
+            !accountedPostIDs.contains($0.link.postID)
+        }.count
+        let skipped = progress.skippedArticles
+        let images = progress.uploadedImages
+        let videos = progress.uploadedVideos
+        let failureNote = browserCaptureFailureDetails.isEmpty
+            ? ""
+            : "\n\n未完成：\(browserCaptureFailureDetails.prefix(3).joined(separator: "；"))"
+        let pending = pendingExactCaptureArticles
+        let attentionRemaining = pending.lazy.filter(ArchiveSidebarStatistics.needsAttention).count
+        let waitingRemaining = max(0, pending.count - attentionRemaining)
+        let pendingTotal = waitingRemaining + attentionRemaining + unaccounted
+        let outstandingNote = pending.isEmpty
+            ? ""
+            : "\n\n资料库仍有等待继续 \(waitingRemaining) 篇、需要处理 \(attentionRemaining) 篇；本次队列结束不代表这些文章已经完成。可在左侧对应分类中重新开始。"
+        let hasUnfinishedWork = !pending.isEmpty || unaccounted > 0
+        let unaccountedNote = unaccounted == 0
+            ? ""
+            : "\n\n另有 \(unaccounted) 篇没有得到已保存或明确失败结果，系统未把它们计为完成。"
+        let skippedSubscriptionNote = skippedSubscription == 0
+            ? ""
+            : "\n\n重新处理时已跳过 \(skippedSubscription) 篇先前确认需要订阅才能访问的文章。"
+        showingBrowserCapture = false
+        showingCreatorArticleDiscovery = false
+        captureIdleWaitingForDiscovery = false
+        isRunning = false
+        let queuedTotal = total
+        browserCaptureRequests = []
+        browserCaptureIndex = 0
+        browserCaptureSavedPostIDs.removeAll()
+        browserCaptureSubscriptionPostIDs.removeAll()
+        browserCaptureSkippedSubscriptionCount = 0
+        finishDownloadProgressWindow()
+        if progress.discoveredArticles == 0, queuedTotal == 0, completed == 0 {
             if let creatorCount = activeSyncCreatorCount {
                 let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
-                let checked = total + skipped
-                progress.stage = hasUnfinishedWork ? "本次同步结束，资料库仍有未完成文章" : "全部博主同步完成"
-                statusMessage = hasUnfinishedWork
-                    ? "本次同步结束：保存 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
-                    : "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
-                let metrics = [
-                    DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
-                    DownloadResultMetric(id: "checked", label: "检查文章", value: "\(checked)", systemImage: "doc.text.magnifyingglass", tone: .accent),
-                    DownloadResultMetric(id: "saved", label: "新增保存", value: "\(completed)", systemImage: "checkmark.circle.fill", tone: .positive),
-                    DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(skipped)", systemImage: "forward.end.fill", tone: .neutral),
-                    DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
-                    DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
-                    DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
-                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent),
-                    DownloadResultMetric(id: "pending", label: "待处理", value: "\(pendingTotal)", systemImage: "clock.arrow.circlepath", tone: pendingTotal > 0 ? .warning : .neutral)
-                ]
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(220))
-                    self?.publishSyncResult(
-                        title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                        message: "已检查 \(creatorCount) 位博主，每位检查\(range)；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
-                        metrics: metrics
-                    )
-                }
+                progress.stage = "同步完成：没有发现可检查的 X Article"
+                statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
+                publishSyncResult(
+                    title: "同步完成",
+                    message: "已检查 \(creatorCount) 位已跟踪博主的\(range) X Article，未发现可下载文章。本次 X API 调用为 0。",
+                    metrics: [
+                        DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
+                        DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
+                        DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
+                    ]
+                )
             } else {
-                progress.stage = hasUnfinishedWork ? "本次队列结束，资料库仍有未完成文章" : "文章下载完成"
-                statusMessage = hasUnfinishedWork
-                    ? "本次队列结束：成功 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
-                    : "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
-                let metrics = [
-                    DownloadResultMetric(id: "queued", label: "进入队列", value: "\(total)", systemImage: "tray.and.arrow.down.fill", tone: .accent),
-                    DownloadResultMetric(id: "saved", label: "成功保存", value: "\(completed)", systemImage: "checkmark.circle.fill", tone: .positive),
-                    DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(skipped)", systemImage: "forward.end.fill", tone: .neutral),
-                    DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
-                    DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
-                    DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
-                    DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent),
-                    DownloadResultMetric(id: "pending", label: "待处理", value: "\(pendingTotal)", systemImage: "clock.arrow.circlepath", tone: pendingTotal > 0 ? .warning : .neutral)
-                ]
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(220))
-                    self?.downloadResultNotice = DownloadResultNotice(
-                        title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
-                        message: "本次进入下载队列 \(total) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
-                        metrics: metrics
-                    )
-                }
+                progress.stage = "没有发现 X Article"
+                statusMessage = "Articles 专属列表中没有发现文章；X API 调用为 0"
+                downloadResultNotice = DownloadResultNotice(
+                    title: "没有发现文章",
+                    message: "目标博主的 Articles 专属列表中没有找到可下载的 X Article。",
+                    metrics: [
+                        DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
+                        DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
+                    ]
+                )
+            }
+            return
+        }
+        if let creatorCount = activeSyncCreatorCount {
+            let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
+            let checked = queuedTotal + skipped
+            progress.stage = hasUnfinishedWork ? "本次同步结束，资料库仍有未完成文章" : "全部博主同步完成"
+            statusMessage = hasUnfinishedWork
+                ? "本次同步结束：保存 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
+                : "同步完成：保存 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
+            let metrics = [
+                DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
+                DownloadResultMetric(id: "checked", label: "检查文章", value: "\(checked)", systemImage: "doc.text.magnifyingglass", tone: .accent),
+                DownloadResultMetric(id: "saved", label: "新增保存", value: "\(completed)", systemImage: "checkmark.circle.fill", tone: .positive),
+                DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(skipped)", systemImage: "forward.end.fill", tone: .neutral),
+                DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
+                DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
+                DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
+                DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent),
+                DownloadResultMetric(id: "pending", label: "待处理", value: "\(pendingTotal)", systemImage: "clock.arrow.circlepath", tone: pendingTotal > 0 ? .warning : .neutral)
+            ]
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(220))
+                self?.publishSyncResult(
+                    title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
+                    message: "已检查 \(creatorCount) 位博主，每位检查\(range)；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
+                    metrics: metrics
+                )
+            }
+        } else {
+            progress.stage = hasUnfinishedWork ? "本次队列结束，资料库仍有未完成文章" : "文章下载完成"
+            statusMessage = hasUnfinishedWork
+                ? "本次队列结束：成功 \(completed) 篇，跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；仍有未完成任务"
+                : "下载完成：成功 \(completed) 篇，跳过 \(skipped) 篇，失败 0 篇"
+            let metrics = [
+                DownloadResultMetric(id: "queued", label: "进入队列", value: "\(queuedTotal)", systemImage: "tray.and.arrow.down.fill", tone: .accent),
+                DownloadResultMetric(id: "saved", label: "成功保存", value: "\(completed)", systemImage: "checkmark.circle.fill", tone: .positive),
+                DownloadResultMetric(id: "skipped", label: "已跳过", value: "\(skipped)", systemImage: "forward.end.fill", tone: .neutral),
+                DownloadResultMetric(id: "subscription", label: "需订阅", value: "\(subscriptionRequired)", systemImage: "lock.fill", tone: subscriptionRequired > 0 ? .warning : .neutral),
+                DownloadResultMetric(id: "failed", label: "失败", value: "\(failed)", systemImage: "xmark.circle.fill", tone: failed > 0 ? .danger : .neutral),
+                DownloadResultMetric(id: "images", label: "图片", value: "\(images)", systemImage: "photo.fill", tone: .accent),
+                DownloadResultMetric(id: "videos", label: "视频", value: "\(videos)", systemImage: "video.fill", tone: .accent),
+                DownloadResultMetric(id: "pending", label: "待处理", value: "\(pendingTotal)", systemImage: "clock.arrow.circlepath", tone: pendingTotal > 0 ? .warning : .neutral)
+            ]
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(220))
+                self?.downloadResultNotice = DownloadResultNotice(
+                    title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
+                    message: "本次进入下载队列 \(queuedTotal) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
+                    metrics: metrics
+                )
             }
         }
     }
@@ -1561,9 +1600,16 @@ final class AppViewModel: ObservableObject {
         let stoppedRequest = currentBrowserCaptureRequest
         browserCaptureStopRequested = true
         showingBrowserCapture = false
+        showingCreatorArticleDiscovery = false
+        creatorArticleDiscoveryRequests = []
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
+        creatorDiscoveryFinished = true
+        captureIdleWaitingForDiscovery = false
         browserCaptureRequests = []
         browserCaptureIndex = 0
         browserCaptureSkippedSubscriptionCount = 0
+        isRunning = false
         finishDownloadProgressWindow()
         statusMessage = isSyncingTrackedCreators
             ? "已停止同步；已完成归档保留，未完成任务可继续"
@@ -1672,7 +1718,11 @@ final class AppViewModel: ObservableObject {
         isRunning = true
         errorMessage = nil
         progress.stage = "正在校验页面原始排版"
-        defer { isRunning = false }
+        defer {
+            if !showingCreatorArticleDiscovery {
+                isRunning = false
+            }
+        }
 
         do {
             if var restarting = try await database.article(sourcePostID: request.link.postID) {
@@ -2168,7 +2218,7 @@ final class AppViewModel: ObservableObject {
         preferredTitles: [String: String] = [:]
     ) async {
         guard !links.isEmpty else { return }
-        guard let archiveRoot, let database else {
+        guard archiveRoot != nil, database != nil else {
             errorMessage = "归档目录尚未准备好"
             showingCreatorArticleDiscovery = false
             isRunning = false
@@ -2184,64 +2234,15 @@ final class AppViewModel: ObservableObject {
             runningTask = nil
         }
         do {
-                var articlesByPostID: [String: ArchivedArticle] = [:]
-                for article in try await database.loadArticles() {
-                    articlesByPostID[article.sourcePostID] = article
-                }
-                var creatorsByUsername: [String: Creator] = [:]
-                for creator in try await database.loadCreators() {
-                    creatorsByUsername[creator.username.lowercased()] = creator
-                }
-
-                var requests: [BrowserCaptureRequest] = []
-                var localHits = 0
-                for (index, link) in links.enumerated() {
-                    try Task.checkCancellation()
-                    if index == 0 || (index + 1).isMultiple(of: 25) || index + 1 == links.count {
-                        progress.stage = "正在建立本地采集队列 \(index + 1)/\(links.count)"
-                        await Task.yield()
-                    }
-                    let existing = articlesByPostID[link.postID]
-                    if !refreshExisting,
-                       let existing,
-                       Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
-                        localHits += 1
-                        continue
-                    }
-
-                    var creator = creatorsByUsername[link.username.lowercased()]
-                        ?? Creator(
-                            xUserID: "browser:\(link.username.lowercased())",
-                            username: link.username,
-                            displayName: "@\(link.username)"
-                        )
-                    creator.isEnabled = true
-                    try await database.upsertCreator(creator)
-                    creatorsByUsername[creator.username.lowercased()] = creator
-                    let title = existing?.title
-                        ?? preferredTitles[link.postID]
-                        ?? "待读取的 X Article · \(link.postID.suffix(8))"
-                    let sourcePublishedAt = XArticleURLParser.publishedAt(forPostID: link.postID)
-                    if existing == nil {
-                        try await savePendingReferenceIfNeeded(
-                            link: link,
-                            creator: creator,
-                            title: title,
-                            publishedAt: sourcePublishedAt ?? Date(),
-                            sourceArticleID: nil,
-                            database: database
-                        )
-                    }
-                    requests.append(BrowserCaptureRequest(
-                        link: link,
-                        creator: creator,
-                        displayTitle: title,
-                        publishedAt: sourcePublishedAt ?? existing?.publishedAt,
-                        sourceArticleID: existing?.sourceArticleID
-                    ))
-                }
+                let built = try await makeCaptureRequests(
+                    links: links,
+                    refreshExisting: refreshExisting,
+                    preferredTitles: preferredTitles
+                )
                 try await reload()
-                progress.discoveredArticles = links.count
+                let requests = built.requests
+                let localHits = built.skipped
+                progress.discoveredArticles = max(progress.discoveredArticles, links.count)
                 progress.skippedArticles = localHits
                 guard !requests.isEmpty else {
                     showingCreatorArticleDiscovery = false
@@ -2352,12 +2353,136 @@ final class AppViewModel: ObservableObject {
         progress.failedArticles = 0
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
-        creatorArticleDiscoveryRequests = []
-        creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
-        showingCreatorArticleDiscovery = false
         showingBrowserCapture = !browserCaptureRequests.isEmpty
         presentDownloadProgressWindowIfAllowed()
+    }
+
+    private func feedDiscoveredArticlesToCaptureQueue(_ items: [CreatorArticleListItem]) async {
+        guard !items.isEmpty else { return }
+        do {
+            let built = try await makeCaptureRequests(
+                links: items.map(\.link),
+                refreshExisting: false,
+                preferredTitles: Dictionary(
+                    items.map { ($0.link.postID, $0.title) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+            )
+            try await reload()
+            appendOrStartBrowserCapture(built.requests, additionalSkipped: built.skipped)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func appendOrStartBrowserCapture(
+        _ requests: [BrowserCaptureRequest],
+        additionalSkipped: Int
+    ) {
+        progress.skippedArticles += additionalSkipped
+        let merge = ParallelCreatorArchivePolicy.mergeQueue(
+            existingPostIDs: browserCaptureRequests.map(\.link.postID),
+            incomingPostIDs: requests.map(\.link.postID)
+        )
+        let accepted = merge.acceptedPostIDs.compactMap { postID in
+            requests.first { $0.link.postID == postID }
+        }
+        guard !accepted.isEmpty else { return }
+
+        let previousCount = browserCaptureRequests.count
+        let nextIndex = ParallelCreatorArchivePolicy.nextIndexAfterAppending(
+            previousCount: previousCount,
+            appendedCount: accepted.count,
+            currentIndex: browserCaptureIndex,
+            waitingForMore: captureIdleWaitingForDiscovery
+        )
+        if previousCount == 0 {
+            browserCaptureStopRequested = false
+            browserCaptureSavedPostIDs.removeAll()
+            browserCaptureFailurePostIDs.removeAll()
+            browserCaptureSubscriptionPostIDs.removeAll()
+            browserCaptureFailureDetails.removeAll()
+            progress.completedArticles = 0
+            progress.uploadedImages = 0
+            progress.uploadedVideos = 0
+            progress.failedArticles = 0
+            browserCaptureIndex = 0
+            browserCaptureRequests = accepted
+        } else {
+            browserCaptureRequests.append(contentsOf: accepted)
+            browserCaptureIndex = nextIndex
+        }
+        captureIdleWaitingForDiscovery = false
+        showingBrowserCapture = true
+        reactivateExactCaptureTasks(for: accepted)
+        presentDownloadProgressWindowIfAllowed()
+    }
+
+    private func makeCaptureRequests(
+        links: [XArticleLink],
+        refreshExisting: Bool,
+        preferredTitles: [String: String]
+    ) async throws -> (requests: [BrowserCaptureRequest], skipped: Int) {
+        guard let archiveRoot, let database else {
+            throw BrowserArticleCaptureError.pageNotReady("归档目录尚未准备好")
+        }
+        var articlesByPostID: [String: ArchivedArticle] = [:]
+        for article in try await database.loadArticles() {
+            articlesByPostID[article.sourcePostID] = article
+        }
+        var creatorsByUsername: [String: Creator] = [:]
+        for creator in try await database.loadCreators() {
+            creatorsByUsername[creator.username.lowercased()] = creator
+        }
+
+        var requests: [BrowserCaptureRequest] = []
+        var skipped = 0
+        for (index, link) in links.enumerated() {
+            try Task.checkCancellation()
+            if index == 0 || (index + 1).isMultiple(of: 25) || index + 1 == links.count {
+                progress.stage = "正在建立本地采集队列 \(index + 1)/\(links.count)"
+                await Task.yield()
+            }
+            let existing = articlesByPostID[link.postID]
+            if !refreshExisting,
+               let existing,
+               Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
+                skipped += 1
+                continue
+            }
+
+            var creator = creatorsByUsername[link.username.lowercased()]
+                ?? Creator(
+                    xUserID: "browser:\(link.username.lowercased())",
+                    username: link.username,
+                    displayName: "@\(link.username)"
+                )
+            creator.isEnabled = true
+            try await database.upsertCreator(creator)
+            creatorsByUsername[creator.username.lowercased()] = creator
+            let title = existing?.title
+                ?? preferredTitles[link.postID]
+                ?? "待读取的 X Article · \(link.postID.suffix(8))"
+            let sourcePublishedAt = XArticleURLParser.publishedAt(forPostID: link.postID)
+            if existing == nil {
+                try await savePendingReferenceIfNeeded(
+                    link: link,
+                    creator: creator,
+                    title: title,
+                    publishedAt: sourcePublishedAt ?? Date(),
+                    sourceArticleID: nil,
+                    database: database
+                )
+            }
+            requests.append(BrowserCaptureRequest(
+                link: link,
+                creator: creator,
+                displayTitle: title,
+                publishedAt: sourcePublishedAt ?? existing?.publishedAt,
+                sourceArticleID: existing?.sourceArticleID
+            ))
+        }
+        return (requests, skipped)
     }
 
     private func beginCreatorArticleDiscoveryPresentation() {

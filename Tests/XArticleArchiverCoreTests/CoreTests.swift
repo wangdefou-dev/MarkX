@@ -2168,6 +2168,59 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
     }
 }
 
+final class ParallelCreatorArchivePolicyTests: XCTestCase {
+    func testMergeQueueKeepsIncomingOrderAndCountsDuplicates() {
+        let merged = ParallelCreatorArchivePolicy.mergeQueue(
+            existingPostIDs: ["a", "b"],
+            incomingPostIDs: ["b", "c", "a", "d"]
+        )
+        XCTAssertEqual(merged.acceptedPostIDs, ["c", "d"])
+        XCTAssertEqual(merged.duplicateCount, 2)
+    }
+
+    func testCaptureResumesFromFirstAppendedItemAfterIdleWait() {
+        XCTAssertEqual(
+            ParallelCreatorArchivePolicy.nextIndexAfterAppending(
+                previousCount: 3,
+                appendedCount: 2,
+                currentIndex: 2,
+                waitingForMore: true
+            ),
+            3
+        )
+        XCTAssertEqual(
+            ParallelCreatorArchivePolicy.nextIndexAfterAppending(
+                previousCount: 3,
+                appendedCount: 2,
+                currentIndex: 1,
+                waitingForMore: false
+            ),
+            1
+        )
+    }
+
+    func testSessionFinishesOnlyWhenDiscoveryAndCaptureAreBothIdle() {
+        XCTAssertFalse(
+            ParallelCreatorArchivePolicy.shouldFinishSession(
+                discoveryFinished: false,
+                captureIdle: true
+            )
+        )
+        XCTAssertFalse(
+            ParallelCreatorArchivePolicy.shouldFinishSession(
+                discoveryFinished: true,
+                captureIdle: false
+            )
+        )
+        XCTAssertTrue(
+            ParallelCreatorArchivePolicy.shouldFinishSession(
+                discoveryFinished: true,
+                captureIdle: true
+            )
+        )
+    }
+}
+
 final class ExactCaptureQueuePolicyTests: XCTestCase {
     private let creatorID = UUID()
 
