@@ -55,6 +55,101 @@ public enum ArchiveLayout {
         )
     }
 
+    /// Finds a readable Markdown file for this Post ID in the current archive
+    /// root. Copied libraries often keep the old machine's absolute path in
+    /// SQLite, so the stored path is only the first candidate.
+    public static func locateMarkdown(
+        postID: String,
+        storedPath: String?,
+        in root: URL,
+        fileManager: FileManager = .default
+    ) -> String? {
+        var candidates: [String] = []
+        if let storedPath, !storedPath.isEmpty {
+            candidates.append(storedPath)
+            if let migrated = migratedMarkdownPath(storedPath, in: root) {
+                candidates.append(migrated)
+            }
+            if let rebased = rebasedCopiedMarkdownPath(storedPath, in: root) {
+                candidates.append(rebased)
+            }
+        }
+        var seen = Set<String>()
+        for candidate in candidates where seen.insert(candidate).inserted {
+            if fileManager.fileExists(atPath: candidate) {
+                return candidate
+            }
+        }
+        return markdownMatchingPostID(postID, in: root, fileManager: fileManager)
+    }
+
+    /// When a library is copied to another Mac, SQLite still stores the old
+    /// absolute path. Rebase the `Blogger/...` or legacy `@handle/...` suffix
+    /// onto the current archive root.
+    public static func rebasedCopiedMarkdownPath(_ path: String, in root: URL) -> String? {
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let marker = "/\(bloggersDirectoryName)/"
+        if let range = standardized.range(of: marker) {
+            let relative = String(standardized[range.upperBound...])
+            guard !relative.isEmpty else { return nil }
+            return bloggersDirectory(in: root).appending(path: relative).path
+        }
+        let components = URL(fileURLWithPath: standardized).pathComponents
+        guard let handleIndex = components.lastIndex(where: { $0.hasPrefix("@") }) else {
+            return nil
+        }
+        let relative = components[handleIndex...].joined(separator: "/")
+        return bloggersDirectory(in: root).appending(path: relative).path
+    }
+
+    public static func markdownMatchingPostID(
+        _ postID: String,
+        in root: URL,
+        fileManager: FileManager = .default
+    ) -> String? {
+        let suffix = "--\(String(postID.suffix(8))).md"
+        let bloggers = bloggersDirectory(in: root)
+        guard let creators = try? fileManager.contentsOfDirectory(
+            at: bloggers,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        for creator in creators {
+            let articles = creator.appending(path: "articles", directoryHint: .isDirectory)
+            guard let files = try? fileManager.contentsOfDirectory(
+                at: articles,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            if let match = files.first(where: { $0.lastPathComponent.hasSuffix(suffix) }) {
+                return match.path
+            }
+        }
+        return nil
+    }
+
+    /// Records copied to a new Mac without their Markdown files must re-enter
+    /// the download queue. Do not treat a committed SQLite row as a completed
+    /// archive when the file is gone.
+    public static func repairedArticleForAvailableMarkdown(
+        _ article: ArchivedArticle,
+        markdownPath: String?
+    ) -> ArchivedArticle {
+        var updated = article
+        if let markdownPath {
+            updated.markdownPath = markdownPath
+            return updated
+        }
+        guard article.pipelineState == .committed || article.pipelineState == .cancelled else {
+            return article
+        }
+        updated.pipelineState = .discovered
+        updated.paidPartnershipChecked = false
+        updated.lastError = nil
+        updated.appendProcessingLog("本地正文文件不存在，已重新加入下载队列")
+        return updated
+    }
+
     public static func migratedMarkdownPath(_ path: String, in root: URL) -> String? {
         let rootPath = root.standardizedFileURL.path
         let candidate = URL(fileURLWithPath: path).standardizedFileURL

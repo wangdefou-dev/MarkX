@@ -2424,6 +2424,78 @@ final class ArchiveIndexWriterTests: XCTestCase {
 }
 
 final class ArchiveLayoutTests: XCTestCase {
+    func testLocatesMarkdownByPostIDWhenStoredPathIsFromAnotherMachine() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "x-archive-locate-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let postID = "2094984812251746424"
+        let fileName = SafeFileName.articleFileName(
+            title: "标题",
+            publishedAt: Date(timeIntervalSince1970: 1_756_771_200),
+            postID: postID
+        )
+        let localFile = root.appending(path: "Blogger/@writer - 作者/articles/\(fileName)")
+        try FileManager.default.createDirectory(at: localFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("# 标题\n".utf8).write(to: localFile)
+
+        let locatedByCopiedPath = ArchiveLayout.locateMarkdown(
+            postID: postID,
+            storedPath: "/Users/other-mac/OldArchive/Blogger/@writer - 作者/articles/\(fileName)",
+            in: root
+        )
+        XCTAssertEqual(
+            locatedByCopiedPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            Optional(localFile.standardizedFileURL.path)
+        )
+
+        let locatedBySuffix = ArchiveLayout.locateMarkdown(
+            postID: postID,
+            storedPath: "/Users/other-mac/OldArchive/Blogger/@writer - 作者/articles/old-title--99999999.md",
+            in: root
+        )
+        XCTAssertEqual(
+            locatedBySuffix.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            Optional(localFile.standardizedFileURL.path)
+        )
+
+        XCTAssertNil(
+            ArchiveLayout.locateMarkdown(
+                postID: "1111111111111111111",
+                storedPath: "/Users/other-mac/OldArchive/Blogger/@writer - 作者/articles/missing.md",
+                in: root
+            )
+        )
+    }
+
+    func testRequeuesCommittedArticleWhenMarkdownIsMissing() {
+        let article = ArchivedArticle(
+            stableSourceKey: "a1",
+            creatorID: UUID(),
+            title: "标题",
+            authorHandle: "writer",
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/writer/status/1")!,
+            sourcePostID: "1",
+            publishedAt: .distantPast,
+            sourceChecksum: "checksum",
+            markdownPath: "/missing/article.md",
+            pipelineState: .committed,
+            isPaidPartnership: false,
+            paidPartnershipChecked: true
+        )
+        let repaired = ArchiveLayout.repairedArticleForAvailableMarkdown(article, markdownPath: nil)
+        XCTAssertEqual(repaired.pipelineState, .discovered)
+        XCTAssertFalse(repaired.paidPartnershipChecked)
+        XCTAssertNil(repaired.lastError)
+
+        let found = ArchiveLayout.repairedArticleForAvailableMarkdown(
+            article,
+            markdownPath: "/new-root/Blogger/@writer/articles/article.md"
+        )
+        XCTAssertEqual(found.pipelineState, .committed)
+        XCTAssertEqual(found.markdownPath, "/new-root/Blogger/@writer/articles/article.md")
+    }
+
     func testMovesEveryLegacyCreatorBelowBloggerAndKeepsOnlyTwoVisibleRootFolders() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "x-archive-layout-\(UUID().uuidString)", directoryHint: .isDirectory)

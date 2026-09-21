@@ -2186,9 +2186,9 @@ final class AppViewModel: ObservableObject {
                         await Task.yield()
                     }
                     let existing = articlesByPostID[link.postID]
-                    let alreadyExact = !refreshExisting
-                        && existing.map { Self.hasExactValidatedLocalArchive($0, root: archiveRoot) } == true
-                    if alreadyExact, existing?.paidPartnershipChecked == true {
+                    if !refreshExisting,
+                       let existing,
+                       Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
                         localHits += 1
                         continue
                     }
@@ -2221,8 +2221,7 @@ final class AppViewModel: ObservableObject {
                         creator: creator,
                         displayTitle: title,
                         publishedAt: sourcePublishedAt ?? existing?.publishedAt,
-                        sourceArticleID: existing?.sourceArticleID,
-                        disclosureOnly: alreadyExact
+                        sourceArticleID: existing?.sourceArticleID
                     ))
                 }
                 try await reload()
@@ -2259,21 +2258,10 @@ final class AppViewModel: ObservableObject {
                     }
                     return
                 }
-                let disclosureCount = requests.filter(\.disclosureOnly).count
-                let downloadCount = requests.count - disclosureCount
                 progress.stage = isSyncingTrackedCreators ? "正在后台同步新文章" : "等待精确排版采集"
-                if disclosureCount > 0, downloadCount == 0 {
-                    progress.stage = "正在核对已有文章的商单内容标记"
-                    statusMessage = "将核对 \(disclosureCount) 篇已有归档的商单内容，不重复下载正文和媒体；已跳过 \(localHits) 篇"
-                } else if disclosureCount > 0 {
-                    statusMessage = isSyncingTrackedCreators
-                        ? "需要保存 \(downloadCount) 篇，核对商单内容 \(disclosureCount) 篇，已跳过 \(localHits) 篇；X API 调用为 0"
-                        : "已建立 \(downloadCount) 篇下载队列，并将核对 \(disclosureCount) 篇已有归档的商单内容"
-                } else {
-                    statusMessage = isSyncingTrackedCreators
-                        ? "需要保存 \(requests.count) 篇，已同步跳过 \(localHits) 篇；X API 调用为 0"
-                        : "已建立 \(requests.count) 篇采集队列；X API 调用为 0"
-                }
+                statusMessage = isSyncingTrackedCreators
+                    ? "需要保存 \(requests.count) 篇，已同步跳过 \(localHits) 篇；X API 调用为 0"
+                    : "已建立 \(requests.count) 篇采集队列；X API 调用为 0"
                 beginBrowserCapture(requests, skippedCount: localHits)
             } catch {
                 errorMessage = error.localizedDescription
@@ -2391,7 +2379,9 @@ final class AppViewModel: ObservableObject {
     }
 
     private func reactivateExactCaptureTasks(for requests: [BrowserCaptureRequest]) {
-        let postIDs = Set(requests.map(\.link.postID))
+        let postIDs = Set(
+            requests.filter { !$0.disclosureOnly }.map(\.link.postID)
+        )
         var changed: [ArchivedArticle] = []
         for index in articles.indices where postIDs.contains(articles[index].sourcePostID) {
             articles[index].warnings.removeAll { $0 == ExactCaptureQueuePolicy.dismissedWarning }
@@ -2437,7 +2427,11 @@ final class AppViewModel: ObservableObject {
 
     private static func hasExactValidatedLocalArchive(_ article: ArchivedArticle, root: URL) -> Bool {
         guard article.pipelineState == .committed,
-              let markdownPath = article.markdownPath,
+              let markdownPath = ArchiveLayout.locateMarkdown(
+                postID: article.sourcePostID,
+                storedPath: article.markdownPath,
+                in: root
+              ),
               let markdown = try? String(contentsOfFile: markdownPath, encoding: .utf8) else { return false }
         let snapshotURL = root
             .appending(path: ".x-article-archiver", directoryHint: .isDirectory)
@@ -2501,6 +2495,22 @@ final class AppViewModel: ObservableObject {
         // Older builds also stored Note Posts and assembled threads. Keep the
         // user's files and rows intact, but never present them as X Articles.
         var loadedArticles = try await database.loadArticles().filter { $0.contentType == .xArticle }
+        if let archiveRoot {
+            for index in loadedArticles.indices {
+                let located = ArchiveLayout.locateMarkdown(
+                    postID: loadedArticles[index].sourcePostID,
+                    storedPath: loadedArticles[index].markdownPath,
+                    in: archiveRoot
+                )
+                let repaired = ArchiveLayout.repairedArticleForAvailableMarkdown(
+                    loadedArticles[index],
+                    markdownPath: located
+                )
+                guard repaired != loadedArticles[index] else { continue }
+                loadedArticles[index] = repaired
+                try await database.upsertArticle(repaired)
+            }
+        }
         // Builds before 18 could persist the discovery/archive timestamp for a
         // direct link. Correct every existing UI/database record from the X
         // Snowflake itself, without touching a possibly user-edited Markdown
