@@ -38,9 +38,8 @@ public enum XArticleURLParser {
     }
 
     /// Validates links scraped from a creator's dedicated Articles page.
-    /// Only the creator's exact `/handle/status/PostID` route is accepted, so
-    /// analytics links, quoted Posts, navigation links, and other authors are
-    /// never added to the download queue.
+    /// Owner `/status/` and `/article/` routes, plus the generic `/i/article/`
+    /// route, are accepted. Analytics, quoted Posts, and other authors are not.
     public static func parseCreatorArticlesPageLinks(
         _ values: [String],
         expectedUsername: String
@@ -50,15 +49,41 @@ public enum XArticleURLParser {
         var output: [XArticleLink] = []
 
         for value in values {
-            guard let link = parse(value).first,
-                  link.username.caseInsensitiveCompare(expected) == .orderedSame else { continue }
+            guard let link = parse(value).first else { continue }
             let parts = link.originalURL.pathComponents.filter { $0 != "/" }
-            guard parts.count == 3,
-                  parts[1].caseInsensitiveCompare("status") == .orderedSame,
+            guard parts.count >= 3,
+                  ["status", "article"].contains(parts[1].lowercased()),
+                  !parts.contains(where: { $0.caseInsensitiveCompare("analytics") == .orderedSame }) else {
+                continue
+            }
+            let isGenericArticleRoute = parts[0].lowercased() == "i"
+                && parts[1].lowercased() == "article"
+            let isOwnerRoute = link.username.caseInsensitiveCompare(expected) == .orderedSame
+            guard isOwnerRoute || isGenericArticleRoute,
                   seenPostIDs.insert(link.postID).inserted else { continue }
-            output.append(link)
+            let canonical = XArticleNavigationURL.articleURL(authorHandle: expected, postID: link.postID)
+                ?? link.originalURL
+            output.append(XArticleLink(postID: link.postID, username: expected, originalURL: canonical))
         }
         return output
+    }
+
+    /// True when the WebView is on this creator's `/articles` list, including
+    /// an optional locale prefix such as `/en/handle/articles`.
+    public static func isCreatorArticlesListPath(_ pathname: String, username: String) -> Bool {
+        guard let expected = HandleParser.normalize(username) else { return false }
+        let trimmed = pathname.split(separator: "?").first.map(String.init) ?? pathname
+        let parts = trimmed.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        if parts.count == 2 {
+            return HandleParser.normalize(parts[0])?.caseInsensitiveCompare(expected) == .orderedSame
+                && parts[1].lowercased() == "articles"
+        }
+        if parts.count == 3,
+           parts[0].range(of: "^[a-z]{2}(?:-[A-Za-z]{2})?$", options: .regularExpression) != nil {
+            return HandleParser.normalize(parts[1])?.caseInsensitiveCompare(expected) == .orderedSame
+                && parts[2].lowercased() == "articles"
+        }
+        return false
     }
 
     /// X post IDs are Snowflakes whose high bits contain the creation time.

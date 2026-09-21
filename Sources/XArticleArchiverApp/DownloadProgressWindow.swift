@@ -47,7 +47,6 @@ struct DownloadProgressRootView: View {
                 .frame(minWidth: 760, minHeight: 590)
             }
         }
-        .id(content)
         .environmentObject(model)
     }
 }

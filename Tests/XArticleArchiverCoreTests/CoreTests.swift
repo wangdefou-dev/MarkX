@@ -103,22 +103,47 @@ final class XArticleURLParserTests: XCTestCase {
         XCTAssertTrue(XArticleURLParser.parse(input).isEmpty)
     }
 
-    func testCreatorArticlesPageParserKeepsOnlyExactOwnerStatusRoutes() {
+    func testCreatorArticlesPageParserKeepsOwnerStatusAndArticleRoutes() {
         let links = XArticleURLParser.parseCreatorArticlesPageLinks(
             [
                 "https://x.com/example/status/2091770029713084630",
                 "https://x.com/example/status/2091770029713084630/analytics",
                 "https://x.com/other/status/1999999999999999999",
                 "https://x.com/example/article/1888888888888888888",
-                "https://x.com/example/status/1777777777777777777?ref=articles"
+                "https://x.com/i/article/1777777777777777777",
+                "https://x.com/example/status/1666666666666666666?ref=articles"
             ],
             expectedUsername: "@Example"
         )
         XCTAssertEqual(
             links.map(\.postID),
-            ["2091770029713084630", "1777777777777777777"]
+            [
+                "2091770029713084630",
+                "1888888888888888888",
+                "1777777777777777777",
+                "1666666666666666666"
+            ]
         )
         XCTAssertTrue(links.allSatisfy { $0.username.caseInsensitiveCompare("example") == .orderedSame })
+        XCTAssertEqual(
+            links.map { $0.originalURL.absoluteString.lowercased() },
+            [
+                "https://x.com/example/status/2091770029713084630",
+                "https://x.com/example/status/1888888888888888888",
+                "https://x.com/example/status/1777777777777777777",
+                "https://x.com/example/status/1666666666666666666"
+            ]
+        )
+    }
+
+    func testCreatorArticlesListPathAcceptsLocalePrefixAndRejectsProfileHome() {
+        XCTAssertTrue(XArticleURLParser.isCreatorArticlesListPath("/Example/articles", username: "@example"))
+        XCTAssertTrue(XArticleURLParser.isCreatorArticlesListPath("/example/articles/", username: "example"))
+        XCTAssertTrue(XArticleURLParser.isCreatorArticlesListPath("/en/example/articles", username: "example"))
+        XCTAssertFalse(XArticleURLParser.isCreatorArticlesListPath("/example", username: "example"))
+        XCTAssertFalse(XArticleURLParser.isCreatorArticlesListPath("/home", username: "example"))
+        XCTAssertFalse(XArticleURLParser.isCreatorArticlesListPath("/other/articles", username: "example"))
+        XCTAssertFalse(XArticleURLParser.isCreatorArticlesListPath("/i/flow/login", username: "example"))
     }
 
     func testDerivesSourcePublishTimeFromSnowflakeInsteadOfArchiveTime() throws {

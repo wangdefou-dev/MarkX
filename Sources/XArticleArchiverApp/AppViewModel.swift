@@ -1193,13 +1193,12 @@ final class AppViewModel: ObservableObject {
         }
 
         let discovered = discoveredCreatorArticles
-        showingCreatorArticleDiscovery = false
-        creatorArticleDiscoveryRequests = []
-        creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
-        isRunning = false
-
         guard !discovered.isEmpty else {
+            showingCreatorArticleDiscovery = false
+            creatorArticleDiscoveryRequests = []
+            creatorArticleDiscoveryIndex = 0
+            discoveredCreatorArticles = []
+            isRunning = false
             finishDownloadProgressWindow()
             if let creatorCount = activeSyncCreatorCount {
                 let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
@@ -1229,12 +1228,12 @@ final class AppViewModel: ObservableObject {
             return
         }
         progress.stage = isSyncingTrackedCreators
-            ? "已检查 \(discovered.count) 篇，正在跳过已同步文章"
+            ? "已检查 \(discovered.count) 篇，正在建立正文下载队列"
             : "已发现 \(discovered.count) 篇，正在建立正文下载队列"
         statusMessage = isSyncingTrackedCreators
-            ? "已从 Articles 专属列表检查 \(discovered.count) 篇，正在过滤已同步文章"
+            ? "已从 Articles 专属列表检查 \(discovered.count) 篇，正在过滤后开始下载"
             : "已从 Articles 专属列表发现 \(discovered.count) 篇；X API 调用为 0"
-        prepareDirectBrowserCapture(
+        await enqueueBrowserCapture(
             links: discovered.map(\.link),
             refreshExisting: false,
             preferredTitles: Dictionary(
@@ -2154,20 +2153,37 @@ final class AppViewModel: ObservableObject {
         preferredTitles: [String: String] = [:]
     ) {
         guard !links.isEmpty, !isRunning else { return }
+        runningTask = Task { [weak self] in
+            await self?.enqueueBrowserCapture(
+                links: links,
+                refreshExisting: refreshExisting,
+                preferredTitles: preferredTitles
+            )
+        }
+    }
+
+    private func enqueueBrowserCapture(
+        links: [XArticleLink],
+        refreshExisting: Bool,
+        preferredTitles: [String: String] = [:]
+    ) async {
+        guard !links.isEmpty else { return }
         guard let archiveRoot, let database else {
             errorMessage = "归档目录尚未准备好"
+            showingCreatorArticleDiscovery = false
+            isRunning = false
+            finishDownloadProgressWindow()
             return
         }
 
-        runningTask = Task {
-            isRunning = true
-            errorMessage = nil
-            progress = SyncProgress(stage: "正在建立本地采集队列")
-            defer {
-                isRunning = false
-                runningTask = nil
-            }
-            do {
+        isRunning = true
+        errorMessage = nil
+        progress.stage = "正在建立本地采集队列"
+        defer {
+            isRunning = false
+            runningTask = nil
+        }
+        do {
                 var articlesByPostID: [String: ArchivedArticle] = [:]
                 for article in try await database.loadArticles() {
                     articlesByPostID[article.sourcePostID] = article
@@ -2228,6 +2244,10 @@ final class AppViewModel: ObservableObject {
                 progress.discoveredArticles = links.count
                 progress.skippedArticles = localHits
                 guard !requests.isEmpty else {
+                    showingCreatorArticleDiscovery = false
+                    creatorArticleDiscoveryRequests = []
+                    creatorArticleDiscoveryIndex = 0
+                    discoveredCreatorArticles = []
                     finishDownloadProgressWindow()
                     if let creatorCount = activeSyncCreatorCount {
                         let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
@@ -2263,20 +2283,23 @@ final class AppViewModel: ObservableObject {
                     ? "需要保存 \(requests.count) 篇，已同步跳过 \(localHits) 篇；X API 调用为 0"
                     : "已建立 \(requests.count) 篇采集队列；X API 调用为 0"
                 beginBrowserCapture(requests, skippedCount: localHits)
-            } catch {
-                errorMessage = error.localizedDescription
-                progress.stage = "无法建立采集队列"
-                finishDownloadProgressWindow()
-                if isSyncingTrackedCreators {
-                    publishSyncResult(
-                        title: "同步未完成",
-                        message: "无法建立新文章采集队列：\(error.localizedDescription)",
-                        metrics: [
-                            DownloadResultMetric(id: "status", label: "同步状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
-                            DownloadResultMetric(id: "saved", label: "已保存", value: "\(progress.completedArticles)", systemImage: "checkmark.circle.fill", tone: .positive)
-                        ]
-                    )
-                }
+        } catch {
+            showingCreatorArticleDiscovery = false
+            creatorArticleDiscoveryRequests = []
+            creatorArticleDiscoveryIndex = 0
+            discoveredCreatorArticles = []
+            errorMessage = error.localizedDescription
+            progress.stage = "无法建立采集队列"
+            finishDownloadProgressWindow()
+            if isSyncingTrackedCreators {
+                publishSyncResult(
+                    title: "同步未完成",
+                    message: "无法建立新文章采集队列：\(error.localizedDescription)",
+                    metrics: [
+                        DownloadResultMetric(id: "status", label: "同步状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
+                        DownloadResultMetric(id: "saved", label: "已保存", value: "\(progress.completedArticles)", systemImage: "checkmark.circle.fill", tone: .positive)
+                    ]
+                )
             }
         }
     }
@@ -2329,6 +2352,9 @@ final class AppViewModel: ObservableObject {
         progress.failedArticles = 0
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
+        creatorArticleDiscoveryRequests = []
+        creatorArticleDiscoveryIndex = 0
+        discoveredCreatorArticles = []
         showingCreatorArticleDiscovery = false
         showingBrowserCapture = !browserCaptureRequests.isEmpty
         presentDownloadProgressWindowIfAllowed()

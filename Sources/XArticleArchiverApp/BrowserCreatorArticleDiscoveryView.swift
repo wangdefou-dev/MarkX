@@ -96,6 +96,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
             pageStatus = "未找到 Chrome 配置，正在尝试读取公开 Articles 列表…"
         }
         try await Task.sleep(for: .milliseconds(700))
+        try await returnToArticlesListIfNeeded(request)
 
         var orderedItems: [CreatorArticleListItem] = []
         var seenPostIDs = Set<String>()
@@ -205,6 +206,19 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         _ = try await webView.evaluateJavaScript(Self.scrollScript)
     }
 
+    private func returnToArticlesListIfNeeded(_ request: CreatorArticleDiscoveryRequest) async throws {
+        for _ in 0..<8 {
+            try Task.checkCancellation()
+            if let pathname = try await webView.evaluateJavaScript("location.pathname") as? String,
+               XArticleURLParser.isCreatorArticlesListPath(pathname, username: request.username) {
+                return
+            }
+            pageStatus = "当前不在 @\(request.username) 的 Articles 列表，正在重新打开…"
+            load(request)
+            try await Task.sleep(for: .milliseconds(900))
+        }
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
         currentURL = webView.url
@@ -233,20 +247,30 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     private static let discoveryScript = #"""
     const ERROR = "__X_ARTICLE_LIST_ERROR__:";
     const normalizedHandle = String(expectedHandle || '').replace(/^@/, '').toLowerCase();
-    const pathMatch = location.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/articles\/?$/i);
+    const path = String(location.pathname || '').replace(/\/+$/, '') || '/';
+    const pathMatch = path.match(/^(?:\/[a-z]{2}(?:-[A-Za-z]{2})?)?\/([A-Za-z0-9_]{1,15})\/articles$/i);
     if (!pathMatch || pathMatch[1].toLowerCase() !== normalizedHandle) {
       return ERROR + "当前页面不是目标博主的 Articles 列表。";
     }
 
-    const cards = [...document.querySelectorAll('article[data-testid="tweet"]')];
+    const cards = [
+      ...document.querySelectorAll('article[data-testid="tweet"]'),
+      ...document.querySelectorAll('[data-testid="cellInnerDiv"]')
+    ];
     const items = [];
     const seen = new Set();
     for (const card of cards) {
-      const anchors = [...card.querySelectorAll('a[href*="/status/"]')];
+      const anchors = [...card.querySelectorAll('a[href*="/status/"], a[href*="/article/"]')];
       for (const anchor of anchors) {
-        const href = anchor.getAttribute('href') || '';
-        const match = href.match(/^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,19})\/?$/i);
-        if (!match || match[1].toLowerCase() !== normalizedHandle) continue;
+        let resolved;
+        try { resolved = new URL(anchor.getAttribute('href') || '', location.href); }
+        catch (_) { continue; }
+        const host = resolved.hostname.toLowerCase();
+        if (host !== 'x.com' && !host.endsWith('.x.com') && host !== 'twitter.com' && !host.endsWith('.twitter.com')) continue;
+        const match = resolved.pathname.match(/^\/(?:i|([A-Za-z0-9_]{1,15}))\/(?:status|article)\/(\d{1,19})(?:\/|$)/i);
+        if (!match || /\/analytics(?:\/|$)/i.test(resolved.pathname)) continue;
+        const hrefHandle = (match[1] || normalizedHandle).toLowerCase();
+        if (hrefHandle !== 'i' && hrefHandle !== normalizedHandle) continue;
         if (seen.has(match[2])) continue;
         seen.add(match[2]);
         const title = [...card.querySelectorAll('div[dir="auto"]')]
@@ -254,7 +278,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
           .find(Boolean) || `X Article · ${match[2]}`;
         items.push({
           title,
-          url:`https://x.com/${match[1]}/status/${match[2]}`
+          url: `https://x.com/${normalizedHandle}/status/${match[2]}`
         });
       }
     }
