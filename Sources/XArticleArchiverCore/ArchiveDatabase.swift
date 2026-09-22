@@ -198,12 +198,31 @@ public actor ArchiveDatabase {
     }
 
     public func loadArticles() throws -> [ArchivedArticle] {
-        let sql = "SELECT \(Self.articleSelectColumns) FROM articles ORDER BY published_at DESC;"
+        try loadArticles(
+            sql: "SELECT \(Self.articleSelectColumns) FROM articles ORDER BY published_at DESC;",
+            includeProcessingLog: true
+        )
+    }
+
+    /// Fast path for the library window: only X Articles, newest first, and no
+    /// processing-log JSON. Opening 10,000 rows must not decode a log per row.
+    public func loadLibraryArticles() throws -> [ArchivedArticle] {
+        try loadArticles(
+            sql: """
+            SELECT \(Self.articleSelectColumns) FROM articles
+            WHERE content_type = 'x_article'
+            ORDER BY published_at DESC;
+            """,
+            includeProcessingLog: false
+        )
+    }
+
+    private func loadArticles(sql: String, includeProcessingLog: Bool) throws -> [ArchivedArticle] {
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
         var output: [ArchivedArticle] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            if let article = article(from: statement) {
+            if let article = article(from: statement, includeProcessingLog: includeProcessingLog) {
                 output.append(article)
             }
         }
@@ -260,10 +279,10 @@ public actor ArchiveDatabase {
         defer { sqlite3_finalize(statement) }
         bind(value, to: 1, in: statement)
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return article(from: statement)
+        return article(from: statement, includeProcessingLog: true)
     }
 
-    private func article(from statement: OpaquePointer?) -> ArchivedArticle? {
+    private func article(from statement: OpaquePointer?, includeProcessingLog: Bool = true) -> ArchivedArticle? {
         guard let id = UUID(uuidString: text(statement, 0) ?? ""),
               let creatorID = UUID(uuidString: text(statement, 2) ?? ""),
               let stableKey = text(statement, 1),
@@ -281,8 +300,13 @@ public actor ArchiveDatabase {
               let pipeline = PipelineState(rawValue: text(statement, 17) ?? "") else { return nil }
         let warningData = Data((text(statement, 18) ?? "[]").utf8)
         let warnings = (try? JSONDecoder().decode([String].self, from: warningData)) ?? []
-        let processingLogData = Data((text(statement, 20) ?? "[]").utf8)
-        let processingLog = (try? JSONDecoder().decode([String].self, from: processingLogData)) ?? []
+        let processingLog: [String]
+        if includeProcessingLog {
+            let processingLogData = Data((text(statement, 20) ?? "[]").utf8)
+            processingLog = (try? JSONDecoder().decode([String].self, from: processingLogData)) ?? []
+        } else {
+            processingLog = []
+        }
         return ArchivedArticle(
             id: id,
             stableSourceKey: stableKey,
@@ -400,6 +424,7 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_creator_id ON articles(creator_id);
         CREATE INDEX IF NOT EXISTS idx_articles_source_post_id ON articles(source_post_id);
+        CREATE INDEX IF NOT EXISTS idx_articles_content_type_published ON articles(content_type, published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_creators_username ON creators(username COLLATE NOCASE);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
         PRAGMA user_version=6;

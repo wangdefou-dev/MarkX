@@ -1771,6 +1771,10 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(loaded.first?.processingLog, article.processingLog)
         XCTAssertEqual(loaded.first?.isPaidPartnership, true)
         XCTAssertEqual(loaded.first?.paidPartnershipChecked, true)
+
+        let libraryRows = try await database.loadLibraryArticles()
+        XCTAssertEqual(libraryRows.count, 1)
+        XCTAssertTrue(libraryRows.first?.processingLog.isEmpty == true)
     }
 
     func testLoadsOnlyPendingCaptureRowsAndSkipsCommitted() async throws {

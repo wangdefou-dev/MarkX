@@ -54,7 +54,12 @@ final class AppViewModel: ObservableObject {
     @Published var creators: [Creator] = []
     @Published private(set) var pinnedCreatorIDs: [UUID] = []
     @Published var articles: [ArchivedArticle] = []
-    @Published var selectedArticleID: UUID?
+    @Published var selectedArticleID: UUID? {
+        didSet {
+            guard oldValue != selectedArticleID else { return }
+            Task { await hydrateSelectedArticleProcessingLog() }
+        }
+    }
     @Published var sidebarSelection: SidebarSelection? = .all {
         didSet {
             guard oldValue != sidebarSelection else { return }
@@ -127,7 +132,9 @@ final class AppViewModel: ObservableObject {
     private weak var downloadProgressAnchorWindow: NSWindow?
     private var downloadProgressWindowHiddenByUser = false
     private var lastProgressUIPublish = Date.distantPast
+    private var libraryRepairTask: Task<Void, Never>?
     private var todayRefreshTask: Task<Void, Never>?
+    private static let markdownFormatMigrationDefaultsKey = "didMigrateMarkdownFormattingV1"
     private let defaults = UserDefaults.standard
     private static let pinnedCreatorIDsDefaultsKey = "pinnedCreatorIDs"
     private static let maximumPinnedCreators = 5
@@ -396,14 +403,17 @@ final class AppViewModel: ObservableObject {
                 let migration = try ArchiveLayout.migrateLegacyLayout(in: archiveRoot)
                 let openedDatabase = try ArchiveDatabase(url: Self.databaseURL(for: archiveRoot))
                 database = openedDatabase
-                try await migrateArticlePathsAndRebuildIndexes(
-                    at: archiveRoot,
-                    database: openedDatabase
-                )
-                try await reload(repairingArchiveLayout: true)
+                if migration.didChange {
+                    try await migrateArticlePathsAndRebuildIndexes(
+                        at: archiveRoot,
+                        database: openedDatabase
+                    )
+                }
+                try await reload()
                 if migration.didChange {
                     statusMessage = "已把旧版博主目录安全迁移到 Blogger"
                 }
+                startBackgroundLibraryRepair()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -2722,9 +2732,12 @@ final class AppViewModel: ObservableObject {
             let migration = try ArchiveLayout.migrateLegacyLayout(in: root)
             let openedDatabase = try ArchiveDatabase(url: Self.databaseURL(for: root))
             database = openedDatabase
-            try await migrateArticlePathsAndRebuildIndexes(at: root, database: openedDatabase)
-            try await reload(repairingArchiveLayout: true)
+            if migration.didChange {
+                try await migrateArticlePathsAndRebuildIndexes(at: root, database: openedDatabase)
+            }
+            try await reload()
             statusMessage = migration.didChange ? "已迁移旧目录，归档目录已就绪" : "归档目录已就绪"
+            startBackgroundLibraryRepair()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -2758,48 +2771,11 @@ final class AppViewModel: ObservableObject {
         statusMessage = stage
     }
 
-    private func reload(repairingArchiveLayout: Bool = false) async throws {
+    private func reload() async throws {
         guard let database else { return }
         creators = try await database.loadCreators().filter(\.isEnabled)
         reconcilePinnedCreatorIDs()
-        // Older builds also stored Note Posts and assembled threads. Keep the
-        // user's files and rows intact, but never present them as X Articles.
-        var loadedArticles = try await database.loadArticles().filter { $0.contentType == .xArticle }
-        if repairingArchiveLayout, let archiveRoot {
-            for index in loadedArticles.indices {
-                let located = ArchiveLayout.locateMarkdown(
-                    postID: loadedArticles[index].sourcePostID,
-                    storedPath: loadedArticles[index].markdownPath,
-                    in: archiveRoot
-                )
-                let repaired = ArchiveLayout.repairedArticleForAvailableMarkdown(
-                    loadedArticles[index],
-                    markdownPath: located
-                )
-                guard repaired != loadedArticles[index] else { continue }
-                loadedArticles[index] = repaired
-                try await database.upsertArticle(repaired)
-            }
-        }
-        // Builds before 18 could persist the discovery/archive timestamp for a
-        // direct link. Correct every existing UI/database record from the X
-        // Snowflake itself, without touching a possibly user-edited Markdown
-        // file. A later automatic recapture safely rewrites and renames the
-        // exported file through the normal checksum gate.
-        for index in loadedArticles.indices {
-            guard let sourceDate = XArticleURLParser.publishedAt(
-                forPostID: loadedArticles[index].sourcePostID
-            ), abs(loadedArticles[index].publishedAt.timeIntervalSince(sourceDate)) > 1 else { continue }
-            loadedArticles[index].publishedAt = sourceDate
-            try await database.upsertArticle(loadedArticles[index])
-        }
-        if repairingArchiveLayout, let archiveRoot {
-            Self.migrateGeneratedMarkdownFormattingIfSafe(loadedArticles, root: archiveRoot)
-        }
-        articles = loadedArticles.sorted { lhs, rhs in
-            if lhs.publishedAt != rhs.publishedAt { return lhs.publishedAt > rhs.publishedAt }
-            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-        }
+        articles = try await database.loadLibraryArticles()
         if case .creator(let creatorID) = sidebarSelection,
            !creators.contains(where: { $0.id == creatorID }) {
             sidebarSelection = .all
@@ -2807,10 +2783,100 @@ final class AppViewModel: ObservableObject {
         synchronizeSelectedArticleWithSidebar()
     }
 
+    private func startBackgroundLibraryRepair() {
+        libraryRepairTask?.cancel()
+        libraryRepairTask = Task { [weak self] in
+            await self?.repairLibraryInBackground()
+        }
+    }
+
+    private func hydrateSelectedArticleProcessingLog() async {
+        guard let selectedArticleID,
+              let current = articles.first(where: { $0.id == selectedArticleID }),
+              current.processingLog.isEmpty,
+              let database,
+              let full = try? await database.article(sourcePostID: current.sourcePostID),
+              !full.processingLog.isEmpty,
+              let index = articles.firstIndex(where: { $0.id == selectedArticleID }) else { return }
+        articles[index].processingLog = full.processingLog
+    }
+
+    private func repairLibraryInBackground() async {
+        guard let archiveRoot, let database else { return }
+        let snapshot = articles
+        let shouldMigrateFormatting = !defaults.bool(forKey: Self.markdownFormatMigrationDefaultsKey)
+        var pendingUpdates: [UUID: ArchivedArticle] = [:]
+
+        for (offset, article) in snapshot.enumerated() {
+            if Task.isCancelled { return }
+            while isRunning {
+                try? await Task.sleep(for: .milliseconds(400))
+                if Task.isCancelled { return }
+            }
+
+            var updated = article
+            var didChange = false
+            if let sourceDate = XArticleURLParser.publishedAt(forPostID: article.sourcePostID),
+               abs(article.publishedAt.timeIntervalSince(sourceDate)) > 1 {
+                updated.publishedAt = sourceDate
+                didChange = true
+            }
+
+            let pathExists = article.markdownPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
+            if !pathExists {
+                let located = await Task.detached(priority: .utility) {
+                    ArchiveLayout.locateMarkdown(
+                        postID: article.sourcePostID,
+                        storedPath: article.markdownPath,
+                        in: archiveRoot
+                    )
+                }.value
+                let repaired = ArchiveLayout.repairedArticleForAvailableMarkdown(
+                    updated,
+                    markdownPath: located
+                )
+                if repaired != updated {
+                    updated = repaired
+                    didChange = true
+                }
+            }
+
+            if didChange {
+                try? await database.upsertArticle(updated)
+                pendingUpdates[updated.id] = updated
+            }
+            if shouldMigrateFormatting {
+                await Task.detached(priority: .utility) {
+                    Self.migrateGeneratedMarkdownFormattingIfSafe([updated], root: archiveRoot)
+                }.value
+            }
+
+            if (offset + 1).isMultiple(of: 25) {
+                applyBackgroundArticleUpdates(pendingUpdates)
+                pendingUpdates.removeAll(keepingCapacity: true)
+                await Task.yield()
+            }
+        }
+
+        applyBackgroundArticleUpdates(pendingUpdates)
+        if shouldMigrateFormatting {
+            defaults.set(true, forKey: Self.markdownFormatMigrationDefaultsKey)
+        }
+    }
+
+    private func applyBackgroundArticleUpdates(_ updates: [UUID: ArchivedArticle]) {
+        guard !updates.isEmpty else { return }
+        for index in articles.indices {
+            if let updated = updates[articles[index].id] {
+                articles[index] = updated
+            }
+        }
+    }
+
     /// Re-renders only files that still carry a valid exporter checksum. This
     /// upgrades old generated list numbering and list/paragraph boundaries
     /// without ever overwriting a Markdown file the user edited by hand.
-    private static func migrateGeneratedMarkdownFormattingIfSafe(
+    nonisolated private static func migrateGeneratedMarkdownFormattingIfSafe(
         _ articles: [ArchivedArticle],
         root: URL
     ) {
@@ -2858,7 +2924,7 @@ final class AppViewModel: ObservableObject {
         root.appending(path: ".x-article-archiver/archive.sqlite")
     }
 
-    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+    nonisolated private static func isContained(_ candidate: URL, in root: URL) -> Bool {
         let candidatePath = candidate.standardizedFileURL.path
         let rootPath = root.standardizedFileURL.path
         return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
