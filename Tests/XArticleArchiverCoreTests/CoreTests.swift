@@ -2276,6 +2276,62 @@ final class ParallelCreatorArchivePolicyTests: XCTestCase {
     }
 }
 
+final class ArticleCaptureStabilityPolicyTests: XCTestCase {
+    func testRejectsIncompleteSnapshotsAndAcceptsCompleteHTTPSMedia() {
+        let incomplete = BrowserArticleCapturePayload(
+            postID: "1",
+            title: "标题",
+            pageURL: "https://x.com/w/status/1",
+            blocks: [
+                .init(kind: .paragraph, text: "正文"),
+                .init(kind: .image, imageURL: nil, imageID: "img")
+            ]
+        )
+        XCTAssertFalse(ArticleCaptureStabilityPolicy.isStructurallyComplete(incomplete))
+        XCTAssertEqual(
+            ArticleCaptureStabilityPolicy.requiredConsecutiveMatches(
+                blockCount: 2,
+                structurallyComplete: false
+            ),
+            Int.max
+        )
+
+        let complete = BrowserArticleCapturePayload(
+            postID: "1",
+            title: "标题",
+            pageURL: "https://x.com/w/status/1",
+            blocks: [
+                .init(kind: .paragraph, text: "正文"),
+                .init(kind: .image, imageURL: "https://pbs.twimg.com/media/a.jpg", imageID: "img")
+            ]
+        )
+        XCTAssertTrue(ArticleCaptureStabilityPolicy.isStructurallyComplete(complete))
+        XCTAssertEqual(
+            ArticleCaptureStabilityPolicy.requiredConsecutiveMatches(
+                blockCount: 2,
+                structurallyComplete: true
+            ),
+            2
+        )
+        XCTAssertEqual(
+            ArticleCaptureStabilityPolicy.requiredConsecutiveMatches(
+                blockCount: 1,
+                structurallyComplete: true
+            ),
+            4
+        )
+    }
+
+    func testPollsFasterWhileThePageIsStillLoading() {
+        XCTAssertLessThan(
+            ArticleCaptureStabilityPolicy.pollNanoseconds(isLoading: true),
+            ArticleCaptureStabilityPolicy.pollNanoseconds(isLoading: false)
+        )
+        XCTAssertTrue(ArticleCaptureStabilityPolicy.shouldSettleAfterLoad(didJustImportCookies: true))
+        XCTAssertFalse(ArticleCaptureStabilityPolicy.shouldSettleAfterLoad(didJustImportCookies: false))
+    }
+}
+
 final class ExactCaptureQueuePolicyTests: XCTestCase {
     private let creatorID = UUID()
 

@@ -157,24 +157,25 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             pageStatus = "正在释放浏览器内存后继续保存…"
             recycleWebView()
         }
+        var didJustImportCookies = false
         if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
             let session = try await importChromeSession()
             pageStatus = "已自动使用 Chrome「\(session.profileName)」登录状态，正在等待完整排版…"
+            didJustImportCookies = true
         } else if !hasImportedChromeSession {
             pageStatus = "未找到 Chrome 配置，正在尝试读取公开文章…"
         }
         load(request)
         pagesSinceRecycle += 1
-
-        // Give the authenticated reload a chance to replace any guest page
-        // that may have started loading just before the cookies were copied.
-        try await Task.sleep(for: .milliseconds(700))
+        if ArticleCaptureStabilityPolicy.shouldSettleAfterLoad(didJustImportCookies: didJustImportCookies) {
+            try await Task.sleep(nanoseconds: ArticleCaptureStabilityPolicy.cookieImportSettleNanoseconds)
+        }
 
         var previousPayload: BrowserArticleCapturePayload?
         var stableMatches = 0
         var lastNotReadyReason = "X Article 页面仍在加载"
 
-        for _ in 0..<90 {
+        for _ in 0..<ArticleCaptureStabilityPolicy.maxPolls {
             try Task.checkCancellation()
             if !isLoading {
                 do {
@@ -182,31 +183,37 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                         updateStatus: false,
                         expectedCreatorHandle: request.creator.username
                     )
-                    if payload == previousPayload {
+                    let complete = ArticleCaptureStabilityPolicy.isStructurallyComplete(payload)
+                    if complete, payload == previousPayload {
                         stableMatches += 1
                     } else {
                         previousPayload = payload
                         stableMatches = 0
                     }
-
+                    let required = ArticleCaptureStabilityPolicy.requiredConsecutiveMatches(
+                        blockCount: payload.blocks.count,
+                        structurallyComplete: complete
+                    )
                     let imageCount = payload.blocks.filter { $0.kind == .image }.count
-                    // A valid X Article may contain one very large DraftJS
-                    // paragraph instead of several blocks. Give that shape a
-                    // longer stability window rather than rejecting it or
-                    // accepting a briefly half-rendered page.
-                    let requiredStableMatches = payload.blocks.count == 1 ? 8 : 3
-                    pageStatus = stableMatches >= requiredStableMatches
-                        ? "完整排版已稳定，正在自动保存…"
-                        : payload.blocks.count == 1
-                            ? "已读取单块长文，正在延长检查内容稳定性…"
-                            : "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片，正在确认内容完整…"
-                    if stableMatches >= requiredStableMatches { return payload }
+                    if complete, stableMatches >= required {
+                        pageStatus = "完整排版已稳定，正在自动保存…"
+                        return payload
+                    }
+                    pageStatus = complete
+                        ? (payload.blocks.count == 1
+                            ? "已读取单块长文，正在确认内容不再变化…"
+                            : "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片，正在确认内容完整…")
+                        : "正在等待图片和正文加载完整…"
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
                     lastNotReadyReason = detail
+                    previousPayload = nil
+                    stableMatches = 0
                     pageStatus = "已使用 Chrome 登录状态，正在等待正文完整加载…"
                 }
             }
-            try await Task.sleep(for: .milliseconds(750))
+            try await Task.sleep(
+                nanoseconds: ArticleCaptureStabilityPolicy.pollNanoseconds(isLoading: isLoading)
+            )
         }
 
         throw BrowserArticleCaptureError.pageNotReady(lastNotReadyReason)
@@ -1091,14 +1098,12 @@ struct BrowserArticleCaptureView: View {
             do {
                 let payload = try await controller.captureAutomatically(request)
                 try Task.checkCancellation()
-                let outcome = await model.archiveBrowserCapture(payload, request: request)
-                switch outcome {
-                case .saved, .failed:
-                    model.advanceBrowserCapture()
-                case .stopped:
+                if model.isCaptureStopRequested {
                     controller.pageStatus = "采集已停止，未覆盖本地文件"
                     return
                 }
+                await model.scheduleCapturedArticleArchive(payload, request: request)
+                model.advanceBrowserCapture()
             } catch is CancellationError {
                 return
             } catch {

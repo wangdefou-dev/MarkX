@@ -118,6 +118,7 @@ final class AppViewModel: ObservableObject {
     private var sessionAcceptedCaptureCount = 0
     private var creatorDiscoveryFinished = true
     private var captureIdleWaitingForDiscovery = false
+    private var inflightArticleArchives: [Task<Void, Never>] = []
     private var browserCaptureStopRequested = false
     private var activeArchiveOperation: ActiveArchiveOperation = .download
     private var scheduledRunActive = false
@@ -248,6 +249,8 @@ final class AppViewModel: ObservableObject {
     var sessionQueuedCaptureCount: Int {
         max(sessionAcceptedCaptureCount, browserCaptureRequests.count)
     }
+
+    var isCaptureStopRequested: Bool { browserCaptureStopRequested }
 
     var currentCreatorArticleDiscoveryRequest: CreatorArticleDiscoveryRequest? {
         guard creatorArticleDiscoveryRequests.indices.contains(creatorArticleDiscoveryIndex) else { return nil }
@@ -1089,6 +1092,7 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryIndex = 0
         seenDiscoveredPostIDs = []
         sessionAcceptedCaptureCount = 0
+        inflightArticleArchives.removeAll()
         creatorDiscoveryFinished = false
         captureIdleWaitingForDiscovery = false
         showingBrowserCapture = false
@@ -1481,10 +1485,35 @@ final class AppViewModel: ObservableObject {
             statusMessage = "已保存的文章保留；正在读取下一位博主的 Articles 列表"
             return
         }
-        presentCaptureSessionResults()
+        await presentCaptureSessionResults()
     }
 
-    private func presentCaptureSessionResults() {
+    func scheduleCapturedArticleArchive(
+        _ payload: BrowserArticleCapturePayload,
+        request: BrowserCaptureRequest
+    ) async {
+        while inflightArticleArchives.count >= 2 {
+            let oldest = inflightArticleArchives.removeFirst()
+            await oldest.value
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            _ = await self.archiveBrowserCapture(payload, request: request)
+        }
+        inflightArticleArchives.append(task)
+    }
+
+    private func waitForInflightArticleArchives() async {
+        let tasks = inflightArticleArchives
+        inflightArticleArchives.removeAll()
+        for task in tasks {
+            await task.value
+        }
+    }
+
+    private func presentCaptureSessionResults() async {
+        await waitForInflightArticleArchives()
+
         let total = browserCaptureRequests.count
         let completed = browserCaptureSavedPostIDs.count
         let skippedSubscription = browserCaptureSkippedSubscriptionCount
@@ -1655,7 +1684,9 @@ final class AppViewModel: ObservableObject {
                     : "处理失败：\(error.localizedDescription)"
             )
             try? await database.upsertArticle(failed)
-            try? await reload()
+            if !showingBrowserCapture {
+                try? await reload()
+            }
         }
         statusMessage = requiresSubscription
             ? "《\(request.displayTitle)》需要订阅，已保留任务并继续下一篇"
@@ -1869,7 +1900,13 @@ final class AppViewModel: ObservableObject {
                 0,
                 browserCaptureFailurePostIDs.count - browserCaptureSubscriptionPostIDs.count
             )
-            try await reload()
+            if showingBrowserCapture {
+                if let index = articles.firstIndex(where: { $0.id == archived.id }) {
+                    articles[index] = archived
+                }
+            } else {
+                try await reload()
+            }
             selectedArticleID = archived.id
             statusMessage = "已保存完整排版：\(document.title)"
             return .saved
