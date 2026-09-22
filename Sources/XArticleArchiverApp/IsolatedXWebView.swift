@@ -17,5 +17,6 @@ enum IsolatedXWebView {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.load(URLRequest(url: URL(string: "about:blank")!))
+        webView.removeFromSuperview()
     }
 }

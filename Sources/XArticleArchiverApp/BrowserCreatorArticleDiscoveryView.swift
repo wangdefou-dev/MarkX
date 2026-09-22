@@ -101,6 +101,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         if BrowserProcessBudget.shouldRecycleDiscovery(creatorsSinceRecycle: creatorsSinceRecycle) {
             pageStatus = "正在释放浏览器内存后继续读取列表…"
             recycleWebView()
+            await Task.yield()
         }
         load(request)
         if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {

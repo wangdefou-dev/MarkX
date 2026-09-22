@@ -126,6 +126,7 @@ final class AppViewModel: ObservableObject {
     private var downloadProgressWindowDelegate: DownloadProgressWindowDelegate?
     private weak var downloadProgressAnchorWindow: NSWindow?
     private var downloadProgressWindowHiddenByUser = false
+    private var lastProgressUIPublish = Date.distantPast
     private var todayRefreshTask: Task<Void, Never>?
     private let defaults = UserDefaults.standard
     private static let pinnedCreatorIDsDefaultsKey = "pinnedCreatorIDs"
@@ -399,7 +400,7 @@ final class AppViewModel: ObservableObject {
                     at: archiveRoot,
                     database: openedDatabase
                 )
-                try await reload()
+                try await reload(repairingArchiveLayout: true)
                 if migration.didChange {
                     statusMessage = "已把旧版博主目录安全迁移到 Blogger"
                 }
@@ -1878,17 +1879,16 @@ final class AppViewModel: ObservableObject {
                 sourceArticleID: request.sourceArticleID,
                 expectedPlainText: request.expectedPlainText
             )
-            let document = try BrowserArticleCaptureDecoder.decode(payload, context: context)
+            let document = try await Task.detached(priority: .userInitiated) {
+                try BrowserArticleCaptureDecoder.decode(payload, context: context)
+            }.value
             let pipeline = ArchivePipeline(database: database, imageHost: imageHost)
             let archived = try await pipeline.archive(
                 document: document,
                 creator: creator,
                 root: archiveRoot
             ) { [weak self] stage in
-                await MainActor.run {
-                    self?.progress.stage = stage
-                    self?.statusMessage = stage
-                }
+                await self?.publishThrottledProgress(stage)
             }
             progress.completedArticles += 1
             browserCaptureSavedPostIDs.insert(request.link.postID)
@@ -2551,11 +2551,15 @@ final class AppViewModel: ObservableObject {
                 await Task.yield()
             }
             let existing = try await database.article(sourcePostID: link.postID)
-            if !refreshExisting,
-               let existing,
-               Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {
-                skipped += 1
-                continue
+            if !refreshExisting, let existing {
+                let root = archiveRoot
+                let isExact = await Task.detached(priority: .utility) {
+                    Self.hasExactValidatedLocalArchive(existing, root: root)
+                }.value
+                if isExact {
+                    skipped += 1
+                    continue
+                }
             }
 
             var creator = creatorsByUsername[link.username.lowercased()]
@@ -2683,7 +2687,7 @@ final class AppViewModel: ObservableObject {
         return false
     }
 
-    private static func hasExactValidatedLocalArchive(_ article: ArchivedArticle, root: URL) -> Bool {
+    nonisolated private static func hasExactValidatedLocalArchive(_ article: ArchivedArticle, root: URL) -> Bool {
         guard article.pipelineState == .committed,
               let markdownPath = ArchiveLayout.locateMarkdown(
                 postID: article.sourcePostID,
@@ -2719,7 +2723,7 @@ final class AppViewModel: ObservableObject {
             let openedDatabase = try ArchiveDatabase(url: Self.databaseURL(for: root))
             database = openedDatabase
             try await migrateArticlePathsAndRebuildIndexes(at: root, database: openedDatabase)
-            try await reload()
+            try await reload(repairingArchiveLayout: true)
             statusMessage = migration.didChange ? "已迁移旧目录，归档目录已就绪" : "归档目录已就绪"
         } catch {
             errorMessage = error.localizedDescription
@@ -2746,14 +2750,22 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func reload() async throws {
+    private func publishThrottledProgress(_ stage: String, force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastProgressUIPublish) >= 0.35 else { return }
+        lastProgressUIPublish = now
+        progress.stage = stage
+        statusMessage = stage
+    }
+
+    private func reload(repairingArchiveLayout: Bool = false) async throws {
         guard let database else { return }
         creators = try await database.loadCreators().filter(\.isEnabled)
         reconcilePinnedCreatorIDs()
         // Older builds also stored Note Posts and assembled threads. Keep the
         // user's files and rows intact, but never present them as X Articles.
         var loadedArticles = try await database.loadArticles().filter { $0.contentType == .xArticle }
-        if let archiveRoot {
+        if repairingArchiveLayout, let archiveRoot {
             for index in loadedArticles.indices {
                 let located = ArchiveLayout.locateMarkdown(
                     postID: loadedArticles[index].sourcePostID,
@@ -2781,7 +2793,7 @@ final class AppViewModel: ObservableObject {
             loadedArticles[index].publishedAt = sourceDate
             try await database.upsertArticle(loadedArticles[index])
         }
-        if let archiveRoot {
+        if repairingArchiveLayout, let archiveRoot {
             Self.migrateGeneratedMarkdownFormattingIfSafe(loadedArticles, root: archiveRoot)
         }
         articles = loadedArticles.sorted { lhs, rhs in

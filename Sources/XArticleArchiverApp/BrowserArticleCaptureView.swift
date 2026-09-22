@@ -10,6 +10,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     @Published var isImportingChromeSession = false
     @Published var isAutomaticCaptureRunning = false
     @Published var pageStatus = "正在准备 X 页面…"
+    private var lastPageStatusPublish = Date.distantPast
     @Published var currentURL: URL?
     @Published var popupWebView: WKWebView?
     @Published private(set) var webViewEpoch = 0
@@ -112,12 +113,12 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         }
         if json.hasPrefix(Self.diagnosticPrefix) {
             let diagnosticJSON = String(json.dropFirst(Self.diagnosticPrefix.count))
-            guard let diagnostic = try? JSONDecoder().decode(
-                BrowserArticlePageDiagnostic.self,
-                from: Data(diagnosticJSON.utf8)
-            ) else {
-                throw BrowserArticleCaptureError.pageNotReady("页面访问状态无法识别，请重新加载后再试")
-            }
+            let diagnostic = try await Task.detached(priority: .userInitiated) {
+                try JSONDecoder().decode(
+                    BrowserArticlePageDiagnostic.self,
+                    from: Data(diagnosticJSON.utf8)
+                )
+            }.value
             if BrowserArticleAccessGateDetector.isSubscriptionRequired(diagnostic) {
                 let creatorHandle = HandleParser.normalize(diagnostic.authorHandle ?? "")
                     ?? HandleParser.normalize(expectedCreatorHandle ?? "")
@@ -127,15 +128,29 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                 "未找到完整的 X Article 正文。请确认已登录、当前链接是 Article，并等待页面加载完成。"
             )
         }
-        let payload = try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
+        let payload = try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
+        }.value
         let imageCount = payload.blocks.filter { $0.kind == .image }.count
         let codeCount = payload.blocks.filter { $0.kind == .code }.count
         let tableCount = payload.blocks.filter { $0.kind == .table }.count
         let embeddedMediaCount = payload.blocks.filter { $0.kind == .embeddedMedia }.count
         if updateStatus {
-            pageStatus = "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片、\(tableCount) 个表格、\(codeCount) 个代码块、\(embeddedMediaCount) 个嵌入媒体"
+            setPageStatus(
+                "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片、\(tableCount) 个表格、\(codeCount) 个代码块、\(embeddedMediaCount) 个嵌入媒体",
+                force: true
+            )
         }
         return payload
+    }
+
+    private func setPageStatus(_ text: String, force: Bool = false) {
+        let now = Date()
+        guard force || text != pageStatus || now.timeIntervalSince(lastPageStatusPublish) >= 0.4 else {
+            return
+        }
+        lastPageStatusPublish = now
+        pageStatus = text
     }
 
     /// Default capture path: copy the already-authenticated X cookies from
@@ -154,8 +169,9 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         }
 
         if BrowserProcessBudget.shouldRecycleCapture(pagesSinceRecycle: pagesSinceRecycle) {
-            pageStatus = "正在释放浏览器内存后继续保存…"
+            setPageStatus("正在释放浏览器内存后继续保存…", force: true)
             recycleWebView()
+            await Task.yield()
         }
         var didJustImportCookies = false
         if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
@@ -196,19 +212,21 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     )
                     let imageCount = payload.blocks.filter { $0.kind == .image }.count
                     if complete, stableMatches >= required {
-                        pageStatus = "完整排版已稳定，正在自动保存…"
+                        setPageStatus("完整排版已稳定，正在自动保存…", force: true)
                         return payload
                     }
-                    pageStatus = complete
-                        ? (payload.blocks.count == 1
-                            ? "已读取单块长文，正在确认内容不再变化…"
-                            : "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片，正在确认内容完整…")
-                        : "正在等待图片和正文加载完整…"
+                    setPageStatus(
+                        complete
+                            ? (payload.blocks.count == 1
+                                ? "已读取单块长文，正在确认内容不再变化…"
+                                : "已读取 \(payload.blocks.count) 个排版块、\(imageCount) 张图片，正在确认内容完整…")
+                            : "正在等待图片和正文加载完整…"
+                    )
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
                     lastNotReadyReason = detail
                     previousPayload = nil
                     stableMatches = 0
-                    pageStatus = "已使用 Chrome 登录状态，正在等待正文完整加载…"
+                    setPageStatus("已使用 Chrome 登录状态，正在等待正文完整加载…")
                 }
             }
             try await Task.sleep(
