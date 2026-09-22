@@ -52,3 +52,42 @@ public enum ParallelCreatorArchivePolicy {
         discoveryFinished && captureIdle
     }
 }
+
+/// Keeps bulk archive jobs from pinning a single X.com WKWebView for tens of
+/// thousands of navigations, or holding the whole download queue in RAM.
+public enum BrowserProcessBudget {
+    public static let capturePagesPerRecycle = 12
+    public static let discoveryCreatorsPerRecycle = 4
+    public static let inMemoryCaptureQueueLimit = 32
+    public static let keepCompletedInMemory = 6
+    public static let progressListWindow = 20
+    public static let refillBelowRemaining = 8
+
+    public static func shouldRecycleCapture(pagesSinceRecycle: Int) -> Bool {
+        pagesSinceRecycle >= capturePagesPerRecycle
+    }
+
+    public static func shouldRecycleDiscovery(creatorsSinceRecycle: Int) -> Bool {
+        creatorsSinceRecycle >= discoveryCreatorsPerRecycle
+    }
+
+    public static func acceptedCapacity(currentCount: Int, incomingCount: Int) -> Int {
+        max(0, min(incomingCount, inMemoryCaptureQueueLimit - currentCount))
+    }
+
+    public static func compactDropCount(currentIndex: Int) -> Int {
+        max(0, currentIndex - keepCompletedInMemory)
+    }
+
+    public static func remainingAfterCurrent(count: Int, currentIndex: Int) -> Int {
+        max(0, count - currentIndex - 1)
+    }
+
+    public static func progressWindowRange(count: Int, currentIndex: Int) -> Range<Int> {
+        guard count > 0 else { return 0..<0 }
+        let clampedIndex = min(max(currentIndex, 0), count - 1)
+        let start = max(0, clampedIndex - 4)
+        let end = min(count, max(clampedIndex + 1, start + progressListWindow))
+        return start..<end
+    }
+}

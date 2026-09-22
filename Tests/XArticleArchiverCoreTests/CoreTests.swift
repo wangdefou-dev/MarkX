@@ -1773,6 +1773,47 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(loaded.first?.paidPartnershipChecked, true)
     }
 
+    func testLoadsOnlyPendingCaptureRowsAndSkipsCommitted() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "x-archive-db-pending-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try ArchiveDatabase(url: root.appending(path: "archive.sqlite"))
+        let creator = Creator(xUserID: "u-pending", username: "pending", displayName: "待处理")
+        try await database.upsertCreator(creator)
+        let committed = ArchivedArticle(
+            stableSourceKey: "done",
+            creatorID: creator.id,
+            title: "已完成",
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/pending/status/1")!,
+            sourcePostID: "1",
+            publishedAt: Date(timeIntervalSince1970: 2),
+            sourceChecksum: "a",
+            pipelineState: .committed
+        )
+        let pending = ArchivedArticle(
+            stableSourceKey: "todo",
+            creatorID: creator.id,
+            title: "待下载",
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/pending/status/2")!,
+            sourcePostID: "2",
+            publishedAt: Date(timeIntervalSince1970: 1),
+            sourceChecksum: "b",
+            pipelineState: .discovered
+        )
+        try await database.upsertArticle(committed)
+        try await database.upsertArticle(pending)
+        let loaded = try await database.loadArticlesNeedingCapture(limit: 10, excludingPostIDs: [])
+        XCTAssertEqual(loaded.map(\.sourcePostID), ["2"])
+        let pendingCount = try await database.countArticlesNeedingCapture()
+        XCTAssertEqual(pendingCount, 1)
+        let skippedSelf = try await database.loadArticlesNeedingCapture(limit: 10, excludingPostIDs: ["2"])
+        XCTAssertTrue(skippedSelf.isEmpty)
+    }
+
     func testMigratesVersionThreeCreatorTableForKnownArticleCount() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "x-archive-db-migration-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -2217,6 +2258,20 @@ final class ParallelCreatorArchivePolicyTests: XCTestCase {
                 discoveryFinished: true,
                 captureIdle: true
             )
+        )
+    }
+
+    func testBrowserProcessBudgetRecyclesAndWindowsTheQueue() {
+        XCTAssertFalse(BrowserProcessBudget.shouldRecycleCapture(pagesSinceRecycle: 0))
+        XCTAssertTrue(BrowserProcessBudget.shouldRecycleCapture(pagesSinceRecycle: 12))
+        XCTAssertFalse(BrowserProcessBudget.shouldRecycleDiscovery(creatorsSinceRecycle: 3))
+        XCTAssertTrue(BrowserProcessBudget.shouldRecycleDiscovery(creatorsSinceRecycle: 4))
+        XCTAssertEqual(BrowserProcessBudget.acceptedCapacity(currentCount: 30, incomingCount: 10), 2)
+        XCTAssertEqual(BrowserProcessBudget.compactDropCount(currentIndex: 10), 4)
+        XCTAssertEqual(BrowserProcessBudget.remainingAfterCurrent(count: 12, currentIndex: 3), 8)
+        XCTAssertEqual(
+            BrowserProcessBudget.progressWindowRange(count: 80, currentIndex: 40),
+            36..<56
         )
     }
 }

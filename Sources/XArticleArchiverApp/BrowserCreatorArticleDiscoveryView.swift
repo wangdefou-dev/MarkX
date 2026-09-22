@@ -22,18 +22,27 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     @Published var currentURL: URL?
     @Published var discoveredItems: [CreatorArticleListItem] = []
     @Published var discoveredCount = 0
+    @Published private(set) var webViewEpoch = 0
 
-    let webView: WKWebView
+    private(set) var webView: WKWebView
     private var currentListURL: URL?
+    private var creatorsSinceRecycle = 0
+    private var hasImportedChromeSession = false
 
     override init() {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = IsolatedXWebView.make()
         super.init()
         webView.navigationDelegate = self
-        webView.allowsMagnification = true
+    }
+
+    private func recycleWebView() {
+        IsolatedXWebView.retire(webView)
+        webView = IsolatedXWebView.make()
+        webView.navigationDelegate = self
+        hasImportedChromeSession = false
+        creatorsSinceRecycle = 0
+        currentListURL = nil
+        webViewEpoch += 1
     }
 
     func load(_ request: CreatorArticleDiscoveryRequest) {
@@ -66,6 +75,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         for cookie in session.cookies {
             await cookieStore.setCookie(cookie)
         }
+        hasImportedChromeSession = true
         pageStatus = "已导入 Chrome「\(session.profileName)」登录状态，正在刷新 Articles 列表…"
         if let currentListURL {
             webView.load(URLRequest(
@@ -88,13 +98,18 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         discoveredCount = 0
         defer { isDiscovering = false }
 
+        if BrowserProcessBudget.shouldRecycleDiscovery(creatorsSinceRecycle: creatorsSinceRecycle) {
+            pageStatus = "正在释放浏览器内存后继续读取列表…"
+            recycleWebView()
+        }
         load(request)
-        if ChromeXSessionReader.hasLocalChromeProfile() {
+        if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
             let session = try await importChromeSession()
             pageStatus = "已使用 Chrome「\(session.profileName)」登录状态，正在只读取 Articles 列表…"
-        } else {
+        } else if !hasImportedChromeSession {
             pageStatus = "未找到 Chrome 配置，正在尝试读取公开 Articles 列表…"
         }
+        creatorsSinceRecycle += 1
         try await Task.sleep(for: .milliseconds(700))
         try await returnToArticlesListIfNeeded(request)
 
@@ -331,6 +346,7 @@ struct BrowserCreatorArticleDiscoveryView: View {
             // surface above it makes the browser entirely invisible to users.
             ZStack {
                 BrowserWebView(webView: controller.webView)
+                    .id(controller.webViewEpoch)
                     .frame(width: 1_100, height: 800)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)

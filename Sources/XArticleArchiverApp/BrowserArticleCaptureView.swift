@@ -12,26 +12,34 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     @Published var pageStatus = "正在准备 X 页面…"
     @Published var currentURL: URL?
     @Published var popupWebView: WKWebView?
+    @Published private(set) var webViewEpoch = 0
 
-    let webView: WKWebView
+    private(set) var webView: WKWebView
+    private var pagesSinceRecycle = 0
+    private var hasImportedChromeSession = false
 
     var visibleWebView: WKWebView { popupWebView ?? webView }
     var canGoBack: Bool { visibleWebView.canGoBack }
 
     override init() {
-        let configuration = WKWebViewConfiguration()
-        // Chrome cookies are copied into this in-memory store only. The user
-        // can reuse the active Chrome login without creating a second,
-        // persistent browser profile inside the archiver.
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = IsolatedXWebView.make(allowPopups: true)
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.allowsMagnification = true
         webView.customUserAgent = nil
+    }
+
+    private func recycleWebView() {
+        IsolatedXWebView.retire(webView)
+        closeLoginWindow(reloadArticle: false)
+        webView = IsolatedXWebView.make(allowPopups: true)
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.customUserAgent = nil
+        hasImportedChromeSession = false
+        pagesSinceRecycle = 0
+        currentArticleURL = nil
+        webViewEpoch += 1
     }
 
     func load(_ request: BrowserCaptureRequest) {
@@ -81,16 +89,8 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             await cookieStore.setCookie(cookie)
         }
         closeLoginWindow(reloadArticle: false)
-        pageStatus = "已导入 Chrome「\(session.profileName)」的 X 登录状态，正在刷新文章…"
-        if let currentArticleURL {
-            webView.load(URLRequest(
-                url: currentArticleURL,
-                cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
-                timeoutInterval: 60
-            ))
-        } else {
-            webView.reload()
-        }
+        hasImportedChromeSession = true
+        pageStatus = "已导入 Chrome「\(session.profileName)」的 X 登录状态"
         return session
     }
 
@@ -153,13 +153,18 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             return try await captureDisclosure(request)
         }
 
-        load(request)
-        if ChromeXSessionReader.hasLocalChromeProfile() {
+        if BrowserProcessBudget.shouldRecycleCapture(pagesSinceRecycle: pagesSinceRecycle) {
+            pageStatus = "正在释放浏览器内存后继续保存…"
+            recycleWebView()
+        }
+        if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
             let session = try await importChromeSession()
             pageStatus = "已自动使用 Chrome「\(session.profileName)」登录状态，正在等待完整排版…"
-        } else {
+        } else if !hasImportedChromeSession {
             pageStatus = "未找到 Chrome 配置，正在尝试读取公开文章…"
         }
+        load(request)
+        pagesSinceRecycle += 1
 
         // Give the authenticated reload a chance to replace any guest page
         // that may have started loading just before the cookies were copied.
@@ -208,13 +213,13 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     }
 
     private func captureDisclosure(_ request: BrowserCaptureRequest) async throws -> BrowserArticleCapturePayload {
-        load(request)
-        if ChromeXSessionReader.hasLocalChromeProfile() {
+        if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
             let session = try await importChromeSession()
             pageStatus = "已自动使用 Chrome「\(session.profileName)」登录状态，正在核对商单内容…"
-        } else {
+        } else if !hasImportedChromeSession {
             pageStatus = "未找到 Chrome 配置，正在尝试核对公开文章的商单标记…"
         }
+        load(request)
         try await Task.sleep(for: .milliseconds(700))
 
         var lastNotReadyReason = "X Article 页面仍在加载"
@@ -1067,6 +1072,7 @@ struct BrowserArticleCaptureView: View {
             // both the main page and any X popup with the native progress UI.
             ZStack {
                 BrowserWebView(webView: controller.webView)
+                    .id(controller.webViewEpoch)
                     .frame(width: 1_100, height: 820)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -1155,7 +1161,7 @@ struct BrowserArticleCaptureView: View {
                 Text(model.isRunning ? model.progress.stage : controller.pageStatus)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text("保存 \(model.progress.completedArticles) · 跳过 \(model.progress.skippedArticles) · 需订阅 \(model.browserCaptureSubscriptionRequiredCount) · 失败 \(model.progress.failedArticles) · 图片 \(model.progress.uploadedImages) · 视频 \(model.progress.uploadedVideos)")
+                Text(captureSummaryText)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -1177,7 +1183,7 @@ struct BrowserArticleCaptureView: View {
 
     private var downloadQueue: some View {
         List {
-            ForEach(model.browserCaptureRequests) { item in
+            ForEach(model.visibleBrowserCaptureRequests) { item in
                 let state = model.browserCaptureState(for: item)
                 HStack(alignment: .top, spacing: 11) {
                     Image(systemName: state.systemImage)
@@ -1253,11 +1259,17 @@ struct BrowserArticleCaptureView: View {
     }
 
     private var downloadCount: Int {
-        max(model.browserCaptureRequests.count, 1)
+        max(model.sessionQueuedCaptureCount, 1)
     }
 
     private var currentDownloadNumber: Int {
-        min(model.browserCaptureIndex + 1, downloadCount)
+        min(model.progress.completedArticles + 1, downloadCount)
+    }
+
+    private var captureSummaryText: String {
+        let backlog = model.captureBacklogCount
+        let backlogNote = backlog > 0 ? " · 磁盘队列 \(backlog)" : ""
+        return "保存 \(model.progress.completedArticles) · 跳过 \(model.progress.skippedArticles) · 需订阅 \(model.browserCaptureSubscriptionRequiredCount) · 失败 \(model.progress.failedArticles) · 图片 \(model.progress.uploadedImages) · 视频 \(model.progress.uploadedVideos)\(backlogNote)"
     }
 
     private func color(for state: BackgroundDownloadItemState) -> Color {

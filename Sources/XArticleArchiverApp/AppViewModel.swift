@@ -114,7 +114,8 @@ final class AppViewModel: ObservableObject {
     private var browserCaptureSubscriptionPostIDs = Set<String>()
     private var browserCaptureSkippedSubscriptionCount = 0
     private var browserCaptureFailureDetails: [String] = []
-    private var discoveredCreatorArticles: [CreatorArticleListItem] = []
+    private var seenDiscoveredPostIDs = Set<String>()
+    private var sessionAcceptedCaptureCount = 0
     private var creatorDiscoveryFinished = true
     private var captureIdleWaitingForDiscovery = false
     private var browserCaptureStopRequested = false
@@ -230,6 +231,22 @@ final class AppViewModel: ObservableObject {
     var currentBrowserCaptureRequest: BrowserCaptureRequest? {
         guard browserCaptureRequests.indices.contains(browserCaptureIndex) else { return nil }
         return browserCaptureRequests[browserCaptureIndex]
+    }
+
+    var visibleBrowserCaptureRequests: [BrowserCaptureRequest] {
+        let range = BrowserProcessBudget.progressWindowRange(
+            count: browserCaptureRequests.count,
+            currentIndex: browserCaptureIndex
+        )
+        return Array(browserCaptureRequests[range])
+    }
+
+    var captureBacklogCount: Int {
+        max(0, sessionAcceptedCaptureCount - browserCaptureRequests.count)
+    }
+
+    var sessionQueuedCaptureCount: Int {
+        max(sessionAcceptedCaptureCount, browserCaptureRequests.count)
     }
 
     var currentCreatorArticleDiscoveryRequest: CreatorArticleDiscoveryRequest? {
@@ -1070,7 +1087,8 @@ final class AppViewModel: ObservableObject {
             )
         }
         creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
+        seenDiscoveredPostIDs = []
+        sessionAcceptedCaptureCount = 0
         creatorDiscoveryFinished = false
         captureIdleWaitingForDiscovery = false
         showingBrowserCapture = false
@@ -1167,7 +1185,7 @@ final class AppViewModel: ObservableObject {
             showingCreatorArticleDiscovery = false
             creatorArticleDiscoveryRequests = []
             creatorArticleDiscoveryIndex = 0
-            discoveredCreatorArticles = []
+            seenDiscoveredPostIDs = []
             isRunning = false
             finishDownloadProgressWindow()
             progress.stage = "线上文章总数刷新完成"
@@ -1184,13 +1202,11 @@ final class AppViewModel: ObservableObject {
             activeArchiveOperation = .download
             return
         }
-        var knownPostIDs = Set(discoveredCreatorArticles.map(\.link.postID))
         var newItems: [CreatorArticleListItem] = []
-        for item in result.items where knownPostIDs.insert(item.link.postID).inserted {
-            discoveredCreatorArticles.append(item)
+        for item in result.items where seenDiscoveredPostIDs.insert(item.link.postID).inserted {
             newItems.append(item)
         }
-        progress.discoveredArticles = discoveredCreatorArticles.count
+        progress.discoveredArticles += newItems.count
         await feedDiscoveredArticlesToCaptureQueue(newItems)
 
         let next = creatorArticleDiscoveryIndex + 1
@@ -1209,7 +1225,7 @@ final class AppViewModel: ObservableObject {
         showingCreatorArticleDiscovery = false
         creatorArticleDiscoveryRequests = []
         creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
+        seenDiscoveredPostIDs = []
         if showingBrowserCapture, !captureIdleWaitingForDiscovery {
             progress.stage = "文章列表已读完，正文下载继续进行"
             statusMessage = "所有博主的 Articles 列表已读完，正在继续保存正文"
@@ -1222,7 +1238,7 @@ final class AppViewModel: ObservableObject {
         showingCreatorArticleDiscovery = false
         creatorArticleDiscoveryRequests = []
         creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
+        seenDiscoveredPostIDs = []
         creatorDiscoveryFinished = true
         if showingBrowserCapture, !captureIdleWaitingForDiscovery {
             errorMessage = error.localizedDescription
@@ -1278,7 +1294,7 @@ final class AppViewModel: ObservableObject {
         showingCreatorArticleDiscovery = false
         creatorArticleDiscoveryRequests = []
         creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
+        seenDiscoveredPostIDs = []
         creatorDiscoveryFinished = true
         captureIdleWaitingForDiscovery = false
         isRunning = false
@@ -1398,24 +1414,73 @@ final class AppViewModel: ObservableObject {
         let next = browserCaptureIndex + 1
         if browserCaptureRequests.indices.contains(next) {
             browserCaptureIndex = next
-            statusMessage = "已完成 \(next) / \(browserCaptureRequests.count)，正在自动处理下一篇"
-        } else if !creatorDiscoveryFinished {
-            captureIdleWaitingForDiscovery = true
-            progress.stage = "正文队列暂时处理完，正在继续读取下一位博主的文章列表"
-            statusMessage = "已保存的文章保留；正在读取下一位博主的 Articles 列表"
+            compactCaptureQueue()
+            statusMessage = "已完成 \(min(browserCaptureIndex + 1, browserCaptureRequests.count)) / \(max(sessionAcceptedCaptureCount, browserCaptureRequests.count))，正在自动处理下一篇"
+            Task { await refillCaptureQueueFromDatabase() }
         } else {
-            presentCaptureSessionResults()
+            Task { await continueOrFinishCapture() }
         }
     }
 
     private func finishSessionIfIdle() {
-        let captureIdle = !showingBrowserCapture
-            || captureIdleWaitingForDiscovery
-            || browserCaptureRequests.isEmpty
-        guard ParallelCreatorArchivePolicy.shouldFinishSession(
-            discoveryFinished: creatorDiscoveryFinished,
-            captureIdle: captureIdle
-        ) else { return }
+        Task { await continueOrFinishCapture() }
+    }
+
+    private func compactCaptureQueue() {
+        let drop = BrowserProcessBudget.compactDropCount(currentIndex: browserCaptureIndex)
+        guard drop > 0, drop < browserCaptureRequests.count else { return }
+        browserCaptureRequests.removeFirst(drop)
+        browserCaptureIndex -= drop
+    }
+
+    private func refillCaptureQueueFromDatabase() async {
+        let remaining = BrowserProcessBudget.remainingAfterCurrent(
+            count: browserCaptureRequests.count,
+            currentIndex: browserCaptureIndex
+        )
+        guard remaining < BrowserProcessBudget.refillBelowRemaining,
+              let database else { return }
+        let room = BrowserProcessBudget.acceptedCapacity(
+            currentCount: browserCaptureRequests.count,
+            incomingCount: BrowserProcessBudget.inMemoryCaptureQueueLimit
+        )
+        guard room > 0 else { return }
+        let excluding = Set(browserCaptureRequests.map(\.link.postID))
+            .union(browserCaptureSavedPostIDs)
+            .union(browserCaptureFailurePostIDs)
+        do {
+            let pending = try await database.loadArticlesNeedingCapture(
+                limit: room,
+                excludingPostIDs: excluding
+            )
+            let requests = browserCaptureRequests(from: pending)
+            guard !requests.isEmpty else { return }
+            browserCaptureRequests.append(contentsOf: requests)
+            showingBrowserCapture = true
+            presentDownloadProgressWindowIfAllowed()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func continueOrFinishCapture() async {
+        compactCaptureQueue()
+        let countBeforeRefill = browserCaptureRequests.count
+        await refillCaptureQueueFromDatabase()
+        if browserCaptureRequests.count > countBeforeRefill {
+            captureIdleWaitingForDiscovery = false
+            if countBeforeRefill == 0 || browserCaptureIndex >= countBeforeRefill - 1 {
+                browserCaptureIndex = countBeforeRefill
+            }
+            showingBrowserCapture = true
+            return
+        }
+        if !creatorDiscoveryFinished {
+            captureIdleWaitingForDiscovery = true
+            progress.stage = "正文队列暂时处理完，正在继续读取下一位博主的文章列表"
+            statusMessage = "已保存的文章保留；正在读取下一位博主的 Articles 列表"
+            return
+        }
         presentCaptureSessionResults()
     }
 
@@ -1453,7 +1518,8 @@ final class AppViewModel: ObservableObject {
         showingCreatorArticleDiscovery = false
         captureIdleWaitingForDiscovery = false
         isRunning = false
-        let queuedTotal = total
+        Task { try? await reload() }
+        let queuedTotal = max(sessionAcceptedCaptureCount, total)
         browserCaptureRequests = []
         browserCaptureIndex = 0
         browserCaptureSavedPostIDs.removeAll()
@@ -1603,7 +1669,7 @@ final class AppViewModel: ObservableObject {
         showingCreatorArticleDiscovery = false
         creatorArticleDiscoveryRequests = []
         creatorArticleDiscoveryIndex = 0
-        discoveredCreatorArticles = []
+        seenDiscoveredPostIDs = []
         creatorDiscoveryFinished = true
         captureIdleWaitingForDiscovery = false
         browserCaptureRequests = []
@@ -2248,7 +2314,7 @@ final class AppViewModel: ObservableObject {
                     showingCreatorArticleDiscovery = false
                     creatorArticleDiscoveryRequests = []
                     creatorArticleDiscoveryIndex = 0
-                    discoveredCreatorArticles = []
+                    seenDiscoveredPostIDs = []
                     finishDownloadProgressWindow()
                     if let creatorCount = activeSyncCreatorCount {
                         let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
@@ -2288,7 +2354,7 @@ final class AppViewModel: ObservableObject {
             showingCreatorArticleDiscovery = false
             creatorArticleDiscoveryRequests = []
             creatorArticleDiscoveryIndex = 0
-            discoveredCreatorArticles = []
+            seenDiscoveredPostIDs = []
             errorMessage = error.localizedDescription
             progress.stage = "无法建立采集队列"
             finishDownloadProgressWindow()
@@ -2353,6 +2419,7 @@ final class AppViewModel: ObservableObject {
         progress.failedArticles = 0
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
+        sessionAcceptedCaptureCount = max(sessionAcceptedCaptureCount, browserCaptureRequests.count)
         showingBrowserCapture = !browserCaptureRequests.isEmpty
         presentDownloadProgressWindowIfAllowed()
     }
@@ -2368,7 +2435,6 @@ final class AppViewModel: ObservableObject {
                     uniquingKeysWith: { first, _ in first }
                 )
             )
-            try await reload()
             appendOrStartBrowserCapture(built.requests, additionalSkipped: built.skipped)
         } catch {
             errorMessage = error.localizedDescription
@@ -2390,9 +2456,17 @@ final class AppViewModel: ObservableObject {
         guard !accepted.isEmpty else { return }
 
         let previousCount = browserCaptureRequests.count
+        let room = BrowserProcessBudget.acceptedCapacity(
+            currentCount: previousCount,
+            incomingCount: accepted.count
+        )
+        let take = Array(accepted.prefix(room))
+        sessionAcceptedCaptureCount += accepted.count
+        guard !take.isEmpty else { return }
+
         let nextIndex = ParallelCreatorArchivePolicy.nextIndexAfterAppending(
             previousCount: previousCount,
-            appendedCount: accepted.count,
+            appendedCount: take.count,
             currentIndex: browserCaptureIndex,
             waitingForMore: captureIdleWaitingForDiscovery
         )
@@ -2407,14 +2481,14 @@ final class AppViewModel: ObservableObject {
             progress.uploadedVideos = 0
             progress.failedArticles = 0
             browserCaptureIndex = 0
-            browserCaptureRequests = accepted
+            browserCaptureRequests = take
         } else {
-            browserCaptureRequests.append(contentsOf: accepted)
+            browserCaptureRequests.append(contentsOf: take)
             browserCaptureIndex = nextIndex
         }
         captureIdleWaitingForDiscovery = false
         showingBrowserCapture = true
-        reactivateExactCaptureTasks(for: accepted)
+        reactivateExactCaptureTasks(for: take)
         presentDownloadProgressWindowIfAllowed()
     }
 
@@ -2425,10 +2499,6 @@ final class AppViewModel: ObservableObject {
     ) async throws -> (requests: [BrowserCaptureRequest], skipped: Int) {
         guard let archiveRoot, let database else {
             throw BrowserArticleCaptureError.pageNotReady("归档目录尚未准备好")
-        }
-        var articlesByPostID: [String: ArchivedArticle] = [:]
-        for article in try await database.loadArticles() {
-            articlesByPostID[article.sourcePostID] = article
         }
         var creatorsByUsername: [String: Creator] = [:]
         for creator in try await database.loadCreators() {
@@ -2443,7 +2513,7 @@ final class AppViewModel: ObservableObject {
                 progress.stage = "正在建立本地采集队列 \(index + 1)/\(links.count)"
                 await Task.yield()
             }
-            let existing = articlesByPostID[link.postID]
+            let existing = try await database.article(sourcePostID: link.postID)
             if !refreshExisting,
                let existing,
                Self.hasExactValidatedLocalArchive(existing, root: archiveRoot) {

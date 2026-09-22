@@ -210,6 +210,42 @@ public actor ArchiveDatabase {
         return output
     }
 
+    /// Pending capture rows only. Bulk jobs persist the rest of the queue here
+    /// so RAM never holds tens of thousands of WKWebView tasks at once.
+    public func loadArticlesNeedingCapture(
+        limit: Int,
+        excludingPostIDs: Set<String> = []
+    ) throws -> [ArchivedArticle] {
+        let sql = """
+        SELECT \(Self.articleSelectColumns) FROM articles
+        WHERE pipeline_state NOT IN ('committed', 'subscription_required')
+        ORDER BY published_at DESC
+        LIMIT ?;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, Int32(max(limit + excludingPostIDs.count, limit)))
+        var output: [ArchivedArticle] = []
+        while sqlite3_step(statement) == SQLITE_ROW, output.count < limit {
+            guard let article = article(from: statement),
+                  !excludingPostIDs.contains(article.sourcePostID),
+                  ExactCaptureQueuePolicy.needsCapture(article) else { continue }
+            output.append(article)
+        }
+        return output
+    }
+
+    public func countArticlesNeedingCapture() throws -> Int {
+        let sql = """
+        SELECT COUNT(*) FROM articles
+        WHERE pipeline_state NOT IN ('committed', 'subscription_required');
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+
     public func article(stableSourceKey: String) throws -> ArchivedArticle? {
         try article(matching: "stable_source_key", value: stableSourceKey)
     }
