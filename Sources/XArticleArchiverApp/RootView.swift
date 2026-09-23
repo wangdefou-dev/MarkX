@@ -219,6 +219,8 @@ struct RootView: View {
                 SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
             }
             Section {
+                creatorHeadingRow
+                    .padding(.top, 6)
                 if isCreatorsExpanded {
                     if !model.pinnedCreators.isEmpty {
                         ForEach(model.pinnedCreators) { creator in
@@ -232,14 +234,6 @@ struct RootView: View {
                         creatorSidebarRow(creator, statistics: statistics)
                     }
                 }
-            } header: {
-                SidebarSectionHeader(
-                    title: "博主",
-                    count: creatorCensus.trackedCount,
-                    countUnit: "位博主",
-                    isExpanded: $isCreatorsExpanded
-                )
-                .padding(.top, SidebarChrome.libraryToCreatorsSpacing)
             }
         }
         .listStyle(.sidebar)
@@ -298,6 +292,41 @@ struct RootView: View {
         .help("输入博主主页或一个及多个 X Article 链接开始下载")
     }
 
+    private func sidebarMetricRow<Icon: View, Title: View, Value: View>(
+        @ViewBuilder icon: () -> Icon,
+        @ViewBuilder title: () -> Title,
+        @ViewBuilder value: () -> Value
+    ) -> some View {
+        SidebarMetricRow(icon: icon, title: title, value: value)
+    }
+
+    private var creatorHeadingRow: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isCreatorsExpanded.toggle()
+            }
+        } label: {
+            sidebarMetricRow {
+                Image(systemName: isCreatorsExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.primary)
+            } title: {
+                Text("博主")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            } value: {
+                SidebarMetricBadge(
+                    text: creatorCensus.trackedCount.formatted(.number.grouping(.never)),
+                    accessibilityLabel: "\(creatorCensus.trackedCount) 位博主"
+                )
+            }
+        }
+        .buttonStyle(.plain)
+        .selectionDisabled()
+        .help(isCreatorsExpanded ? "折叠博主" : "展开博主")
+    }
+
     @ViewBuilder
     private func creatorSidebarRow(
         _ creator: Creator,
@@ -305,25 +334,28 @@ struct RootView: View {
     ) -> some View {
         let localArticleCount = statistics.articleCount(for: creator.id)
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
-        HStack(spacing: 8) {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(creator.displayName)
-                        .lineLimit(1)
-                    Text("@\(creator.username)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } icon: {
-                Image(systemName: creator.isProtected
-                      ? "lock.circle"
-                      : model.isCreatorPinned(creator) ? "pin.circle.fill" : "person.crop.circle")
-                    .foregroundStyle(model.isCreatorPinned(creator) ? .orange : .secondary)
+        sidebarMetricRow {
+            Image(systemName: creator.isProtected
+                  ? "lock.circle"
+                  : model.isCreatorPinned(creator) ? "pin.circle.fill" : "person.crop.circle")
+                .foregroundStyle(model.isCreatorPinned(creator) ? .orange : .secondary)
+        } title: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(creator.displayName)
+                    .lineLimit(1)
+                Text("@\(creator.username)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 4)
-            SidebarFractionBadge(
-                numerator: downloadedArticleCount,
-                denominator: creator.knownArticleCount
+        } value: {
+            SidebarMetricBadge(
+                text: SidebarMetricBadge.fraction(
+                    numerator: downloadedArticleCount,
+                    denominator: creator.knownArticleCount
+                ),
+                accessibilityLabel: creator.knownArticleCount.map {
+                    "已下载 \(downloadedArticleCount) 篇，共 \($0) 篇线上文章"
+                } ?? "已下载 \(downloadedArticleCount) 篇，线上文章总数尚未获取"
             )
             .help(creator.knownArticleCount.map {
                 "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
@@ -1757,6 +1789,56 @@ private struct SidebarCountRow: View {
     }
 }
 
+private struct SidebarMetricRow<Icon: View, Title: View, Value: View>: View {
+    private let icon: Icon
+    private let title: Title
+    private let value: Value
+
+    init(
+        @ViewBuilder icon: () -> Icon,
+        @ViewBuilder title: () -> Title,
+        @ViewBuilder value: () -> Value
+    ) {
+        self.icon = icon()
+        self.title = title()
+        self.value = value()
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            icon
+                .frame(width: SidebarMetricBadge.iconColumn, height: SidebarMetricBadge.iconColumn)
+            title
+                .frame(maxWidth: .infinity, alignment: .leading)
+            value
+        }
+    }
+}
+
+private struct SidebarMetricBadge: View {
+    static let iconColumn: CGFloat = 18
+    static let columnWidth: CGFloat = 64
+
+    let text: String
+    let accessibilityLabel: String
+
+    static func fraction(numerator: Int, denominator: Int?) -> String {
+        "\(numerator) / \(denominator.map(String.init) ?? "?")"
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: Self.columnWidth, alignment: .trailing)
+            .padding(.vertical, 2)
+            .background(Color.primary.opacity(0.07), in: Capsule())
+            .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 private struct SidebarCountBadge: View {
     let count: Int
     var unit = "篇文章"
@@ -1772,29 +1854,6 @@ private struct SidebarCountBadge: View {
             .background(Color.primary.opacity(0.07), in: Capsule())
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel("\(count) \(unit)")
-    }
-}
-
-private struct SidebarFractionBadge: View {
-    let numerator: Int
-    let denominator: Int?
-
-    private var label: String {
-        "\(numerator) / \(denominator.map(String.init) ?? "?")"
-    }
-
-    var body: some View {
-        Text(label)
-            .font(.caption.monospacedDigit().weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .frame(minWidth: 52)
-            .background(Color.primary.opacity(0.07), in: Capsule())
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel(denominator.map {
-                "已下载 \(numerator) 篇，共 \($0) 篇线上文章"
-            } ?? "已下载 \(numerator) 篇，线上文章总数尚未获取")
     }
 }
 
