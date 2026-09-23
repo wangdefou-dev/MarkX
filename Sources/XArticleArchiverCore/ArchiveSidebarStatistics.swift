@@ -87,3 +87,41 @@ public struct ArchiveSidebarStatistics: Equatable, Sendable {
         return visibleIDs.first
     }
 }
+
+/// How many tracked creators are fully saved, still short of the online
+/// total, or not yet counted online.
+public struct CreatorArchiveCensus: Equatable, Sendable {
+    public let trackedCount: Int
+    public let fullyDownloadedCount: Int
+    public let incompleteCount: Int
+    public let unknownTotalCount: Int
+
+    public init(creators: [Creator], downloadedCount: (UUID) -> Int) {
+        trackedCount = creators.count
+        var fullyDownloaded = 0
+        var incomplete = 0
+        var unknown = 0
+        for creator in creators {
+            guard let known = creator.knownArticleCount else {
+                unknown += 1
+                continue
+            }
+            if downloadedCount(creator.id) >= known {
+                fullyDownloaded += 1
+            } else {
+                incomplete += 1
+            }
+        }
+        fullyDownloadedCount = fullyDownloaded
+        incompleteCount = incomplete
+        unknownTotalCount = unknown
+    }
+
+    public var summary: String {
+        var parts = ["已下完 \(fullyDownloadedCount)", "未下完 \(incompleteCount)"]
+        if unknownTotalCount > 0 {
+            parts.append("未核对 \(unknownTotalCount)")
+        }
+        return parts.joined(separator: " · ")
+    }
+}

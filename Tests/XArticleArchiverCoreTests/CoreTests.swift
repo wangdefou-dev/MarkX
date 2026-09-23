@@ -2090,6 +2090,44 @@ final class ArchiveSidebarStatisticsTests: XCTestCase {
         XCTAssertEqual(statistics.displayedArticleCount(for: creator), 1)
     }
 
+    func testCreatorCensusSplitsFinishedIncompleteAndUnknown() {
+        let finished = Creator(
+            id: firstCreatorID,
+            xUserID: "u1",
+            username: "finished",
+            displayName: "已完成",
+            knownArticleCount: 2
+        )
+        let incomplete = Creator(
+            id: secondCreatorID,
+            xUserID: "u2",
+            username: "incomplete",
+            displayName: "未下完",
+            knownArticleCount: 4
+        )
+        let unknown = Creator(
+            id: UUID(),
+            xUserID: "u3",
+            username: "unknown",
+            displayName: "未核对"
+        )
+        let statistics = ArchiveSidebarStatistics(articles: [
+            makeArticle(creatorID: firstCreatorID, state: .committed),
+            makeArticle(creatorID: firstCreatorID, state: .committed),
+            makeArticle(creatorID: secondCreatorID, state: .committed),
+            makeArticle(creatorID: secondCreatorID, state: .failed)
+        ])
+        let census = CreatorArchiveCensus(creators: [finished, incomplete, unknown]) {
+            statistics.downloadedArticleCount(for: $0)
+        }
+
+        XCTAssertEqual(census.trackedCount, 3)
+        XCTAssertEqual(census.fullyDownloadedCount, 1)
+        XCTAssertEqual(census.incompleteCount, 1)
+        XCTAssertEqual(census.unknownTotalCount, 1)
+        XCTAssertEqual(census.summary, "已下完 1 · 未下完 1 · 未核对 1")
+    }
+
     func testDownloadedArticleCountRemainsCompletedOnly() {
         let statistics = ArchiveSidebarStatistics(articles: [
             makeArticle(creatorID: firstCreatorID, state: .committed),

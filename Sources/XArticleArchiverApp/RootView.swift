@@ -220,6 +220,12 @@ struct RootView: View {
             }
             Section {
                 if isCreatorsExpanded {
+                    Text(creatorCensus.summary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 2)
+                        .selectionDisabled()
+                        .help("正在跟踪 \(creatorCensus.trackedCount) 位博主。已下完表示本地完成数已经达到线上文章总数。")
                     if !model.pinnedCreators.isEmpty {
                         ForEach(model.pinnedCreators) { creator in
                             creatorSidebarRow(creator, statistics: statistics)
@@ -233,8 +239,13 @@ struct RootView: View {
                     }
                 }
             } header: {
-                SidebarSectionHeader(title: "博主", isExpanded: $isCreatorsExpanded)
-                    .padding(.top, SidebarChrome.libraryToCreatorsSpacing)
+                SidebarSectionHeader(
+                    title: "博主",
+                    count: creatorCensus.trackedCount,
+                    countUnit: "位博主",
+                    isExpanded: $isCreatorsExpanded
+                )
+                .padding(.top, SidebarChrome.libraryToCreatorsSpacing)
             }
         }
         .listStyle(.sidebar)
@@ -282,7 +293,11 @@ struct RootView: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SidebarAccentPanel.shape.fill(SidebarAccentPanel.fill))
+            .background(.regularMaterial, in: SidebarAccentPanel.shape)
+            .overlay {
+                SidebarAccentPanel.shape
+                    .stroke(.separator.opacity(0.55), lineWidth: 0.7)
+            }
         }
         .buttonStyle(.plain)
         .disabled(model.isRunning || model.hasActiveDownloadProgress)
@@ -846,6 +861,13 @@ struct RootView: View {
         }
     }
 
+    private var creatorCensus: CreatorArchiveCensus {
+        let statistics = model.sidebarStatistics
+        return CreatorArchiveCensus(creators: model.creators) { creatorID in
+            statistics.downloadedArticleCount(for: creatorID)
+        }
+    }
+
     private var selectedSidebarCreator: Creator? {
         guard case .creator(let id) = model.sidebarSelection else { return nil }
         return model.creators.first { $0.id == id }
@@ -867,6 +889,8 @@ struct RootView: View {
 
 private struct SidebarSectionHeader: View {
     let title: String
+    var count: Int? = nil
+    var countUnit = "篇文章"
     @Binding var isExpanded: Bool
 
     var body: some View {
@@ -883,6 +907,9 @@ private struct SidebarSectionHeader: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                 Spacer(minLength: 0)
+                if let count {
+                    SidebarCountBadge(count: count, unit: countUnit)
+                }
             }
             .contentShape(Rectangle())
         }
@@ -1094,7 +1121,6 @@ private enum SidebarChrome {
 }
 
 private enum SidebarAccentPanel {
-    static let fill = Color.orange.opacity(0.18)
     static let cornerRadius: CGFloat = 12
 
     static var shape: RoundedRectangle {
@@ -1739,6 +1765,7 @@ private struct SidebarCountRow: View {
 
 private struct SidebarCountBadge: View {
     let count: Int
+    var unit = "篇文章"
 
     var body: some View {
         Text(count, format: .number.grouping(.never))
@@ -1749,7 +1776,7 @@ private struct SidebarCountBadge: View {
             .frame(minWidth: 28)
             .background(Color.primary.opacity(0.07), in: Capsule())
             .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("\(count) 篇文章")
+            .accessibilityLabel("\(count) \(unit)")
     }
 }
 
