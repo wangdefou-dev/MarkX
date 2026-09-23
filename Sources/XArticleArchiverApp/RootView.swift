@@ -220,12 +220,6 @@ struct RootView: View {
             }
             Section {
                 if isCreatorsExpanded {
-                    Text(creatorCensus.summary)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 2)
-                        .selectionDisabled()
-                        .help("正在跟踪 \(creatorCensus.trackedCount) 位博主。已下完表示本地完成数已经达到线上文章总数。")
                     if !model.pinnedCreators.isEmpty {
                         ForEach(model.pinnedCreators) { creator in
                             creatorSidebarRow(creator, statistics: statistics)
@@ -903,11 +897,13 @@ private struct SidebarSectionHeader: View {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .bold))
                     .frame(width: 12)
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                if let count {
-                    SidebarCountBadge(count: count, unit: countUnit)
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    if let count {
+                        SidebarCountBadge(count: count, unit: countUnit, horizontalPadding: 4)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -1766,12 +1762,13 @@ private struct SidebarCountRow: View {
 private struct SidebarCountBadge: View {
     let count: Int
     var unit = "篇文章"
+    var horizontalPadding: CGFloat = 7
 
     var body: some View {
         Text(count, format: .number.grouping(.never))
             .font(.caption.monospacedDigit().weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 2)
             .frame(minWidth: 28)
             .background(Color.primary.opacity(0.07), in: Capsule())
