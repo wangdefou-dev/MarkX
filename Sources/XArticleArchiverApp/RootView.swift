@@ -906,10 +906,10 @@ private struct SidebarSectionHeader: View {
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
-                Spacer(minLength: 0)
                 if let count {
                     SidebarCountBadge(count: count, unit: countUnit)
                 }
+                Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
         }
