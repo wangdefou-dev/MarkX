@@ -893,19 +893,17 @@ private struct SidebarSectionHeader: View {
                 isExpanded.toggle()
             }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .bold))
                     .frame(width: 12)
-                HStack(spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    if let count {
-                        SidebarCountBadge(count: count, unit: countUnit, horizontalPadding: 4)
-                    }
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 4)
+                if let count {
+                    SidebarCountBadge(count: count, unit: countUnit)
                 }
-                Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
         }
