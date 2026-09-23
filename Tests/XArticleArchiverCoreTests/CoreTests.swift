@@ -2278,6 +2278,24 @@ final class ParallelCreatorArchivePolicyTests: XCTestCase {
             36..<56
         )
     }
+
+    func testCaptureProgressIgnoresCompactedQueueIndex() {
+        XCTAssertEqual(CaptureProgressDisplay.currentNumber(processed: 0, total: 100), 1)
+        XCTAssertEqual(CaptureProgressDisplay.currentNumber(processed: 80, total: 100), 81)
+        XCTAssertEqual(CaptureProgressDisplay.currentNumber(processed: 100, total: 100), 100)
+        XCTAssertEqual(
+            CaptureProgressDisplay.diskBacklog(accepted: 100, finished: 80, inMemoryPending: 12),
+            8
+        )
+        XCTAssertEqual(
+            CaptureProgressDisplay.diskBacklog(accepted: 100, finished: 10, inMemoryPending: 32),
+            58
+        )
+        XCTAssertEqual(
+            CaptureProgressDisplay.diskBacklog(accepted: 32, finished: 32, inMemoryPending: 0),
+            0
+        )
+    }
 }
 
 final class ArticleCaptureStabilityPolicyTests: XCTestCase {

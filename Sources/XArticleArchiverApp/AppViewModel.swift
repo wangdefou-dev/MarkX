@@ -121,6 +121,9 @@ final class AppViewModel: ObservableObject {
     private var browserCaptureFailureDetails: [String] = []
     private var seenDiscoveredPostIDs = Set<String>()
     private var sessionAcceptedCaptureCount = 0
+    /// Articles already handed off in this session. Independent of the
+    /// compacted in-memory queue index.
+    private var sessionCaptureCursor = 0
     private var creatorDiscoveryFinished = true
     private var captureIdleWaitingForDiscovery = false
     private var inflightArticleArchives: [Task<Void, Never>] = []
@@ -251,11 +254,28 @@ final class AppViewModel: ObservableObject {
     }
 
     var captureBacklogCount: Int {
-        max(0, sessionAcceptedCaptureCount - browserCaptureRequests.count)
+        CaptureProgressDisplay.diskBacklog(
+            accepted: sessionAcceptedCaptureCount,
+            finished: browserCaptureSavedPostIDs.count + browserCaptureFailurePostIDs.count,
+            inMemoryPending: browserCaptureRequests.reduce(into: 0) { count, request in
+                let postID = request.link.postID
+                if browserCaptureSavedPostIDs.contains(postID) || browserCaptureFailurePostIDs.contains(postID) {
+                    return
+                }
+                count += 1
+            }
+        )
     }
 
     var sessionQueuedCaptureCount: Int {
         max(sessionAcceptedCaptureCount, browserCaptureRequests.count)
+    }
+
+    var captureProgressCurrentNumber: Int {
+        CaptureProgressDisplay.currentNumber(
+            processed: sessionCaptureCursor,
+            total: sessionQueuedCaptureCount
+        )
     }
 
     var isCaptureStopRequested: Bool { browserCaptureStopRequested }
@@ -1103,6 +1123,7 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryIndex = 0
         seenDiscoveredPostIDs = []
         sessionAcceptedCaptureCount = 0
+        sessionCaptureCursor = 0
         inflightArticleArchives.removeAll()
         creatorDiscoveryFinished = false
         captureIdleWaitingForDiscovery = false
@@ -1429,8 +1450,10 @@ final class AppViewModel: ObservableObject {
         let next = browserCaptureIndex + 1
         if browserCaptureRequests.indices.contains(next) {
             browserCaptureIndex = next
+            sessionCaptureCursor += 1
             compactCaptureQueue()
-            statusMessage = "已完成 \(min(browserCaptureIndex + 1, browserCaptureRequests.count)) / \(max(sessionAcceptedCaptureCount, browserCaptureRequests.count))，正在自动处理下一篇"
+            let total = max(sessionAcceptedCaptureCount, browserCaptureRequests.count)
+            statusMessage = "已处理 \(sessionCaptureCursor) / \(total)，正在自动处理下一篇"
             Task { await refillCaptureQueueFromDatabase() }
         } else {
             Task { await continueOrFinishCapture() }
@@ -2466,6 +2489,7 @@ final class AppViewModel: ObservableObject {
         progress.failedArticles = 0
         progress.discoveredArticles = max(progress.discoveredArticles, browserCaptureRequests.count)
         browserCaptureIndex = 0
+        sessionCaptureCursor = 0
         sessionAcceptedCaptureCount = max(sessionAcceptedCaptureCount, browserCaptureRequests.count)
         showingBrowserCapture = !browserCaptureRequests.isEmpty
         presentDownloadProgressWindowIfAllowed()
@@ -2528,6 +2552,7 @@ final class AppViewModel: ObservableObject {
             progress.uploadedVideos = 0
             progress.failedArticles = 0
             browserCaptureIndex = 0
+            sessionCaptureCursor = 0
             browserCaptureRequests = take
         } else {
             browserCaptureRequests.append(contentsOf: take)

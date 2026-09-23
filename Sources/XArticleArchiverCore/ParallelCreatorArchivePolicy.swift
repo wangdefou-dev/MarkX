@@ -91,3 +91,20 @@ public enum BrowserProcessBudget {
         return start..<end
     }
 }
+
+/// Numbers shown while a bulk capture is running.
+///
+/// The in-memory queue keeps only a few finished items, so its index cannot
+/// be displayed as overall progress. Finished articles that have already left
+/// that window are not a disk backlog either.
+public enum CaptureProgressDisplay {
+    public static func currentNumber(processed: Int, total: Int) -> Int {
+        let safeTotal = max(total, 1)
+        return min(max(processed, 0) + 1, safeTotal)
+    }
+
+    public static func diskBacklog(accepted: Int, finished: Int, inMemoryPending: Int) -> Int {
+        let waiting = max(0, accepted - max(finished, 0))
+        return max(0, waiting - max(inMemoryPending, 0))
+    }
+}

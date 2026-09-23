@@ -1181,7 +1181,7 @@ struct BrowserArticleCaptureView: View {
                     .foregroundStyle(.green)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.isRunning ? model.progress.stage : controller.pageStatus)
+                Text(progressHeadline)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
                 Text(captureSummaryText)
@@ -1281,12 +1281,25 @@ struct BrowserArticleCaptureView: View {
         }
     }
 
+    private var progressHeadline: String {
+        let livePage = controller.pageStatus.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (controller.isAutomaticCaptureRunning || controller.isLoading || controller.isCapturing),
+           !livePage.isEmpty {
+            return livePage
+        }
+        let stage = model.progress.stage.trimmingCharacters(in: .whitespacesAndNewlines)
+        if model.isRunning, !stage.isEmpty {
+            return stage
+        }
+        return livePage.isEmpty ? stage : livePage
+    }
+
     private var downloadCount: Int {
         max(model.sessionQueuedCaptureCount, 1)
     }
 
     private var currentDownloadNumber: Int {
-        min(model.progress.completedArticles + 1, downloadCount)
+        model.captureProgressCurrentNumber
     }
 
     private var captureSummaryText: String {
