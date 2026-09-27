@@ -1180,36 +1180,45 @@ final class AppViewModel: ObservableObject {
         for request: CreatorArticleDiscoveryRequest
     ) async {
         guard request.id == currentCreatorArticleDiscoveryRequest?.id else { return }
-        if let knownArticleCount = result.knownArticleCount, let database {
+        if let database {
             do {
                 let existingCreator = try await database.creator(username: request.username)
-                var creator = existingCreator ?? Creator(
-                        xUserID: "browser:\(request.username.lowercased())",
-                        username: request.username,
-                        displayName: "@\(request.username)"
-                    )
-                creator.knownArticleCount = knownArticleCount
-                if !request.countOnly || existingCreator == nil {
-                    creator.isEnabled = true
-                }
-                try await database.upsertCreator(creator)
-                if let index = creators.firstIndex(where: { $0.id == creator.id }) {
-                    creators[index] = creator
-                } else {
-                    creators.append(creator)
-                    creators.sort { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+                let downloaded = existingCreator.map { creator in
+                    articles.filter {
+                        $0.creatorID == creator.id && $0.pipelineState == .committed
+                    }.count
+                } ?? 0
+                let storedCount = CreatorArticleCountPolicy.countToStore(
+                    scanned: result.knownArticleCount,
+                    existing: existingCreator?.knownArticleCount,
+                    downloaded: downloaded
+                )
+                let countChanged = storedCount != existingCreator?.knownArticleCount
+                if existingCreator == nil || countChanged {
+                    var creator = existingCreator ?? Creator(
+                            xUserID: "browser:\(request.username.lowercased())",
+                            username: request.username,
+                            displayName: "@\(request.username)"
+                        )
+                    if let storedCount {
+                        creator.knownArticleCount = storedCount
+                    }
+                    if !request.countOnly || existingCreator == nil {
+                        creator.isEnabled = true
+                    }
+                    try await database.upsertCreator(creator)
+                    if let index = creators.firstIndex(where: { $0.id == creator.id }) {
+                        creators[index] = creator
+                    } else {
+                        creators.append(creator)
+                        creators.sort { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+                    }
                 }
             } catch {
                 errorMessage = "无法保存 @\(request.username) 的文章总数：\(error.localizedDescription)"
             }
         }
         if request.countOnly {
-            guard result.knownArticleCount != nil else {
-                creatorArticleDiscoveryFailed(
-                    BrowserArticleCaptureError.pageNotReady("Articles 列表未到达底部，无法确认线上文章总数")
-                )
-                return
-            }
             let next = creatorArticleDiscoveryIndex + 1
             if creatorArticleDiscoveryRequests.indices.contains(next) {
                 creatorArticleDiscoveryIndex = next
@@ -2826,8 +2835,36 @@ final class AppViewModel: ObservableObject {
         articles[index].processingLog = full.processingLog
     }
 
+    private func repairMissingCreatorArticleTotals() async {
+        guard let database else { return }
+        let statistics = ArchiveSidebarStatistics(articles: articles)
+        var repaired = creators
+        var didRepair = false
+        for index in repaired.indices {
+            if Task.isCancelled { return }
+            let downloaded = statistics.downloadedArticleCount(for: repaired[index].id)
+            let stored = CreatorArticleCountPolicy.countToStore(
+                scanned: nil,
+                existing: repaired[index].knownArticleCount,
+                downloaded: downloaded
+            )
+            guard stored != repaired[index].knownArticleCount else { continue }
+            repaired[index].knownArticleCount = stored
+            do {
+                try await database.upsertCreator(repaired[index])
+                didRepair = true
+            } catch {
+                repaired[index].knownArticleCount = creators[index].knownArticleCount
+            }
+        }
+        if didRepair {
+            creators = repaired
+        }
+    }
+
     private func repairLibraryInBackground() async {
         guard let archiveRoot, let database else { return }
+        await repairMissingCreatorArticleTotals()
         let snapshot = articles
         let shouldMigrateFormatting = !defaults.bool(forKey: Self.markdownFormatMigrationDefaultsKey)
         var pendingUpdates: [UUID: ArchivedArticle] = [:]

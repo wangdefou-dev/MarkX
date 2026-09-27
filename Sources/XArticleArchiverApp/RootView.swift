@@ -327,14 +327,28 @@ struct RootView: View {
         .help(isCreatorsExpanded ? "折叠博主" : "展开博主")
     }
 
-    @ViewBuilder
+    private func creatorArticleCountHelp(
+        downloaded: Int,
+        known: Int?,
+        displayedTotal: Int?,
+        localArticleCount: Int
+    ) -> String {
+        if let known, known > 0 {
+            return "已下载 \(downloaded) 篇；线上文章总数 \(max(known, downloaded)) 篇；本地记录 \(localArticleCount) 篇"
+        }
+        if let displayedTotal {
+            return "已下载 \(downloaded) 篇；线上总数还没有核对完，先按已保存的 \(displayedTotal) 篇显示；本地记录 \(localArticleCount) 篇"
+        }
+        return "已下载 \(downloaded) 篇；线上总数尚未获取；本地记录 \(localArticleCount) 篇"
+    }
+
     private func creatorSidebarRow(
         _ creator: Creator,
         statistics: ArchiveSidebarStatistics
     ) -> some View {
         let localArticleCount = statistics.articleCount(for: creator.id)
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
-        sidebarMetricRow {
+        return sidebarMetricRow {
             Image(systemName: creator.isProtected
                   ? "lock.circle"
                   : model.isCreatorPinned(creator) ? "pin.circle.fill" : "person.crop.circle")
@@ -348,18 +362,25 @@ struct RootView: View {
                     .foregroundStyle(.secondary)
             }
         } value: {
+            let displayedTotal = CreatorArticleCountPolicy.displayedTotal(
+                known: creator.knownArticleCount,
+                downloaded: downloadedArticleCount
+            )
             SidebarMetricBadge(
                 text: SidebarMetricBadge.fraction(
                     numerator: downloadedArticleCount,
-                    denominator: creator.knownArticleCount
+                    denominator: displayedTotal
                 ),
-                accessibilityLabel: creator.knownArticleCount.map {
-                    "已下载 \(downloadedArticleCount) 篇，共 \($0) 篇线上文章"
-                } ?? "已下载 \(downloadedArticleCount) 篇，线上文章总数尚未获取"
+                accessibilityLabel: displayedTotal.map {
+                    "已下载 \(downloadedArticleCount) 篇，文章总数 \($0) 篇"
+                } ?? "已下载 \(downloadedArticleCount) 篇，文章总数尚未获取"
             )
-            .help(creator.knownArticleCount.map {
-                "已下载 \(downloadedArticleCount) 篇；X Articles 列表共 \($0) 篇；本地记录 \(localArticleCount) 篇"
-            } ?? "已下载 \(downloadedArticleCount) 篇；线上总数尚未获取；可用“刷新线上文章总数”更新")
+            .help(creatorArticleCountHelp(
+                downloaded: downloadedArticleCount,
+                known: creator.knownArticleCount,
+                displayedTotal: displayedTotal,
+                localArticleCount: localArticleCount
+            ))
         }
         .padding(.vertical, 2)
         .tag(AppViewModel.SidebarSelection.creator(creator.id))

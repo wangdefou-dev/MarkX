@@ -2230,6 +2230,31 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
         ))
     }
 
+    func testZeroScanDoesNotEraseSavedOrDownloadedArticles() {
+        XCTAssertEqual(
+            CreatorArticleCountPolicy.countToStore(scanned: 0, existing: 0, downloaded: 155),
+            155
+        )
+        XCTAssertEqual(
+            CreatorArticleCountPolicy.countToStore(scanned: nil, existing: nil, downloaded: 109),
+            109
+        )
+        XCTAssertEqual(
+            CreatorArticleCountPolicy.countToStore(scanned: 180, existing: 0, downloaded: 155),
+            180
+        )
+        XCTAssertEqual(
+            CreatorArticleCountPolicy.countToStore(scanned: 40, existing: 200, downloaded: 155),
+            200
+        )
+        XCTAssertNil(CreatorArticleCountPolicy.countToStore(scanned: 0, existing: nil, downloaded: 0))
+        XCTAssertEqual(
+            CreatorArticleCountPolicy.displayedTotal(known: 0, downloaded: 155),
+            155
+        )
+        XCTAssertNil(CreatorArticleCountPolicy.displayedTotal(known: 0, downloaded: 0))
+    }
+
     func testUnlimitedDiscoveryKeepsEveryVisibleArticle() {
         XCTAssertFalse(CreatorArticleDiscoveryPolicy.shouldStopAtRequestedLimit(
             discoveredCount: 250,

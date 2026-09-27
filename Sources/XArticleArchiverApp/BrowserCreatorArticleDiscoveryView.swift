@@ -172,12 +172,14 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                         : "已找到 \(orderedItems.count) 篇 Article，正在向下检查更多…X API 调用为 0"
 
                     if unchangedAtBottom >= 5 {
+                        let confirmedCount = orderedItems.isEmpty ? nil : orderedItems.count
                         pageStatus = request.countOnly
-                            ? "@\(request.username) 线上共 \(orderedItems.count) 篇 Article，正在保存总数；不会下载文章"
-                            : "@\(request.username) 线上共 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
+                            ? (confirmedCount.map { "@\(request.username) 线上共 \($0) 篇 Article，正在保存总数；不会下载文章" }
+                                ?? "Articles 列表还没有出现文章卡片，不把总数记成 0")
+                            : "@\(request.username) 线上已确认 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
                         return CreatorArticleDiscoveryResult(
                             items: request.countOnly ? [] : discoveredItems,
-                            knownArticleCount: orderedItems.count
+                            knownArticleCount: confirmedCount
                         )
                     }
                     try await scrollForMore()
