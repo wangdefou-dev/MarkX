@@ -1853,7 +1853,7 @@ private struct SidebarMetricBadge: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
-            .frame(width: Self.columnWidth, alignment: .trailing)
+            .frame(width: Self.columnWidth, alignment: .center)
             .padding(.vertical, 2)
             .background(Color.primary.opacity(0.07), in: Capsule())
             .accessibilityLabel(accessibilityLabel)
