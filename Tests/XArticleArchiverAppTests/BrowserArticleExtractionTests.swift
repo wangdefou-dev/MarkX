@@ -294,6 +294,74 @@ final class BrowserArticleExtractionTests: XCTestCase {
 }
 
 @MainActor
+final class BlockedProfileArticleListGateTests: XCTestCase {
+    func testClicksViewPostsInsideTheArticlesColumn() async throws {
+        let html = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <h1>@zjp1997720 is blocked</h1>
+            <p>Are you sure you want to view these posts? Viewing posts won't unblock @zjp1997720.</p>
+            <a id="learn-more" href="https://support.x.com/articles/117063">Learn more</a>
+            <a id="analytics" href="/zjp1997720/status/1/analytics">View post analytics</a>
+            <button type="button" id="view-posts" onclick="this.dataset.clicked='yes'">
+              <span>View</span> <span>posts</span>
+            </button>
+          </div>
+          <aside>
+            <button type="button" id="sidebar" onclick="this.dataset.clicked='yes'">View posts</button>
+          </aside>
+        </main>
+        """
+
+        let webView = try await load(html)
+        let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
+        XCTAssertEqual(raw as? String, BlockedProfileArticleListGate.clickedResult)
+        let clicked = try await webView.evaluateJavaScript("document.getElementById('view-posts').dataset.clicked")
+        let sidebar = try await webView.evaluateJavaScript("document.getElementById('sidebar').dataset.clicked || ''")
+        XCTAssertEqual(clicked as? String, "yes")
+        XCTAssertEqual(sidebar as? String, "")
+    }
+
+    func testClicksChineseViewPostsWhenTheColumnHasNoTestID() async throws {
+        let html = """
+        <!doctype html>
+        <main>
+          <button type="button" id="view-posts" onclick="this.dataset.clicked='yes'">查看帖子</button>
+        </main>
+        """
+
+        let webView = try await load(html)
+        let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
+        XCTAssertEqual(raw as? String, BlockedProfileArticleListGate.clickedResult)
+        let clicked = try await webView.evaluateJavaScript("document.getElementById('view-posts').dataset.clicked")
+        XCTAssertEqual(clicked as? String, "yes")
+    }
+
+    func testLeavesThePageAloneWhenTheListIsAlreadyVisible() async throws {
+        let html = """
+        <!doctype html>
+        <main>
+          <a id="analytics" href="/zjp1997720/status/1/analytics">View post analytics</a>
+          <article data-testid="tweet"><a href="/zjp1997720/status/1">一篇长文</a></article>
+        </main>
+        """
+
+        let webView = try await load(html)
+        let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
+        XCTAssertEqual(raw as? String, BlockedProfileArticleListGate.absentResult)
+    }
+
+    private func load(_ html: String) async throws -> WKWebView {
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1100, height: 800), configuration: WKWebViewConfiguration())
+        let navigation = NavigationWaiter()
+        webView.navigationDelegate = navigation
+        await navigation.load(html, in: webView, baseURL: URL(string: "https://x.com/zjp1997720/articles")!)
+        return webView
+    }
+}
+
+@MainActor
 private final class NavigationWaiter: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Void, Never>?
 

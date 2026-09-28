@@ -2,6 +2,38 @@ import SwiftUI
 import WebKit
 import XArticleArchiverCore
 
+/// X hides a blocked profile's Articles behind a confirmation whose only
+/// action is a "View posts" button. Clicking it reveals the list in place
+/// and does not unblock the account.
+enum BlockedProfileArticleListGate {
+    static let clickedResult = "clicked"
+    static let absentResult = "absent"
+
+    static let revealScript = #"""
+    (() => {
+      const labels = new Set(["view posts", "查看帖子", "查看推文"]);
+      const roots = [
+        document.querySelector('[data-testid="primaryColumn"]'),
+        document.querySelector("main"),
+        document.body
+      ].filter(Boolean);
+      const seen = new Set();
+      for (const root of roots) {
+        for (const el of root.querySelectorAll('button, [role="button"]')) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+          if (!labels.has(text)) continue;
+          el.scrollIntoView({block: "center"});
+          el.click();
+          return "clicked";
+        }
+      }
+      return "absent";
+    })()
+    """#
+}
+
 private struct CreatorArticleListSnapshot: Decodable {
     struct Item: Decodable {
         var title: String
@@ -117,6 +149,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         var orderedItems: [CreatorArticleListItem] = []
         var seenPostIDs = Set<String>()
         var unchangedAtBottom = 0
+        var gateSettlePolls = 0
         var lastReason = "X Articles 列表仍在加载"
 
         // The list is virtualized: cards that leave the viewport may disappear
@@ -124,6 +157,13 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         for _ in 0..<240 {
             try Task.checkCancellation()
             if !isLoading {
+                if await revealBlockedArticleListIfNeeded() {
+                    unchangedAtBottom = 0
+                    gateSettlePolls = 10
+                    pageStatus = "@\(request.username) 的文章列表被屏蔽确认挡住了，已点击 View posts，正在继续读取…"
+                    try await Task.sleep(for: .milliseconds(900))
+                    continue
+                }
                 do {
                     let snapshot = try await readSnapshot(expectedHandle: request.username)
                     let before = orderedItems.count
@@ -161,14 +201,20 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                     }
 
                     let gained = orderedItems.count - before
-                    if snapshot.atBottom && !snapshot.isLoadingMore && gained == 0 {
+                    let waitingForRevealedList = gateSettlePolls > 0
+                    if waitingForRevealedList {
+                        gateSettlePolls -= 1
+                    }
+                    if snapshot.atBottom && !snapshot.isLoadingMore && gained == 0 && !waitingForRevealedList {
                         unchangedAtBottom += 1
                     } else {
                         unchangedAtBottom = 0
                     }
 
                     pageStatus = orderedItems.isEmpty
-                        ? "已打开 Articles 列表，正在等待文章卡片…"
+                        ? (waitingForRevealedList
+                            ? "已点击 View posts，正在等待 @\(request.username) 的文章卡片…"
+                            : "已打开 Articles 列表，正在等待文章卡片…")
                         : "已找到 \(orderedItems.count) 篇 Article，正在向下检查更多…X API 调用为 0"
 
                     if unchangedAtBottom >= 5 {
@@ -222,6 +268,15 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
 
     private func scrollForMore() async throws {
         _ = try await webView.evaluateJavaScript(Self.scrollScript)
+    }
+
+    private func revealBlockedArticleListIfNeeded() async -> Bool {
+        do {
+            let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
+            return (raw as? String) == BlockedProfileArticleListGate.clickedResult
+        } catch {
+            return false
+        }
     }
 
     private func returnToArticlesListIfNeeded(_ request: CreatorArticleDiscoveryRequest) async throws {
