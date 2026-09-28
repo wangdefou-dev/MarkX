@@ -13,6 +13,26 @@ enum ScheduledSyncLaunchAgentError: LocalizedError {
     }
 }
 
+struct ScheduledSyncLaunchctlCommand: Equatable {
+    var arguments: [String]
+    var required: Bool
+}
+
+enum ScheduledSyncLaunchctlPlan {
+    /// A disabled override makes `bootstrap` fail with "Bootstrap failed: 5:
+    /// Input/output error". Enable the label before bootstrapping it.
+    static func applyCommands(uid: uid_t, label: String, plistPath: String) -> [ScheduledSyncLaunchctlCommand] {
+        let service = "gui/\(uid)/\(label)"
+        let domain = "gui/\(uid)"
+        return [
+            ScheduledSyncLaunchctlCommand(arguments: ["enable", service], required: true),
+            ScheduledSyncLaunchctlCommand(arguments: ["bootout", service], required: false),
+            ScheduledSyncLaunchctlCommand(arguments: ["bootstrap", domain, plistPath], required: true),
+            ScheduledSyncLaunchctlCommand(arguments: ["enable", service], required: true)
+        ]
+    }
+}
+
 enum ScheduledSyncLaunchAgentManager {
     static var propertyListURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -29,21 +49,19 @@ enum ScheduledSyncLaunchAgentManager {
         let directory = propertyListURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try ScheduledSyncLaunchAgentDescriptor.propertyListData(for: configuration)
-
-        _ = try? runLaunchctl([
-            "bootout",
-            "gui/\(getuid())/\(ScheduledSyncLaunchAgentDescriptor.label)"
-        ], allowsFailure: true)
-        try data.write(to: propertyListURL, options: .atomic)
-        try runLaunchctl([
-            "bootstrap",
-            "gui/\(getuid())",
-            propertyListURL.path
-        ])
-        try runLaunchctl([
-            "enable",
-            "gui/\(getuid())/\(ScheduledSyncLaunchAgentDescriptor.label)"
-        ])
+        var didWritePropertyList = false
+        let commands = ScheduledSyncLaunchctlPlan.applyCommands(
+            uid: getuid(),
+            label: ScheduledSyncLaunchAgentDescriptor.label,
+            plistPath: propertyListURL.path
+        )
+        for command in commands {
+            if !didWritePropertyList, command.arguments.first == "bootstrap" {
+                try data.write(to: propertyListURL, options: .atomic)
+                didWritePropertyList = true
+            }
+            try runLaunchctl(command.arguments, allowsFailure: !command.required)
+        }
     }
 
     static func remove() throws {

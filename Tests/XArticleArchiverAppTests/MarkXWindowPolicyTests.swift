@@ -57,6 +57,23 @@ final class MarkXWindowPolicyTests: XCTestCase {
         )
     }
 
+    func testScheduledSyncEnablesADisabledAgentBeforeBootstrap() {
+        let plistPath = "/Users/example/Library/LaunchAgents/ai.defou.xarticlearchiver.scheduled-sync.plist"
+        let commands = ScheduledSyncLaunchctlPlan.applyCommands(
+            uid: 501,
+            label: "ai.defou.xarticlearchiver.scheduled-sync",
+            plistPath: plistPath
+        )
+
+        XCTAssertEqual(commands.map(\.arguments), [
+            ["enable", "gui/501/ai.defou.xarticlearchiver.scheduled-sync"],
+            ["bootout", "gui/501/ai.defou.xarticlearchiver.scheduled-sync"],
+            ["bootstrap", "gui/501", plistPath],
+            ["enable", "gui/501/ai.defou.xarticlearchiver.scheduled-sync"]
+        ])
+        XCTAssertEqual(commands.map(\.required), [true, false, true, true])
+    }
+
     func testScheduledSyncURLIsClaimedByTheExistingWindow() {
         let url = URL(string: "xarticlearchiver://scheduled-sync")
 
