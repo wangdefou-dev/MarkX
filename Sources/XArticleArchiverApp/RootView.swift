@@ -336,6 +336,9 @@ struct RootView: View {
         if let known, known > 0 {
             return "已下载 \(downloaded) 篇；线上文章总数 \(max(known, downloaded)) 篇；本地记录 \(localArticleCount) 篇"
         }
+        if displayedTotal == 0 {
+            return "已下载 \(downloaded) 篇；线上文章总数已核对为 0；本地记录 \(localArticleCount) 篇"
+        }
         if let displayedTotal {
             return "已下载 \(downloaded) 篇；线上总数还没有核对完，先按已保存的 \(displayedTotal) 篇显示；本地记录 \(localArticleCount) 篇"
         }
@@ -362,9 +365,13 @@ struct RootView: View {
                     .foregroundStyle(.secondary)
             }
         } value: {
+            let verifiedEmpty = creator.completeness == .fullArchiveVerified
+                && downloadedArticleCount == 0
+                && (creator.knownArticleCount ?? 0) == 0
             let displayedTotal = CreatorArticleCountPolicy.displayedTotal(
                 known: creator.knownArticleCount,
-                downloaded: downloadedArticleCount
+                downloaded: downloadedArticleCount,
+                verifiedEmpty: verifiedEmpty
             )
             SidebarMetricBadge(
                 text: SidebarMetricBadge.fraction(

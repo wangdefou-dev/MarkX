@@ -125,6 +125,7 @@ final class AppViewModel: ObservableObject {
     /// compacted in-memory queue index.
     private var sessionCaptureCursor = 0
     private var creatorDiscoveryFinished = true
+    private var creatorDiscoveryFailureNotes: [String] = []
     private var captureIdleWaitingForDiscovery = false
     private var inflightArticleArchives: [Task<Void, Never>] = []
     private var browserCaptureStopRequested = false
@@ -462,9 +463,16 @@ final class AppViewModel: ObservableObject {
 
     func hideDownloadProgressWindow() {
         downloadProgressWindowHiddenByUser = true
-        downloadProgressWindowController?.window?.orderOut(nil)
+        // orderOut stops the hidden WKWebView from painting. X then renders an
+        // empty Articles shell, and the scan records no cards. Keep the window
+        // in the window list, behind the library window, so the list still loads.
+        if let window = downloadProgressWindowController?.window {
+            window.ignoresMouseEvents = true
+            window.alphaValue = 1
+            window.orderBack(nil)
+        }
         isDownloadProgressWindowVisible = false
-        statusMessage = "下载继续在后台执行；可点击工具栏的「显示下载进度」重新打开"
+        statusMessage = "下载继续在后台执行；进度窗口藏在主窗口后面，Articles 列表仍在加载。可点击「显示下载进度」重新打开"
     }
 
     private func beginDownloadProgressSession() {
@@ -499,6 +507,8 @@ final class AppViewModel: ObservableObject {
             downloadProgressWindowController = NSWindowController(window: window)
         }
         guard let progressWindow = downloadProgressWindowController?.window else { return }
+        progressWindow.alphaValue = 1
+        progressWindow.ignoresMouseEvents = false
         if let currentAnchor = resolveDownloadProgressAnchorWindow(excluding: progressWindow) {
             downloadProgressAnchorWindow = currentAnchor
         }
@@ -565,7 +575,11 @@ final class AppViewModel: ObservableObject {
     }
 
     private func finishDownloadProgressWindow() {
-        downloadProgressWindowController?.window?.orderOut(nil)
+        if let window = downloadProgressWindowController?.window {
+            window.alphaValue = 1
+            window.ignoresMouseEvents = false
+            window.orderOut(nil)
+        }
         isDownloadProgressWindowVisible = false
         downloadProgressWindowHiddenByUser = false
         downloadProgressAnchorWindow = nil
@@ -1122,6 +1136,7 @@ final class AppViewModel: ObservableObject {
         }
         creatorArticleDiscoveryIndex = 0
         seenDiscoveredPostIDs = []
+        creatorDiscoveryFailureNotes = []
         sessionAcceptedCaptureCount = 0
         sessionCaptureCursor = 0
         inflightArticleArchives.removeAll()
@@ -1193,8 +1208,14 @@ final class AppViewModel: ObservableObject {
                     existing: existingCreator?.knownArticleCount,
                     downloaded: downloaded
                 )
+                let verifiedEmpty = result.confirmedEmpty
+                    && storedCount == nil
+                    && downloaded == 0
+                    && (existingCreator?.knownArticleCount ?? 0) == 0
                 let countChanged = storedCount != existingCreator?.knownArticleCount
-                if existingCreator == nil || countChanged {
+                let verifiedEmptyChanged = verifiedEmpty
+                    && existingCreator?.completeness != .fullArchiveVerified
+                if existingCreator == nil || countChanged || verifiedEmptyChanged {
                     var creator = existingCreator ?? Creator(
                             xUserID: "browser:\(request.username.lowercased())",
                             username: request.username,
@@ -1202,6 +1223,9 @@ final class AppViewModel: ObservableObject {
                         )
                     if let storedCount {
                         creator.knownArticleCount = storedCount
+                    } else if verifiedEmpty {
+                        creator.knownArticleCount = 0
+                        creator.completeness = .fullArchiveVerified
                     }
                     if !request.countOnly || existingCreator == nil {
                         creator.isEnabled = true
@@ -1237,7 +1261,7 @@ final class AppViewModel: ObservableObject {
             statusMessage = "已刷新 \(creatorCount) 位博主的线上文章总数；本次没有下载文章，X API 调用为 0"
             downloadResultNotice = DownloadResultNotice(
                 title: "线上文章总数已刷新",
-                message: "已完整扫描 Articles 列表并更新 \(creatorCount) 位博主的线上文章总数。本次没有下载文章，X API 调用为 0。",
+                message: "已完整扫描 Articles 列表并更新 \(creatorCount) 位博主的线上文章总数。本次没有下载文章，X API 调用为 0。\(creatorDiscoveryFailureNote)",
                 metrics: [
                     DownloadResultMetric(id: "creators", label: "刷新博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
                     DownloadResultMetric(id: "status", label: "总数状态", value: "已更新", systemImage: "number.circle.fill", tone: .positive),
@@ -1279,56 +1303,29 @@ final class AppViewModel: ObservableObject {
         finishSessionIfIdle()
     }
 
-    func creatorArticleDiscoveryFailed(_ error: Error) {
-        showingCreatorArticleDiscovery = false
-        creatorArticleDiscoveryRequests = []
-        creatorArticleDiscoveryIndex = 0
-        seenDiscoveredPostIDs = []
-        creatorDiscoveryFinished = true
-        if showingBrowserCapture, !captureIdleWaitingForDiscovery {
-            errorMessage = error.localizedDescription
-            progress.stage = "文章列表读取中断，已发现的文章继续保存"
-            statusMessage = "列表读取失败：\(error.localizedDescription)。已入队的正文下载会继续。"
-            return
-        }
-        isRunning = false
-        finishDownloadProgressWindow()
-        if isRefreshingCreatorCounts {
-            progress.stage = "线上文章总数刷新失败"
-            statusMessage = "线上文章总数刷新未完成；没有下载文章，也没有调用 X API"
-            downloadResultNotice = DownloadResultNotice(
-                title: "线上文章总数未刷新",
-                message: "没有下载文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。",
-                metrics: [
-                    DownloadResultMetric(id: "status", label: "总数状态", value: "未完成", systemImage: "number.circle", tone: .danger),
-                    DownloadResultMetric(id: "downloaded", label: "下载文章", value: "0", systemImage: "arrow.down.circle", tone: .neutral)
-                ]
-            )
-            activeArchiveOperation = .download
-        } else if isSyncingTrackedCreators {
-            progress.stage = "同步失败"
-            statusMessage = "同步未完成；没有调用 X API"
-            publishSyncResult(
-                title: "同步未完成",
-                message: "本次同步已停止，已完成的本地归档保留。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。",
-                metrics: [
-                    DownloadResultMetric(id: "status", label: "同步状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
-                    DownloadResultMetric(id: "saved", label: "已保存", value: "\(progress.completedArticles)", systemImage: "checkmark.circle.fill", tone: .positive),
-                    DownloadResultMetric(id: "failed", label: "失败", value: "\(progress.failedArticles)", systemImage: "xmark.circle.fill", tone: .danger)
-                ]
-            )
-        } else {
-            progress.stage = "Articles 列表读取失败"
-            statusMessage = "没有调用 X API；请确认 Chrome 已登录 X 后重试"
-            downloadResultNotice = DownloadResultNotice(
-                title: "没有完成文章发现",
-                message: "没有下载任何文章。\n\n原因：\(error.localizedDescription)\n\n请确认 Chrome 已登录 X 后重试。",
-                metrics: [
-                    DownloadResultMetric(id: "status", label: "发现状态", value: "未完成", systemImage: "exclamationmark.triangle.fill", tone: .danger),
-                    DownloadResultMetric(id: "downloaded", label: "下载文章", value: "0", systemImage: "arrow.down.circle", tone: .neutral)
-                ]
-            )
-        }
+    /// One creator's Articles page can fail without cancelling the rest of a
+    /// full sync. The failure is reported when the session ends.
+    func creatorArticleDiscoveryFailed(
+        _ error: Error,
+        for request: CreatorArticleDiscoveryRequest
+    ) async {
+        guard isRunning, request.id == currentCreatorArticleDiscoveryRequest?.id else { return }
+        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        creatorDiscoveryFailureNotes.append(
+            detail.isEmpty ? "@\(request.username)" : "@\(request.username)：\(detail)"
+        )
+        await completeCreatorArticleDiscovery(
+            CreatorArticleDiscoveryResult(items: [], knownArticleCount: nil, confirmedEmpty: false),
+            for: request
+        )
+    }
+
+    private var creatorDiscoveryFailureNote: String {
+        guard !creatorDiscoveryFailureNotes.isEmpty else { return "" }
+        let shown = creatorDiscoveryFailureNotes.prefix(8).joined(separator: "\n")
+        let remaining = creatorDiscoveryFailureNotes.count - 8
+        let more = remaining > 0 ? "\n……另有 \(remaining) 位" : ""
+        return "\n\n有 \(creatorDiscoveryFailureNotes.count) 位博主的 Articles 列表没读到，已继续处理其余博主：\n\(shown)\(more)"
     }
 
     func closeCreatorArticleDiscovery() {
@@ -1598,6 +1595,7 @@ final class AppViewModel: ObservableObject {
         browserCaptureSubscriptionPostIDs.removeAll()
         browserCaptureSkippedSubscriptionCount = 0
         finishDownloadProgressWindow()
+        let discoveryFailureNote = creatorDiscoveryFailureNote
         if progress.discoveredArticles == 0, queuedTotal == 0, completed == 0 {
             if let creatorCount = activeSyncCreatorCount {
                 let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
@@ -1605,7 +1603,7 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
                 publishSyncResult(
                     title: "同步完成",
-                    message: "已检查 \(creatorCount) 位已跟踪博主的\(range) X Article，未发现可下载文章。本次 X API 调用为 0。",
+                    message: "已检查 \(creatorCount) 位已跟踪博主的\(range) X Article，未发现可下载文章。本次 X API 调用为 0。\(discoveryFailureNote)",
                     metrics: [
                         DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
                         DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
@@ -1648,7 +1646,7 @@ final class AppViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(220))
                 self?.publishSyncResult(
                     title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                    message: "已检查 \(creatorCount) 位博主，每位检查\(range)；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
+                    message: "已检查 \(creatorCount) 位博主，每位检查\(range)；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)\(discoveryFailureNote)",
                     metrics: metrics
                 )
             }
@@ -1671,7 +1669,7 @@ final class AppViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(220))
                 self?.downloadResultNotice = DownloadResultNotice(
                     title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
-                    message: "本次进入下载队列 \(queuedTotal) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)",
+                    message: "本次进入下载队列 \(queuedTotal) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)\(discoveryFailureNote)",
                     metrics: metrics
                 )
             }
@@ -2848,6 +2846,11 @@ final class AppViewModel: ObservableObject {
                 existing: repaired[index].knownArticleCount,
                 downloaded: downloaded
             )
+            if stored == nil,
+               repaired[index].knownArticleCount == 0,
+               repaired[index].completeness == .fullArchiveVerified {
+                continue
+            }
             guard stored != repaired[index].knownArticleCount else { continue }
             repaired[index].knownArticleCount = stored
             do {

@@ -338,6 +338,27 @@ final class BlockedProfileArticleListGateTests: XCTestCase {
         XCTAssertEqual(clicked as? String, "yes")
     }
 
+    func testClicksAPlainViewPostsLabelAndKeepsWaitingWhileTheGateIsVisible() async throws {
+        let html = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <h1>@zjp1997720 is blocked</h1>
+            <p>Viewing posts won't unblock @zjp1997720.</p>
+            <div id="view-posts" onclick="this.dataset.clicked='yes'">查看帖子</div>
+          </div>
+        </main>
+        """
+
+        let webView = try await load(html)
+        let clicked = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
+        XCTAssertEqual(clicked as? String, BlockedProfileArticleListGate.clickedResult)
+        let marker = try await webView.evaluateJavaScript("document.getElementById('view-posts').dataset.clicked")
+        XCTAssertEqual(marker as? String, "yes")
+        let blocking = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.blockingScript)
+        XCTAssertEqual(blocking as? String, "blocking")
+    }
+
     func testLeavesThePageAloneWhenTheListIsAlreadyVisible() async throws {
         let html = """
         <!doctype html>

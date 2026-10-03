@@ -17,19 +17,52 @@ enum BlockedProfileArticleListGate {
         document.querySelector("main"),
         document.body
       ].filter(Boolean);
+      const normalize = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const click = (el) => {
+        el.scrollIntoView({block: "center"});
+        el.click();
+        return "clicked";
+      };
       const seen = new Set();
-      for (const root of roots) {
-        for (const el of root.querySelectorAll('button, [role="button"]')) {
-          if (seen.has(el)) continue;
-          seen.add(el);
-          const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-          if (!labels.has(text)) continue;
-          el.scrollIntoView({block: "center"});
-          el.click();
-          return "clicked";
+      const scan = (selector) => {
+        for (const root of roots) {
+          for (const el of root.querySelectorAll(selector)) {
+            if (seen.has(el)) continue;
+            seen.add(el);
+            if (!labels.has(normalize(el))) continue;
+            const childMatches = [...el.querySelectorAll('button, [role="button"], a, div, span')]
+              .some((child) => labels.has(normalize(child)));
+            if (childMatches) continue;
+            return click(el);
+          }
         }
-      }
-      return "absent";
+        return null;
+      };
+      return scan('button, [role="button"]') || scan('a, div, span') || "absent";
+    })()
+    """#
+
+    /// The gate is still covering the list even when its control is not a
+    /// button we managed to click. An empty scan must not settle while this
+    /// text is on screen.
+    static let blockingScript = #"""
+    (() => {
+      const root = document.querySelector('[data-testid="primaryColumn"]')
+        || document.querySelector("main")
+        || document.body;
+      if (!root) return "absent";
+      const text = (root.innerText || root.textContent || "").replace(/\s+/g, " ").toLowerCase();
+      const hints = [
+        "view posts",
+        "查看帖子",
+        "查看推文",
+        "is blocked",
+        "won't unblock",
+        "已被屏蔽",
+        "不会取消屏蔽",
+        "不会解除屏蔽"
+      ];
+      return hints.some((hint) => text.includes(hint)) ? "blocking" : "absent";
     })()
     """#
 }
@@ -164,6 +197,12 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                     try await Task.sleep(for: .milliseconds(900))
                     continue
                 }
+                if orderedItems.isEmpty, await blockedListStillCoveringArticles() {
+                    unchangedAtBottom = 0
+                    pageStatus = "@\(request.username) 的屏蔽确认还在，先不把文章总数记成 0…"
+                    try await Task.sleep(for: .milliseconds(750))
+                    continue
+                }
                 do {
                     let snapshot = try await readSnapshot(expectedHandle: request.username)
                     let before = orderedItems.count
@@ -217,15 +256,23 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                             : "已打开 Articles 列表，正在等待文章卡片…")
                         : "已找到 \(orderedItems.count) 篇 Article，正在向下检查更多…X API 调用为 0"
 
-                    if unchangedAtBottom >= 5 {
+                    if CreatorArticleListSettlePolicy.isSettled(
+                        itemCount: orderedItems.count,
+                        unchangedAtBottom: unchangedAtBottom,
+                        gateVisible: waitingForRevealedList
+                    ) {
                         let confirmedCount = orderedItems.isEmpty ? nil : orderedItems.count
+                        let confirmedEmpty = orderedItems.isEmpty
                         pageStatus = request.countOnly
                             ? (confirmedCount.map { "@\(request.username) 线上共 \($0) 篇 Article，正在保存总数；不会下载文章" }
-                                ?? "Articles 列表还没有出现文章卡片，不把总数记成 0")
-                            : "@\(request.username) 线上已确认 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
+                                ?? "@\(request.username) 的 Articles 列表已核对，线上是 0 篇")
+                            : confirmedEmpty
+                                ? "@\(request.username) 的 Articles 列表已核对，线上是 0 篇"
+                                : "@\(request.username) 线上已确认 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
                         return CreatorArticleDiscoveryResult(
                             items: request.countOnly ? [] : discoveredItems,
-                            knownArticleCount: confirmedCount
+                            knownArticleCount: confirmedCount,
+                            confirmedEmpty: confirmedEmpty
                         )
                     }
                     try await scrollForMore()
@@ -274,6 +321,15 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         do {
             let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
             return (raw as? String) == BlockedProfileArticleListGate.clickedResult
+        } catch {
+            return false
+        }
+    }
+
+    private func blockedListStillCoveringArticles() async -> Bool {
+        do {
+            let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.blockingScript)
+            return (raw as? String) == "blocking"
         } catch {
             return false
         }
@@ -421,8 +477,12 @@ struct BrowserCreatorArticleDiscoveryView: View {
             } catch is CancellationError {
                 return
             } catch {
-                model.creatorArticleDiscoveryFailed(error)
-                controller.pageStatus = "文章列表自动发现未完成，可重新加载后再试"
+                let failedRequest = request
+                let failedError = error
+                Task { @MainActor in
+                    await model.creatorArticleDiscoveryFailed(failedError, for: failedRequest)
+                }
+                controller.pageStatus = "这位博主的列表没读到，继续下一位…"
             }
         }
         .interactiveDismissDisabled(controller.isDiscovering)

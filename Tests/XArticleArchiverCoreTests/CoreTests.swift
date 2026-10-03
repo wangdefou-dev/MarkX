@@ -2253,6 +2253,41 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
             155
         )
         XCTAssertNil(CreatorArticleCountPolicy.displayedTotal(known: 0, downloaded: 0))
+        XCTAssertEqual(
+            CreatorArticleCountPolicy.displayedTotal(known: 0, downloaded: 0, verifiedEmpty: true),
+            0
+        )
+        XCTAssertNil(
+            CreatorArticleCountPolicy.displayedTotal(known: nil, downloaded: 0, verifiedEmpty: false)
+        )
+    }
+
+    func testEmptyArticlesListSettlesSlowerThanAListThatAlreadyHasCards() {
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 0,
+            unchangedAtBottom: 5,
+            gateVisible: false
+        ))
+        XCTAssertTrue(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 0,
+            unchangedAtBottom: 15,
+            gateVisible: false
+        ))
+        XCTAssertTrue(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 4,
+            unchangedAtBottom: 5,
+            gateVisible: false
+        ))
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 4,
+            unchangedAtBottom: 5,
+            gateVisible: true
+        ))
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 0,
+            unchangedAtBottom: 15,
+            gateVisible: true
+        ))
     }
 
     func testUnlimitedDiscoveryKeepsEveryVisibleArticle() {
