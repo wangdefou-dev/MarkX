@@ -359,6 +359,26 @@ final class BlockedProfileArticleListGateTests: XCTestCase {
         XCTAssertEqual(blocking as? String, "blocking")
     }
 
+    func testClicksTheChineseBlockedProfileButton() async throws {
+        let html = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <h1>你已屏蔽 @zjp1997720</h1>
+            <button type="button" id="view-profile" onclick="this.dataset.clicked='yes'">是，查看个人资料</button>
+          </div>
+        </main>
+        """
+
+        let webView = try await load(html)
+        let raw = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.revealScript)
+        XCTAssertEqual(raw as? String, BlockedProfileArticleListGate.clickedResult)
+        let clicked = try await webView.evaluateJavaScript("document.getElementById('view-profile').dataset.clicked")
+        XCTAssertEqual(clicked as? String, "yes")
+        let blocking = try await webView.evaluateJavaScript(BlockedProfileArticleListGate.blockingScript)
+        XCTAssertEqual(blocking as? String, "blocking")
+    }
+
     func testLeavesThePageAloneWhenTheListIsAlreadyVisible() async throws {
         let html = """
         <!doctype html>
@@ -373,13 +393,94 @@ final class BlockedProfileArticleListGateTests: XCTestCase {
         XCTAssertEqual(raw as? String, BlockedProfileArticleListGate.absentResult)
     }
 
+    func testReadsAnArticleCoverCardAndDoesNotCallAShortPageEmpty() async throws {
+        let cardHTML = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <div data-testid="articleCard">
+              <a href="/i/article/2106000255464701953"><div dir="auto">玉伯的长文</div></a>
+            </div>
+          </div>
+        </main>
+        """
+        let card = try await readList(cardHTML, handle: "lifesinger")
+        XCTAssertEqual(card.items.map(\.url), ["https://x.com/lifesinger/status/2106000255464701953"])
+        XCTAssertEqual(card.items.map(\.title), ["玉伯的长文"])
+        XCTAssertFalse(card.explicitEmpty)
+
+        let shellHTML = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <h1>@lifesinger</h1>
+          </div>
+        </main>
+        """
+        let shell = try await readList(shellHTML, handle: "lifesinger")
+        XCTAssertTrue(shell.items.isEmpty)
+        XCTAssertFalse(shell.explicitEmpty)
+
+        let errorHTML = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <h1>Something went wrong</h1>
+            <button type="button">Try again</button>
+          </div>
+        </main>
+        """
+        let error = try await readList(errorHTML, handle: "lifesinger")
+        XCTAssertTrue(error.items.isEmpty)
+        XCTAssertFalse(error.explicitEmpty)
+
+        let emptyHTML = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn">
+            <div data-testid="emptyState">@lifesinger hasn't posted</div>
+          </div>
+        </main>
+        """
+        let empty = try await readList(emptyHTML, handle: "lifesinger")
+        XCTAssertTrue(empty.items.isEmpty)
+        XCTAssertTrue(empty.explicitEmpty)
+    }
+
+    private func readList(_ html: String, handle: String) async throws -> CreatorArticleListProbe {
+        let webView = try await load(html, baseURL: URL(string: "https://x.com/\(handle)/articles")!)
+        let raw = try await webView.callAsyncJavaScript(
+            CreatorArticlesListExtractor.script,
+            arguments: ["expectedHandle": handle],
+            in: nil,
+            contentWorld: .page
+        )
+        let json = try XCTUnwrap(raw as? String)
+        XCTAssertFalse(json.hasPrefix("__X_ARTICLE_LIST_ERROR__:"), json)
+        return try JSONDecoder().decode(CreatorArticleListProbe.self, from: Data(json.utf8))
+    }
+
     private func load(_ html: String) async throws -> WKWebView {
+        try await load(html, baseURL: URL(string: "https://x.com/zjp1997720/articles")!)
+    }
+
+    private func load(_ html: String, baseURL: URL) async throws -> WKWebView {
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1100, height: 800), configuration: WKWebViewConfiguration())
         let navigation = NavigationWaiter()
         webView.navigationDelegate = navigation
-        await navigation.load(html, in: webView, baseURL: URL(string: "https://x.com/zjp1997720/articles")!)
+        await navigation.load(html, in: webView, baseURL: baseURL)
         return webView
     }
+}
+
+private struct CreatorArticleListProbe: Decodable {
+    struct Item: Decodable {
+        var title: String
+        var url: String
+    }
+
+    var items: [Item]
+    var explicitEmpty: Bool
 }
 
 @MainActor

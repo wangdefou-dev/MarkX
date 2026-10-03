@@ -50,9 +50,10 @@ public enum CreatorArticleCountPolicy {
 }
 
 /// How long an Articles list must stay unchanged at the bottom before the
-/// scan treats it as finished. A page with no cards has to wait longer: a
-/// short login shell or a blocked-profile gate is also "at the bottom"
-/// before any Article card exists.
+/// scan treats it as finished. A short shell, an error page, or a card
+/// layout that has not rendered is also "at the bottom". That is not proof
+/// the creator has zero Articles. A zero is stored only when the page itself
+/// says the list is empty.
 public enum CreatorArticleListSettlePolicy {
     public static let pollsWithCards = 5
     public static let pollsWithoutCards = 15
@@ -60,10 +61,27 @@ public enum CreatorArticleListSettlePolicy {
     public static func isSettled(
         itemCount: Int,
         unchangedAtBottom: Int,
-        gateVisible: Bool
+        gateVisible: Bool,
+        pageReportsEmpty: Bool = false
     ) -> Bool {
         if gateVisible || unchangedAtBottom <= 0 { return false }
-        let required = itemCount > 0 ? pollsWithCards : pollsWithoutCards
-        return unchangedAtBottom >= required
+        if itemCount == 0 {
+            guard pageReportsEmpty else { return false }
+            return unchangedAtBottom >= pollsWithoutCards
+        }
+        return unchangedAtBottom >= pollsWithCards
+    }
+}
+
+extension CreatorArticleCountPolicy {
+    /// 0.3.34 marked a creator verified-empty after a short page showed no
+    /// cards. Those rows are not a real zero. Forget that mark once, so the
+    /// sidebar shows 0/? until a later scan sees an explicit empty state.
+    public static func shouldClearUntrustedVerifiedZero(
+        completeness: CompletenessStatus,
+        known: Int?,
+        downloaded: Int
+    ) -> Bool {
+        completeness == .fullArchiveVerified && downloaded == 0 && (known ?? 0) == 0
     }
 }

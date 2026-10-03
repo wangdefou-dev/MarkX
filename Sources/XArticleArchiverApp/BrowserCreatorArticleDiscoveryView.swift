@@ -11,7 +11,14 @@ enum BlockedProfileArticleListGate {
 
     static let revealScript = #"""
     (() => {
-      const labels = new Set(["view posts", "查看帖子", "查看推文"]);
+      const labels = new Set([
+        "view posts",
+        "查看帖子",
+        "查看推文",
+        "是，查看个人资料",
+        "是,查看个人资料",
+        "yes, view profile"
+      ]);
       const roots = [
         document.querySelector('[data-testid="primaryColumn"]'),
         document.querySelector("main"),
@@ -56,11 +63,16 @@ enum BlockedProfileArticleListGate {
         "view posts",
         "查看帖子",
         "查看推文",
+        "是，查看个人资料",
+        "是,查看个人资料",
+        "yes, view profile",
         "is blocked",
         "won't unblock",
         "已被屏蔽",
         "不会取消屏蔽",
-        "不会解除屏蔽"
+        "不会解除屏蔽",
+        "查看这些帖子",
+        "view these posts"
       ];
       return hints.some((hint) => text.includes(hint)) ? "blocking" : "absent";
     })()
@@ -76,6 +88,7 @@ private struct CreatorArticleListSnapshot: Decodable {
     var items: [Item]
     var atBottom: Bool
     var isLoadingMore: Bool
+    var explicitEmpty: Bool
 }
 
 @MainActor
@@ -256,13 +269,15 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                             : "已打开 Articles 列表，正在等待文章卡片…")
                         : "已找到 \(orderedItems.count) 篇 Article，正在向下检查更多…X API 调用为 0"
 
+                    let pageReportsEmpty = snapshot.explicitEmpty && orderedItems.isEmpty
                     if CreatorArticleListSettlePolicy.isSettled(
                         itemCount: orderedItems.count,
                         unchangedAtBottom: unchangedAtBottom,
-                        gateVisible: waitingForRevealedList
+                        gateVisible: waitingForRevealedList,
+                        pageReportsEmpty: pageReportsEmpty
                     ) {
                         let confirmedCount = orderedItems.isEmpty ? nil : orderedItems.count
-                        let confirmedEmpty = orderedItems.isEmpty
+                        let confirmedEmpty = pageReportsEmpty
                         pageStatus = request.countOnly
                             ? (confirmedCount.map { "@\(request.username) 线上共 \($0) 篇 Article，正在保存总数；不会下载文章" }
                                 ?? "@\(request.username) 的 Articles 列表已核对，线上是 0 篇")
@@ -299,7 +314,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
 
     private func readSnapshot(expectedHandle: String) async throws -> CreatorArticleListSnapshot {
         let raw = try await webView.callAsyncJavaScript(
-            Self.discoveryScript,
+            CreatorArticlesListExtractor.script,
             arguments: ["expectedHandle": expectedHandle],
             in: nil,
             contentWorld: .page
@@ -314,7 +329,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     }
 
     private func scrollForMore() async throws {
-        _ = try await webView.evaluateJavaScript(Self.scrollScript)
+        _ = try await webView.evaluateJavaScript(CreatorArticlesListExtractor.scrollScript)
     }
 
     private func revealBlockedArticleListIfNeeded() async -> Bool {
@@ -372,8 +387,12 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     }
 
     private static let errorPrefix = "__X_ARTICLE_LIST_ERROR__:"
+}
 
-    private static let discoveryScript = #"""
+/// Reads the logged-in Articles tab. Cover cards are not always tweets, and a
+/// short page with no cards is not an empty archive unless X says so.
+enum CreatorArticlesListExtractor {
+    static let script = #"""
     const ERROR = "__X_ARTICLE_LIST_ERROR__:";
     const normalizedHandle = String(expectedHandle || '').replace(/^@/, '').toLowerCase();
     const path = String(location.pathname || '').replace(/\/+$/, '') || '/';
@@ -382,34 +401,36 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
       return ERROR + "当前页面不是目标博主的 Articles 列表。";
     }
 
-    const cards = [
-      ...document.querySelectorAll('article[data-testid="tweet"]'),
-      ...document.querySelectorAll('[data-testid="cellInnerDiv"]')
-    ];
+    const column = document.querySelector('[data-testid="primaryColumn"]')
+      || document.querySelector("main")
+      || document.body;
+    const anchors = column
+      ? [...column.querySelectorAll('a[href*="/status/"], a[href*="/article/"]')]
+      : [];
     const items = [];
     const seen = new Set();
-    for (const card of cards) {
-      const anchors = [...card.querySelectorAll('a[href*="/status/"], a[href*="/article/"]')];
-      for (const anchor of anchors) {
-        let resolved;
-        try { resolved = new URL(anchor.getAttribute('href') || '', location.href); }
-        catch (_) { continue; }
-        const host = resolved.hostname.toLowerCase();
-        if (host !== 'x.com' && !host.endsWith('.x.com') && host !== 'twitter.com' && !host.endsWith('.twitter.com')) continue;
-        const match = resolved.pathname.match(/^\/(?:i|([A-Za-z0-9_]{1,15}))\/(?:status|article)\/(\d{1,19})(?:\/|$)/i);
-        if (!match || /\/analytics(?:\/|$)/i.test(resolved.pathname)) continue;
-        const hrefHandle = (match[1] || normalizedHandle).toLowerCase();
-        if (hrefHandle !== 'i' && hrefHandle !== normalizedHandle) continue;
-        if (seen.has(match[2])) continue;
-        seen.add(match[2]);
-        const title = [...card.querySelectorAll('div[dir="auto"]')]
-          .map(node => (node.innerText || '').trim())
-          .find(Boolean) || `X Article · ${match[2]}`;
-        items.push({
-          title,
-          url: `https://x.com/${normalizedHandle}/status/${match[2]}`
-        });
-      }
+    for (const anchor of anchors) {
+      let resolved;
+      try { resolved = new URL(anchor.getAttribute('href') || '', location.href); }
+      catch (_) { continue; }
+      const host = resolved.hostname.toLowerCase();
+      if (host !== 'x.com' && !host.endsWith('.x.com') && host !== 'twitter.com' && !host.endsWith('.twitter.com')) continue;
+      const match = resolved.pathname.match(/^\/(?:i|([A-Za-z0-9_]{1,15}))\/(?:status|article)\/(\d{1,19})(?:\/|$)/i);
+      if (!match || /\/analytics(?:\/|$)/i.test(resolved.pathname)) continue;
+      const hrefHandle = (match[1] || normalizedHandle).toLowerCase();
+      if (hrefHandle !== 'i' && hrefHandle !== normalizedHandle) continue;
+      if (seen.has(match[2])) continue;
+      seen.add(match[2]);
+      const titleRoot = anchor.closest('[data-testid="articleCard"], [data-testid="articlePreview"], article[data-testid="tweet"], [data-testid="cellInnerDiv"]') || anchor;
+      const title = [...titleRoot.querySelectorAll('div[dir="auto"]')]
+        .map(node => (node.innerText || '').trim())
+        .find(Boolean)
+        || (anchor.innerText || '').replace(/\s+/g, ' ').trim()
+        || `X Article · ${match[2]}`;
+      items.push({
+        title,
+        url: `https://x.com/${normalizedHandle}/status/${match[2]}`
+      });
     }
 
     const root = document.scrollingElement || document.documentElement;
@@ -419,12 +440,37 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     // Articles list itself is still fetching another page.
     const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
     const isLoadingMore = !!primaryColumn?.querySelector('[role="progressbar"]');
-    return JSON.stringify({items, atBottom, isLoadingMore});
+    const columnText = (column?.innerText || "").replace(/\s+/g, " ").toLowerCase();
+    const reportsError = [
+      "something went wrong",
+      "try again",
+      "出错了",
+      "请重试",
+      "this account doesn't exist",
+      "account suspended",
+      "账号不存在",
+      "账号已被冻结"
+    ].some((hint) => columnText.includes(hint));
+    const reportsEmptyCopy = [
+      "hasn't posted",
+      "hasn't written",
+      "has not posted",
+      "no articles yet",
+      "hasn't published",
+      "还没有发布",
+      "尚未发布",
+      "没有发布任何",
+      "还没有文章",
+      "暂无文章"
+    ].some((hint) => columnText.includes(hint));
+    const hasEmptyState = !!column?.querySelector('[data-testid="emptyState"], [data-testid="empty_state"]');
+    const explicitEmpty = items.length === 0 && !reportsError && (hasEmptyState || reportsEmptyCopy);
+    return JSON.stringify({items, atBottom, isLoadingMore, explicitEmpty});
     """#
 
-    private static let scrollScript = #"""
+    static let scrollScript = #"""
     (() => {
-      const cards = [...document.querySelectorAll('article[data-testid="tweet"]')];
+      const cards = [...document.querySelectorAll('article[data-testid="tweet"], [data-testid="articleCard"]')];
       if (cards.length) cards[cards.length - 1].scrollIntoView({block:'end'});
       window.scrollBy({top: Math.max(420, window.innerHeight * 0.82), behavior:'auto'});
       return true;

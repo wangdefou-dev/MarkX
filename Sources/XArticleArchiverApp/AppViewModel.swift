@@ -139,6 +139,7 @@ final class AppViewModel: ObservableObject {
     private var libraryRepairTask: Task<Void, Never>?
     private var todayRefreshTask: Task<Void, Never>?
     private static let markdownFormatMigrationDefaultsKey = "didMigrateMarkdownFormattingV1"
+    private static let clearUntrustedVerifiedEmptyDefaultsKey = "didClearUntrustedVerifiedEmptyTotalsV1"
     private let defaults = UserDefaults.standard
     private static let pinnedCreatorIDsDefaultsKey = "pinnedCreatorIDs"
     private static let maximumPinnedCreators = 5
@@ -2833,6 +2834,39 @@ final class AppViewModel: ObservableObject {
         articles[index].processingLog = full.processingLog
     }
 
+    /// 0.3.34 stored a verified zero whenever a short Articles page rendered
+    /// no cards. Clear that mark once so those creators show 0/? again.
+    private func clearUntrustedVerifiedEmptyTotalsIfNeeded() async {
+        guard let database else { return }
+        guard !defaults.bool(forKey: Self.clearUntrustedVerifiedEmptyDefaultsKey) else { return }
+        let statistics = ArchiveSidebarStatistics(articles: articles)
+        var repaired = creators
+        var didRepair = false
+        var failed = false
+        for index in repaired.indices {
+            if Task.isCancelled { return }
+            let downloaded = statistics.downloadedArticleCount(for: repaired[index].id)
+            guard CreatorArticleCountPolicy.shouldClearUntrustedVerifiedZero(
+                completeness: repaired[index].completeness,
+                known: repaired[index].knownArticleCount,
+                downloaded: downloaded
+            ) else { continue }
+            repaired[index].completeness = .unknown
+            do {
+                try await database.upsertCreator(repaired[index])
+                didRepair = true
+            } catch {
+                repaired[index].completeness = creators[index].completeness
+                failed = true
+            }
+        }
+        if didRepair {
+            creators = repaired
+        }
+        if failed || Task.isCancelled { return }
+        defaults.set(true, forKey: Self.clearUntrustedVerifiedEmptyDefaultsKey)
+    }
+
     private func repairMissingCreatorArticleTotals() async {
         guard let database else { return }
         let statistics = ArchiveSidebarStatistics(articles: articles)
@@ -2867,6 +2901,7 @@ final class AppViewModel: ObservableObject {
 
     private func repairLibraryInBackground() async {
         guard let archiveRoot, let database else { return }
+        await clearUntrustedVerifiedEmptyTotalsIfNeeded()
         await repairMissingCreatorArticleTotals()
         let snapshot = articles
         let shouldMigrateFormatting = !defaults.bool(forKey: Self.markdownFormatMigrationDefaultsKey)

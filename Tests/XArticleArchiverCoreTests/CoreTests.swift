@@ -2262,16 +2262,29 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
         )
     }
 
-    func testEmptyArticlesListSettlesSlowerThanAListThatAlreadyHasCards() {
+    func testEmptyArticlesListSettlesOnlyWhenThePageSaysItIsEmpty() {
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 0,
+            unchangedAtBottom: 15,
+            gateVisible: false
+        ))
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 0,
+            unchangedAtBottom: 40,
+            gateVisible: false,
+            pageReportsEmpty: false
+        ))
         XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 0,
             unchangedAtBottom: 5,
-            gateVisible: false
+            gateVisible: false,
+            pageReportsEmpty: true
         ))
         XCTAssertTrue(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 0,
             unchangedAtBottom: 15,
-            gateVisible: false
+            gateVisible: false,
+            pageReportsEmpty: true
         ))
         XCTAssertTrue(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 4,
@@ -2286,7 +2299,36 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
         XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 0,
             unchangedAtBottom: 15,
-            gateVisible: true
+            gateVisible: true,
+            pageReportsEmpty: true
+        ))
+    }
+
+    func testUntrustedVerifiedZeroFromACardlessPageIsClearedOnce() {
+        XCTAssertTrue(CreatorArticleCountPolicy.shouldClearUntrustedVerifiedZero(
+            completeness: .fullArchiveVerified,
+            known: 0,
+            downloaded: 0
+        ))
+        XCTAssertTrue(CreatorArticleCountPolicy.shouldClearUntrustedVerifiedZero(
+            completeness: .fullArchiveVerified,
+            known: nil,
+            downloaded: 0
+        ))
+        XCTAssertFalse(CreatorArticleCountPolicy.shouldClearUntrustedVerifiedZero(
+            completeness: .fullArchiveVerified,
+            known: 0,
+            downloaded: 4
+        ))
+        XCTAssertFalse(CreatorArticleCountPolicy.shouldClearUntrustedVerifiedZero(
+            completeness: .fullArchiveVerified,
+            known: 12,
+            downloaded: 0
+        ))
+        XCTAssertFalse(CreatorArticleCountPolicy.shouldClearUntrustedVerifiedZero(
+            completeness: .unknown,
+            known: 0,
+            downloaded: 0
         ))
     }
 
