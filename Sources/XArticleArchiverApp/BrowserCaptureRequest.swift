@@ -31,7 +31,7 @@ struct CreatorArticleListItem: Identifiable, Hashable {
     var title: String
 
     var sourceURLText: String {
-        "https://x.com/\(link.username)/status/\(link.postID)"
+        XArticleNavigationURL.captureURL(for: link).absoluteString
     }
 }
 

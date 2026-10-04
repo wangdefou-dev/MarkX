@@ -61,9 +61,12 @@ public enum XArticleURLParser {
             let isOwnerRoute = link.username.caseInsensitiveCompare(expected) == .orderedSame
             guard isOwnerRoute || isGenericArticleRoute,
                   seenPostIDs.insert(link.postID).inserted else { continue }
-            let canonical = XArticleNavigationURL.articleURL(authorHandle: expected, postID: link.postID)
-                ?? link.originalURL
-            output.append(XArticleLink(postID: link.postID, username: expected, originalURL: canonical))
+            let owned = XArticleLink(postID: link.postID, username: expected, originalURL: link.originalURL)
+            output.append(XArticleLink(
+                postID: link.postID,
+                username: expected,
+                originalURL: XArticleNavigationURL.captureURL(for: owned)
+            ))
         }
         return output
     }

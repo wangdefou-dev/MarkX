@@ -444,7 +444,7 @@ public enum BrowserArticleCaptureDecoder {
                     continue
                 }
 
-                let sourceURL = URL(string: "https://x.com/\(context.link.username)/status/\(context.link.postID)")!
+                let sourceURL = XArticleNavigationURL.captureURL(for: context.link)
                 let detail = captured.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let prefix = "嵌入媒体未归档"
                 let detailSuffix = detail.isEmpty || detail == "嵌入内容" ? "" : "（\(detail)）"
@@ -552,7 +552,7 @@ public enum BrowserArticleCaptureDecoder {
             authorName: creator.displayName,
             authorHandle: creator.username,
             contentType: .xArticle,
-            sourceURL: URL(string: "https://x.com/\(context.link.username)/status/\(context.link.postID)")!,
+            sourceURL: XArticleNavigationURL.captureURL(for: context.link),
             sourcePostID: context.link.postID,
             sourceArticleID: context.sourceArticleID,
             publishedAt: publishedAt,

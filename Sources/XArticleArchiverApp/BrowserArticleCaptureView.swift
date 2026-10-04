@@ -44,7 +44,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     }
 
     func load(_ request: BrowserCaptureRequest) {
-        let canonical = URL(string: "https://x.com/\(request.link.username)/status/\(request.link.postID)")!
+        let canonical = XArticleNavigationURL.captureURL(for: request.link)
         currentArticleURL = canonical
         if webView.url != canonical {
             closeLoginWindow(reloadArticle: false)
@@ -1217,7 +1217,7 @@ struct BrowserArticleCaptureView: View {
                         Text(item.displayTitle)
                             .font(.callout.weight(.semibold))
                             .lineLimit(2)
-                        Text("https://x.com/\(item.link.username)/status/\(item.link.postID)")
+                        Text(XArticleNavigationURL.captureURL(for: item.link).absoluteString)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

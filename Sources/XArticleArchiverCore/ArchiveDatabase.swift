@@ -238,7 +238,12 @@ public actor ArchiveDatabase {
         let sql = """
         SELECT \(Self.articleSelectColumns) FROM articles
         WHERE pipeline_state NOT IN ('committed', 'subscription_required')
-        ORDER BY published_at DESC
+        ORDER BY CASE pipeline_state
+            WHEN 'discovered' THEN 0
+            WHEN 'parsed' THEN 1
+            ELSE 2
+        END,
+        published_at DESC
         LIMIT ?;
         """
         let statement = try prepare(sql)

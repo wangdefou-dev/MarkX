@@ -405,9 +405,10 @@ final class BlockedProfileArticleListGateTests: XCTestCase {
         </main>
         """
         let card = try await readList(cardHTML, handle: "lifesinger")
-        XCTAssertEqual(card.items.map(\.url), ["https://x.com/lifesinger/status/2106000255464701953"])
+        XCTAssertEqual(card.items.map(\.url), ["https://x.com/i/article/2106000255464701953"])
         XCTAssertEqual(card.items.map(\.title), ["玉伯的长文"])
         XCTAssertFalse(card.explicitEmpty)
+        XCTAssertTrue(card.atBottom)
 
         let shellHTML = """
         <!doctype html>
@@ -447,8 +448,61 @@ final class BlockedProfileArticleListGateTests: XCTestCase {
         XCTAssertTrue(empty.explicitEmpty)
     }
 
+    func testScrollsAnInnerArticlesTimelineAndKeepsStatusIdsDistinctFromArticleIds() async throws {
+        let html = """
+        <!doctype html>
+        <main>
+          <div data-testid="primaryColumn" style="height: 500px; overflow: hidden;">
+            <div id="timeline" style="height: 280px; overflow-y: auto;">
+              <div data-testid="cellInnerDiv" style="height: 200px;">
+                <a href="/lifesinger/status/2106002684075745332"><div dir="auto">第一篇</div></a>
+                <a href="/i/article/2106000255464701953">文章</a>
+              </div>
+              <div data-testid="cellInnerDiv" style="height: 200px;">
+                <a href="/lifesinger/status/2104053180476604479"><div dir="auto">第二篇</div></a>
+              </div>
+              <div data-testid="cellInnerDiv" style="height: 200px;">
+                <a href="/lifesinger/status/2104186950295110037"><div dir="auto">第三篇</div></a>
+              </div>
+              <div data-testid="cellInnerDiv" style="height: 200px;">
+                <a href="/i/article/2103732446374359147"><div dir="auto">第四篇只有文章链接</div></a>
+              </div>
+              <div data-testid="cellInnerDiv" style="height: 200px;">
+                <a href="/lifesinger/status/2102764610109813192"><div dir="auto">第五篇</div></a>
+              </div>
+              <div id="spacer" style="height: 4000px;"></div>
+            </div>
+          </div>
+        </main>
+        """
+        let webView = try await load(html, baseURL: URL(string: "https://x.com/lifesinger/articles")!)
+        let before = try await readList(in: webView, handle: "lifesinger")
+        XCTAssertFalse(before.atBottom)
+        XCTAssertEqual(before.items.map(\.url), [
+            "https://x.com/lifesinger/status/2106002684075745332",
+            "https://x.com/lifesinger/status/2104053180476604479",
+            "https://x.com/lifesinger/status/2104186950295110037",
+            "https://x.com/i/article/2103732446374359147",
+            "https://x.com/lifesinger/status/2102764610109813192"
+        ])
+        XCTAssertEqual(before.items.map(\.title), ["第一篇", "第二篇", "第三篇", "第四篇只有文章链接", "第五篇"])
+        let beforeTopValue = try await webView.evaluateJavaScript("document.getElementById('timeline').scrollTop")
+        let beforeTop = try XCTUnwrap(beforeTopValue as? NSNumber).doubleValue
+        XCTAssertEqual(beforeTop, 0, accuracy: 0.1)
+        _ = try await webView.evaluateJavaScript(CreatorArticlesListExtractor.scrollScript)
+        let afterTopValue = try await webView.evaluateJavaScript("document.getElementById('timeline').scrollTop")
+        let afterTop = try XCTUnwrap(afterTopValue as? NSNumber).doubleValue
+        XCTAssertGreaterThan(afterTop, 200)
+        let after = try await readList(in: webView, handle: "lifesinger")
+        XCTAssertFalse(after.atBottom)
+    }
+
     private func readList(_ html: String, handle: String) async throws -> CreatorArticleListProbe {
         let webView = try await load(html, baseURL: URL(string: "https://x.com/\(handle)/articles")!)
+        return try await readList(in: webView, handle: handle)
+    }
+
+    private func readList(in webView: WKWebView, handle: String) async throws -> CreatorArticleListProbe {
         let raw = try await webView.callAsyncJavaScript(
             CreatorArticlesListExtractor.script,
             arguments: ["expectedHandle": handle],
@@ -481,6 +535,9 @@ private struct CreatorArticleListProbe: Decodable {
 
     var items: [Item]
     var explicitEmpty: Bool
+    var atBottom: Bool
+    var scrollHeight: Int
+    var scrollTop: Int
 }
 
 @MainActor

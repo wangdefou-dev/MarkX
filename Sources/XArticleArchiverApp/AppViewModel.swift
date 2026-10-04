@@ -1905,19 +1905,35 @@ final class AppViewModel: ObservableObject {
                 creator.displayName = capturedName
                 try await database.upsertCreator(creator)
             }
-            let canonicalURL = URL(
-                string: "https://x.com/\(creator.username)/status/\(request.link.postID)"
-            )!
-            let resolvedLink = XArticleLink(
+            let openedURL = XArticleNavigationURL.captureURL(for: XArticleLink(
                 postID: request.link.postID,
                 username: creator.username,
-                originalURL: canonicalURL
+                originalURL: request.link.originalURL
+            ))
+            let openedArticleRoute = openedURL.pathComponents.contains {
+                $0.caseInsensitiveCompare("article") == .orderedSame
+            }
+            var resolvedPostID = request.link.postID
+            var resolvedArticleID = request.sourceArticleID
+            if openedArticleRoute {
+                resolvedArticleID = resolvedArticleID ?? request.link.postID
+                if payload.postID != request.link.postID, payload.postID.allSatisfy(\.isNumber) {
+                    resolvedPostID = payload.postID
+                }
+            }
+            let resolvedURL = resolvedPostID == request.link.postID
+                ? openedURL
+                : (XArticleNavigationURL.articleURL(authorHandle: creator.username, postID: resolvedPostID) ?? openedURL)
+            let resolvedLink = XArticleLink(
+                postID: resolvedPostID,
+                username: creator.username,
+                originalURL: resolvedURL
             )
             let context = BrowserArticleCaptureContext(
                 link: resolvedLink,
                 creator: creator,
                 publishedAt: request.publishedAt,
-                sourceArticleID: request.sourceArticleID,
+                sourceArticleID: resolvedArticleID,
                 expectedPlainText: request.expectedPlainText
             )
             let document = try await Task.detached(priority: .userInitiated) {
@@ -1933,6 +1949,9 @@ final class AppViewModel: ObservableObject {
             }
             progress.completedArticles += 1
             browserCaptureSavedPostIDs.insert(request.link.postID)
+            if resolvedPostID != request.link.postID {
+                browserCaptureSavedPostIDs.insert(resolvedPostID)
+            }
             progress.uploadedImages += document.media.count
             progress.uploadedVideos += document.videos?.count ?? 0
             browserCaptureFailurePostIDs.remove(request.link.postID)
@@ -2464,7 +2483,7 @@ final class AppViewModel: ObservableObject {
             title: title,
             authorHandle: creator.username,
             contentType: .xArticle,
-            sourceURL: URL(string: "https://x.com/\(link.username)/status/\(link.postID)")!,
+            sourceURL: XArticleNavigationURL.captureURL(for: link),
             sourcePostID: link.postID,
             sourceArticleID: sourceArticleID,
             publishedAt: publishedAt,

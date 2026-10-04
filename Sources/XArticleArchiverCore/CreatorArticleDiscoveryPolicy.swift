@@ -54,22 +54,36 @@ public enum CreatorArticleCountPolicy {
 /// layout that has not rendered is also "at the bottom". That is not proof
 /// the creator has zero Articles. A zero is stored only when the page itself
 /// says the list is empty.
+///
+/// A positive list also has to stay the same height. X often paints the first
+/// screen, reports the window as already at the bottom, and only then grows
+/// the real timeline scroller. Five quick polls used to store that first
+/// screen as the whole archive.
 public enum CreatorArticleListSettlePolicy {
-    public static let pollsWithCards = 5
+    public static let pollsWithCards = 16
     public static let pollsWithoutCards = 15
+    /// A spinner that never leaves, while the timeline height and the card
+    /// count stay still, is not another page loading.
+    public static let pollsIgnoringStuckSpinner = 18
+    public static let maxPolls = 320
 
     public static func isSettled(
         itemCount: Int,
         unchangedAtBottom: Int,
         gateVisible: Bool,
-        pageReportsEmpty: Bool = false
+        pageReportsEmpty: Bool = false,
+        scrollExtentChanged: Bool = false
     ) -> Bool {
-        if gateVisible || unchangedAtBottom <= 0 { return false }
+        if gateVisible || unchangedAtBottom <= 0 || scrollExtentChanged { return false }
         if itemCount == 0 {
             guard pageReportsEmpty else { return false }
             return unchangedAtBottom >= pollsWithoutCards
         }
         return unchangedAtBottom >= pollsWithCards
+    }
+
+    public static func loadingBlocksSettle(isLoadingMore: Bool, stableWhileSpinner: Int) -> Bool {
+        isLoadingMore && stableWhileSpinner < pollsIgnoringStuckSpinner
     }
 }
 

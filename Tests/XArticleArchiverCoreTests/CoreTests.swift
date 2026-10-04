@@ -129,10 +129,18 @@ final class XArticleURLParserTests: XCTestCase {
             links.map { $0.originalURL.absoluteString.lowercased() },
             [
                 "https://x.com/example/status/2091770029713084630",
-                "https://x.com/example/status/1888888888888888888",
-                "https://x.com/example/status/1777777777777777777",
+                "https://x.com/example/article/1888888888888888888",
+                "https://x.com/i/article/1777777777777777777",
                 "https://x.com/example/status/1666666666666666666"
             ]
+        )
+        XCTAssertEqual(
+            XArticleNavigationURL.captureURL(for: links[2]).absoluteString.lowercased(),
+            "https://x.com/i/article/1777777777777777777"
+        )
+        XCTAssertEqual(
+            XArticleNavigationURL.captureURL(for: links[0]).absoluteString.lowercased(),
+            "https://x.com/example/status/2091770029713084630"
         )
     }
 
@@ -1816,6 +1824,35 @@ final class ArchiveDatabaseTests: XCTestCase {
         XCTAssertEqual(pendingCount, 1)
         let skippedSelf = try await database.loadArticlesNeedingCapture(limit: 10, excludingPostIDs: ["2"])
         XCTAssertTrue(skippedSelf.isEmpty)
+
+        let failedNewer = ArchivedArticle(
+            stableSourceKey: "failed-newer",
+            creatorID: creator.id,
+            title: "较新的失败",
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/pending/status/3")!,
+            sourcePostID: "3",
+            publishedAt: Date(timeIntervalSince1970: 30),
+            sourceChecksum: "c",
+            pipelineState: .failed
+        )
+        let discoveredOlder = ArchivedArticle(
+            stableSourceKey: "discovered-older",
+            creatorID: creator.id,
+            title: "更早但刚发现",
+            authorHandle: creator.username,
+            contentType: .xArticle,
+            sourceURL: URL(string: "https://x.com/i/article/4")!,
+            sourcePostID: "4",
+            publishedAt: Date(timeIntervalSince1970: 4),
+            sourceChecksum: "d",
+            pipelineState: .discovered
+        )
+        try await database.upsertArticle(failedNewer)
+        try await database.upsertArticle(discoveredOlder)
+        let discoveredFirst = try await database.loadArticlesNeedingCapture(limit: 1, excludingPostIDs: ["2"])
+        XCTAssertEqual(discoveredFirst.map(\.sourcePostID), ["4"])
     }
 
     func testMigratesVersionThreeCreatorTableForKnownArticleCount() async throws {
@@ -2286,15 +2323,38 @@ final class CreatorArticleDiscoveryPolicyTests: XCTestCase {
             gateVisible: false,
             pageReportsEmpty: true
         ))
-        XCTAssertTrue(CreatorArticleListSettlePolicy.isSettled(
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 4,
             unchangedAtBottom: 5,
             gateVisible: false
         ))
         XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 4,
-            unchangedAtBottom: 5,
+            unchangedAtBottom: CreatorArticleListSettlePolicy.pollsWithCards,
+            gateVisible: false,
+            scrollExtentChanged: true
+        ))
+        XCTAssertTrue(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 4,
+            unchangedAtBottom: CreatorArticleListSettlePolicy.pollsWithCards,
+            gateVisible: false
+        ))
+        XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
+            itemCount: 4,
+            unchangedAtBottom: CreatorArticleListSettlePolicy.pollsWithCards,
             gateVisible: true
+        ))
+        XCTAssertTrue(CreatorArticleListSettlePolicy.loadingBlocksSettle(
+            isLoadingMore: true,
+            stableWhileSpinner: 0
+        ))
+        XCTAssertFalse(CreatorArticleListSettlePolicy.loadingBlocksSettle(
+            isLoadingMore: true,
+            stableWhileSpinner: CreatorArticleListSettlePolicy.pollsIgnoringStuckSpinner
+        ))
+        XCTAssertFalse(CreatorArticleListSettlePolicy.loadingBlocksSettle(
+            isLoadingMore: false,
+            stableWhileSpinner: 0
         ))
         XCTAssertFalse(CreatorArticleListSettlePolicy.isSettled(
             itemCount: 0,

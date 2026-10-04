@@ -89,6 +89,8 @@ private struct CreatorArticleListSnapshot: Decodable {
     var atBottom: Bool
     var isLoadingMore: Bool
     var explicitEmpty: Bool
+    var scrollHeight: Int
+    var scrollTop: Int
 }
 
 @MainActor
@@ -196,11 +198,13 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         var seenPostIDs = Set<String>()
         var unchangedAtBottom = 0
         var gateSettlePolls = 0
+        var lastScrollExtent = -1
+        var stableWhileSpinner = 0
         var lastReason = "X Articles 列表仍在加载"
 
         // The list is virtualized: cards that leave the viewport may disappear
         // from the DOM. Accumulate each visible batch before scrolling again.
-        for _ in 0..<240 {
+        for _ in 0..<CreatorArticleListSettlePolicy.maxPolls {
             try Task.checkCancellation()
             if !isLoading {
                 if await revealBlockedArticleListIfNeeded() {
@@ -257,11 +261,23 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                     if waitingForRevealedList {
                         gateSettlePolls -= 1
                     }
-                    if snapshot.atBottom && !snapshot.isLoadingMore && gained == 0 && !waitingForRevealedList {
+                    let extentChanged = lastScrollExtent >= 0 && snapshot.scrollHeight != lastScrollExtent
+                    let quietAtBottom = snapshot.atBottom && gained == 0 && !extentChanged && !waitingForRevealedList
+                    if quietAtBottom && snapshot.isLoadingMore {
+                        stableWhileSpinner += 1
+                    } else if !quietAtBottom {
+                        stableWhileSpinner = 0
+                    }
+                    let loadingBlocksSettle = CreatorArticleListSettlePolicy.loadingBlocksSettle(
+                        isLoadingMore: snapshot.isLoadingMore,
+                        stableWhileSpinner: stableWhileSpinner
+                    )
+                    if quietAtBottom && !loadingBlocksSettle {
                         unchangedAtBottom += 1
                     } else {
                         unchangedAtBottom = 0
                     }
+                    lastScrollExtent = snapshot.scrollHeight
 
                     pageStatus = orderedItems.isEmpty
                         ? (waitingForRevealedList
@@ -283,7 +299,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                                 ?? "@\(request.username) 的 Articles 列表已核对，线上是 0 篇")
                             : confirmedEmpty
                                 ? "@\(request.username) 的 Articles 列表已核对，线上是 0 篇"
-                                : "@\(request.username) 线上已确认 \(orderedItems.count) 篇 Article，将处理最近 \(selectedCount) 篇；X API 调用为 0"
+                                : "@\(request.username) 线上已确认 \(orderedItems.count) 篇 Article，将处理\(CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: request.maximumArticles))；X API 调用为 0"
                         return CreatorArticleDiscoveryResult(
                             items: request.countOnly ? [] : discoveredItems,
                             knownArticleCount: confirmedCount,
@@ -392,7 +408,108 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
 /// Reads the logged-in Articles tab. Cover cards are not always tweets, and a
 /// short page with no cards is not an empty archive unless X says so.
 enum CreatorArticlesListExtractor {
-    static let script = #"""
+    /// Shared by the snapshot and the scroll step. The Articles timeline is
+    /// often an inner overflow container; the window can look finished while
+    /// that container is still on the first screen.
+    static let timelineHelpers = #"""
+    const cardSelector = '[data-testid="cellInnerDiv"], article[data-testid="tweet"], [data-testid="articleCard"], [data-testid="articlePreview"]';
+    function articlesColumn() {
+      return document.querySelector('[data-testid="primaryColumn"]')
+        || document.querySelector("main")
+        || document.body;
+    }
+    function isDocumentScroller(node) {
+      return !!node && (node === document.scrollingElement || node === document.documentElement || node === document.body);
+    }
+    function nodeMetrics(node) {
+      const isDocument = isDocumentScroller(node);
+      const scrollTop = isDocument ? (window.scrollY || (document.scrollingElement && document.scrollingElement.scrollTop) || 0) : (node.scrollTop || 0);
+      const clientHeight = isDocument ? window.innerHeight : (node.clientHeight || 0);
+      const scrollHeight = isDocument
+        ? ((document.scrollingElement && document.scrollingElement.scrollHeight) || node.scrollHeight || 0)
+        : (node.scrollHeight || 0);
+      const overflow = scrollHeight - clientHeight;
+      const atBottom = overflow <= 220 || (scrollTop + clientHeight >= scrollHeight - 220);
+      return { scrollTop, clientHeight, scrollHeight, overflow, atBottom };
+    }
+    function timelineScrollers(column) {
+      const nodes = [];
+      const seen = new Set();
+      const consider = (node) => {
+        if (!node || seen.has(node)) return;
+        const isDocument = isDocumentScroller(node);
+        const metrics = nodeMetrics(node);
+        if (metrics.overflow <= 40) return;
+        if (!isDocument && metrics.clientHeight < 160) return;
+        if (!isDocument && !node.querySelector(cardSelector)) return;
+        const overflowY = isDocument ? "auto" : ((getComputedStyle(node).overflowY || "") + " " + (getComputedStyle(node).overflow || ""));
+        if (!isDocument && !/auto|scroll|overlay|hidden/.test(overflowY)) return;
+        if (!isDocument && /hidden/.test(overflowY) && !/auto|scroll|overlay/.test(overflowY)) {
+          const before = node.scrollTop || 0;
+          node.scrollTop = before + 1;
+          const moved = (node.scrollTop || 0) > before;
+          node.scrollTop = before;
+          if (!moved) return;
+        }
+        seen.add(node);
+        nodes.push(node);
+      };
+      const anchor = (column && column.querySelector(cardSelector)) || column;
+      let node = anchor;
+      while (node && node !== document) {
+        consider(node);
+        node = node.parentElement;
+      }
+      consider(document.scrollingElement || document.documentElement);
+      if (column) {
+        for (const candidate of column.querySelectorAll("div, section")) consider(candidate);
+      }
+      return nodes;
+    }
+    function timelinePosition(column) {
+      const nodes = timelineScrollers(column);
+      if (!nodes.length) return { atBottom: true, scrollHeight: 0, scrollTop: 0 };
+      const metrics = nodes.map(nodeMetrics);
+      return {
+        atBottom: metrics.every((item) => item.atBottom),
+        scrollHeight: Math.round(metrics.reduce((sum, item) => sum + item.scrollHeight, 0)),
+        scrollTop: Math.round(metrics.reduce((sum, item) => sum + item.scrollTop, 0))
+      };
+    }
+    function scrollTimeline(column) {
+      const nodes = timelineScrollers(column);
+      const cards = column ? [...column.querySelectorAll(cardSelector)] : [];
+      const last = cards[cards.length - 1];
+      if (last && last.scrollIntoView) last.scrollIntoView({ block: "end", inline: "nearest" });
+      const deltaFor = (node) => Math.max(520, (nodeMetrics(node).clientHeight || window.innerHeight) * 0.85);
+      for (const node of nodes) {
+        const delta = deltaFor(node);
+        if (isDocumentScroller(node)) {
+          const next = (window.scrollY || 0) + delta;
+          window.scrollTo(0, next);
+          if (document.scrollingElement) document.scrollingElement.scrollTop = next;
+        } else {
+          node.scrollTop = (node.scrollTop || 0) + delta;
+        }
+        node.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }
+      const wheelTarget = nodes[0] || column || window;
+      wheelTarget.dispatchEvent(new WheelEvent("wheel", { deltaY: 900, bubbles: true, cancelable: true }));
+      const showMoreLabels = new Set(["show more", "see more", "load more", "查看更多", "显示更多", "加载更多"]);
+      const normalize = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (column) {
+        for (const el of column.querySelectorAll('button, [role="button"]')) {
+          if (!showMoreLabels.has(normalize(el))) continue;
+          if (el.closest(cardSelector)) continue;
+          el.click();
+          break;
+        }
+      }
+    }
+    """#
+
+    static let script = timelineHelpers + #"""
+
     const ERROR = "__X_ARTICLE_LIST_ERROR__:";
     const normalizedHandle = String(expectedHandle || '').replace(/^@/, '').toLowerCase();
     const path = String(location.pathname || '').replace(/\/+$/, '') || '/';
@@ -401,14 +518,13 @@ enum CreatorArticlesListExtractor {
       return ERROR + "当前页面不是目标博主的 Articles 列表。";
     }
 
-    const column = document.querySelector('[data-testid="primaryColumn"]')
-      || document.querySelector("main")
-      || document.body;
+    const column = articlesColumn();
     const anchors = column
       ? [...column.querySelectorAll('a[href*="/status/"], a[href*="/article/"]')]
       : [];
-    const items = [];
-    const seen = new Set();
+    const grouped = new Map();
+    const cardOf = new WeakMap();
+    let nextCard = 1;
     for (const anchor of anchors) {
       let resolved;
       try { resolved = new URL(anchor.getAttribute('href') || '', location.href); }
@@ -419,22 +535,47 @@ enum CreatorArticlesListExtractor {
       if (!match || /\/analytics(?:\/|$)/i.test(resolved.pathname)) continue;
       const hrefHandle = (match[1] || normalizedHandle).toLowerCase();
       if (hrefHandle !== 'i' && hrefHandle !== normalizedHandle) continue;
-      if (seen.has(match[2])) continue;
-      seen.add(match[2]);
       const titleRoot = anchor.closest('[data-testid="articleCard"], [data-testid="articlePreview"], article[data-testid="tweet"], [data-testid="cellInnerDiv"]') || anchor;
+      let cardKey = cardOf.get(titleRoot);
+      if (!cardKey) {
+        cardKey = "c" + (nextCard++);
+        cardOf.set(titleRoot, cardKey);
+      }
+      let entry = grouped.get(cardKey);
+      if (!entry) {
+        entry = { title: "", statusID: "", articlePath: "" };
+        grouped.set(cardKey, entry);
+      }
       const title = [...titleRoot.querySelectorAll('div[dir="auto"]')]
         .map(node => (node.innerText || '').trim())
         .find(Boolean)
-        || (anchor.innerText || '').replace(/\s+/g, ' ').trim()
-        || `X Article · ${match[2]}`;
+        || (anchor.innerText || '').replace(/\s+/g, ' ').trim();
+      if (title && !entry.title) entry.title = title;
+      if (/\/status\//i.test(resolved.pathname)) {
+        if (!entry.statusID) entry.statusID = match[2];
+      } else if (!entry.articlePath) {
+        entry.articlePath = resolved.pathname;
+      }
+    }
+    const items = [];
+    const seen = new Set();
+    for (const entry of grouped.values()) {
+      const url = entry.statusID
+        ? `https://x.com/${normalizedHandle}/status/${entry.statusID}`
+        : (entry.articlePath ? `https://x.com${entry.articlePath}` : "");
+      const identity = entry.statusID || entry.articlePath;
+      if (!url || !identity || seen.has(identity)) continue;
+      seen.add(identity);
       items.push({
-        title,
-        url: `https://x.com/${normalizedHandle}/status/${match[2]}`
+        title: entry.title || `X Article · ${entry.statusID || entry.articlePath.split('/').pop()}`,
+        url
       });
     }
 
-    const root = document.scrollingElement || document.documentElement;
-    const atBottom = root.scrollTop + window.innerHeight >= root.scrollHeight - 220;
+    const position = timelinePosition(column);
+    const atBottom = position.atBottom;
+    const scrollHeight = position.scrollHeight;
+    const scrollTop = position.scrollTop;
     // X also renders unrelated loading indicators in the recommendations
     // sidebar. Only a spinner inside the main timeline can mean that the
     // Articles list itself is still fetching another page.
@@ -465,14 +606,12 @@ enum CreatorArticlesListExtractor {
     ].some((hint) => columnText.includes(hint));
     const hasEmptyState = !!column?.querySelector('[data-testid="emptyState"], [data-testid="empty_state"]');
     const explicitEmpty = items.length === 0 && !reportsError && (hasEmptyState || reportsEmptyCopy);
-    return JSON.stringify({items, atBottom, isLoadingMore, explicitEmpty});
+    return JSON.stringify({items, atBottom, isLoadingMore, explicitEmpty, scrollHeight, scrollTop});
     """#
 
-    static let scrollScript = #"""
-    (() => {
-      const cards = [...document.querySelectorAll('article[data-testid="tweet"], [data-testid="articleCard"]')];
-      if (cards.length) cards[cards.length - 1].scrollIntoView({block:'end'});
-      window.scrollBy({top: Math.max(420, window.innerHeight * 0.82), behavior:'auto'});
+    static let scrollScript = "(() => {\n" + timelineHelpers + #"""
+
+      scrollTimeline(articlesColumn());
       return true;
     })()
     """#
