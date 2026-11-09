@@ -29,15 +29,15 @@ struct MarkXPaneHeader: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: symbol)
-                .font(.system(size: 19, weight: .medium))
+                .font(MarkXTypography.system(size: 19, weight: .medium))
                 .foregroundStyle(symbolColor)
                 .frame(width: 40, height: 40)
                 .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 20, weight: .semibold))
-                Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(title).font(MarkXTypography.system(size: 20, weight: .semibold))
+                Text(subtitle).font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,9 +55,9 @@ struct MarkXSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             if !title.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Text(title).font(MarkXTypography.system(size: 13, weight: .semibold))
                     if let detail {
-                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(detail).font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -80,7 +80,7 @@ struct MarkXInfoLine: View {
             Image(systemName: symbol).foregroundStyle(color).frame(width: 15)
             Text(text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 11))
+        .font(MarkXTypography.system(size: 11))
         .lineSpacing(3)
     }
 }
@@ -93,7 +93,7 @@ struct MarkXFooter<Actions: View>: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 12) {
-                Text(note).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                Text(note).font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 actions
             }
@@ -110,5 +110,44 @@ extension View {
         background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXInterface.cornerRadius))
             .overlay(RoundedRectangle(cornerRadius: MarkXInterface.cornerRadius)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+    }
+}
+
+/// Keeps metadata readable when larger text needs another line.
+struct MarkXFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(width: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = arrangement(width: bounds.width, subviews: subviews)
+        for (subview, frame) in zip(subviews, layout.frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          anchor: .topLeading, proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func arrangement(width: CGFloat, subviews: Subviews) -> (size: CGSize, frames: [CGRect]) {
+        let width = max(0, width)
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        var frames: [CGRect] = []
+        for subview in subviews {
+            let size = subview.sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            usedWidth = max(usedWidth, x + size.width)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), frames)
     }
 }

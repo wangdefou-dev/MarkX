@@ -34,6 +34,7 @@ struct RootView: View {
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
         .toolbar { toolbar }
+        .font(MarkXTypography.body)
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshBrowserStatus() }
@@ -140,7 +141,7 @@ struct RootView: View {
             if model.isRunning {
                 HStack(spacing: 7) {
                     ProgressView().controlSize(.mini)
-                    Text(model.progress.stage).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(model.progress.stage).font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
@@ -271,10 +272,10 @@ struct RootView: View {
     private var sidebarDownloadEntry: some View {
         Button { model.presentDownloadSheet() } label: {
             HStack(spacing: 9) {
-                Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
-                Text("开始下载文章").font(.system(size: 15, weight: .medium))
+                Image(systemName: "plus").font(MarkXTypography.system(size: 13, weight: .semibold))
+                Text("开始下载文章").font(MarkXTypography.system(size: 15, weight: .medium))
                 Spacer(minLength: 4)
-                Image(systemName: "square.and.arrow.down").font(.system(size: 12))
+                Image(systemName: "square.and.arrow.down").font(MarkXTypography.system(size: 12))
             }
             .foregroundStyle(.orange)
             .padding(.horizontal, 18)
@@ -327,17 +328,17 @@ struct RootView: View {
             Image(systemName: model.isCreatorPinned(creator)
                   ? "pin.fill"
                   : creator.isProtected ? "lock" : "person")
-                .font(.system(size: model.isCreatorPinned(creator) ? 11 : 13, weight: .regular))
+                .font(MarkXTypography.system(size: model.isCreatorPinned(creator) ? 11 : 13, weight: .regular))
                 .foregroundStyle(model.isCreatorPinned(creator) ? Color.orange : Color.secondary)
         } title: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(creator.displayName)
                     .lineLimit(1).help(creator.displayName + " · @" + creator.username)
                 Text("@\(creator.username)")
-                    .font(.system(size: 10))
+                    .font(MarkXTypography.system(size: 10))
                     .foregroundStyle(.secondary)
             }
-            .font(.system(size: 12, weight: .medium))
+            .font(MarkXTypography.system(size: 12, weight: .medium))
         } value: {
             let verifiedEmpty = creator.completeness == .fullArchiveVerified
                 && downloadedArticleCount == 0
@@ -447,7 +448,7 @@ struct RootView: View {
                     .help("清空搜索")
             }
         }
-        .font(.system(size: 12))
+        .font(MarkXTypography.system(size: 12))
         .padding(.horizontal, 10)
         .frame(width: 260, height: 30)
     }
@@ -456,7 +457,7 @@ struct RootView: View {
         VStack(spacing: 0) {
             if model.isPreparingSearch {
                 Text("正在整理历史文章，搜索结果会逐步补齐…")
-                    .font(.caption).foregroundStyle(.secondary).padding(8)
+                    .font(MarkXTypography.caption).foregroundStyle(.secondary).padding(8)
                 Divider()
             }
             Group {
@@ -554,12 +555,12 @@ struct RootView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Image(systemName: "square.and.arrow.down.on.square")
-                    .font(.system(size: 42, weight: .medium))
+                    .font(MarkXTypography.system(size: 42, weight: .medium))
                     .foregroundStyle(.tint)
                 Text("把 X Article 全文收进自己的 Mac")
-                    .font(.largeTitle.bold())
+                    .font(MarkXTypography.largeTitle.bold())
                 Text("按博主下载时直接读取其 X Articles 专属列表，再逐篇打开真实页面，保留标题、段落、列表、表格、代码、图片和视频顺序。整个下载流程不调用 X API。")
-                    .font(.title3)
+                    .font(MarkXTypography.title3)
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 12) {
                     SetupStatusRow(title: "本地归档目录", isReady: model.archiveRoot != nil, detail: model.archiveRoot?.path ?? "尚未选择")
@@ -613,146 +614,147 @@ struct RootView: View {
     }
 
     private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 12) {
                 Text(article.title)
-                    .font(.title2.bold())
+                    .font(MarkXTypography.title2.bold())
                     .lineLimit(2)
                     .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                     .textSelection(.enabled)
-                HStack(spacing: 8) {
-                    Button {
-                        model.openCreatorProfile(handle: article.authorHandle)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
-                                .lineLimit(1)
-                            Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
-                                .lineLimit(1)
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption2.weight(.semibold))
-                        }
+                articleReadingControls(article)
+            }
+            MarkXFlowLayout(spacing: 6) {
+                Button {
+                    model.openCreatorProfile(handle: article.authorHandle)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
+                            .lineLimit(1)
+                        Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
+                            .lineLimit(1)
+                        Image(systemName: "arrow.up.right")
+                            .font(MarkXTypography.caption2.weight(.semibold))
                     }
-                    .buttonStyle(.plain)
-                    .help("查看 @\(article.authorHandle) 的 X 主页")
-                    Text("·")
-                    Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
-                        .lineLimit(1)
                 }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 20, alignment: .leading)
-                HStack(spacing: 8) {
-                    StatusPill(
-                        article.pipelineState.displayName,
-                        color: article.pipelineState == .committed
-                            ? .green
-                            : article.pipelineState == .subscriptionRequired ? .purple : .orange
-                    )
-                    if article.isPaidPartnership {
-                        StatusPill("商单内容", color: .orange)
-                            .help("X 官方 Paid partnership 商单内容标记")
-                            .accessibilityLabel("商单内容，X 官方付费合作标记")
-                    }
-                    StatusPill("\(article.imageCount) 张图片", color: .blue)
-                    if article.videoCount > 0 {
-                        StatusPill("\(article.videoCount) 个视频", color: .purple)
-                    }
-                    Button {
-                        model.openSource()
-                    } label: {
-                        Label("查看文章原文", systemImage: "arrow.up.right.square")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("在默认浏览器打开当前 X Article 原页")
-                    if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
-                        FixedReprocessButton(
-                            isDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                            help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
-                        ) {
-                            model.captureSelectedArticleExactly()
-                        }
-                    }
-                    Spacer(minLength: 0)
+                .buttonStyle(.plain)
+                .help("查看 @\(article.authorHandle) 的 X 主页")
+                Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
+                    .lineLimit(1)
+            }
+            .font(MarkXTypography.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            MarkXFlowLayout(spacing: 6) {
+                StatusPill(
+                    article.pipelineState.displayName,
+                    color: article.pipelineState == .committed
+                        ? .green
+                        : article.pipelineState == .subscriptionRequired ? .purple : .orange
+                )
+                if article.isPaidPartnership {
+                    StatusPill("商单内容", color: .orange)
+                        .help("X 官方 Paid partnership 商单内容标记")
+                        .accessibilityLabel("商单内容，X 官方付费合作标记")
                 }
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                StatusPill("\(article.imageCount) 张图片", color: .blue)
+                if article.videoCount > 0 {
+                    StatusPill("\(article.videoCount) 个视频", color: .purple)
+                }
+                Button {
+                    model.openSource()
+                } label: {
+                    Label("查看文章原文", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("在默认浏览器打开当前 X Article 原页")
+                if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
+                    FixedReprocessButton(
+                        isDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                        help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
+                    ) {
+                        model.captureSelectedArticleExactly()
+                    }
+                }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
-
-            HStack(spacing: 9) {
-                HStack(spacing: 3) {
-                    Button {
-                        adjustArticleTextScale(by: -0.1)
-                    } label: {
-                        Text("A−")
-                            .font(.callout.weight(.semibold))
-                            .frame(minWidth: 25)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("缩小文章文字")
-                    .disabled(previewTextScale <= 0.8)
-
-                    Button {
-                        articlePreviewTextScale = 1.0
-                    } label: {
-                        Text("\(Int((previewTextScale * 100).rounded()))%")
-                            .font(.caption.monospacedDigit())
-                            .frame(minWidth: 38)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("恢复 100% 字号")
-                    .disabled(previewTextScale == 1.0)
-
-                    Button {
-                        adjustArticleTextScale(by: 0.1)
-                    } label: {
-                        Text("A+")
-                            .font(.callout.weight(.semibold))
-                            .frame(minWidth: 25)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("放大文章文字")
-                    .disabled(previewTextScale >= 1.6)
-                }
-                .padding(.horizontal, 5)
-                .padding(.vertical, 3)
-                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
-
-                Menu {
-                    Button("打开 Markdown") { model.openSelectedArticle() }
-                        .help("用默认的 Markdown 应用打开本地文件")
-                    Button("在 Finder 中显示") { model.revealSelectedArticle() }
-                        .help("在 Finder 中定位当前文章的 Markdown 文件")
-                    Divider()
-                    Button("访问原文") { model.openSource() }
-                        .help("在默认浏览器打开当前 X Article 原页")
-                    if article.pipelineState == .subscriptionRequired {
-                        Button("在浏览器订阅 @\(article.authorHandle)") {
-                            model.openSubscriptionPage(for: article)
-                        }
-                        .help("使用设置中选定的同一个浏览器账号完成订阅")
-                    }
-                    if model.isArticleActivelyProcessing(article) {
-                        Button("停止处理", role: .cancel) { model.stopProcessing(article) }
-                    } else {
-                        Button("重新处理") { model.restartProcessing(article) }
-                            .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                            .help("重新打开原页并严格校验完整排版")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle").font(.title2)
-                }
-                .menuStyle(.borderlessButton)
-                .help("更多文章操作：打开文件、定位、访问原文或重新采集")
-            }
-            .fixedSize()
         }
-        .padding(22)
+        .padding(.horizontal, 30)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func articleReadingControls(_ article: ArchivedArticle) -> some View {
+        HStack(spacing: 9) {
+            HStack(spacing: 3) {
+                Button {
+                    adjustArticleTextScale(by: -0.1)
+                } label: {
+                    Text("A−")
+                        .font(MarkXTypography.callout.weight(.semibold))
+                        .frame(minWidth: 25)
+                }
+                .buttonStyle(.borderless)
+                .help("缩小文章文字")
+                .disabled(previewTextScale <= 0.8)
+
+                Button {
+                    articlePreviewTextScale = 1.0
+                } label: {
+                    Text("\(Int((previewTextScale * 100).rounded()))%")
+                        .font(MarkXTypography.caption.monospacedDigit())
+                        .frame(minWidth: 38)
+                }
+                .buttonStyle(.borderless)
+                .help("恢复 100% 字号")
+                .disabled(previewTextScale == 1.0)
+
+                Button {
+                    adjustArticleTextScale(by: 0.1)
+                } label: {
+                    Text("A+")
+                        .font(MarkXTypography.callout.weight(.semibold))
+                        .frame(minWidth: 25)
+                }
+                .buttonStyle(.borderless)
+                .help("放大文章文字")
+                .disabled(previewTextScale >= 1.6)
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
+
+            Menu {
+                Button("打开 Markdown") { model.openSelectedArticle() }
+                    .help("用默认的 Markdown 应用打开本地文件")
+                Button("在 Finder 中显示") { model.revealSelectedArticle() }
+                    .help("在 Finder 中定位当前文章的 Markdown 文件")
+                Divider()
+                Button("访问原文") { model.openSource() }
+                    .help("在默认浏览器打开当前 X Article 原页")
+                if article.pipelineState == .subscriptionRequired {
+                    Button("在浏览器订阅 @\(article.authorHandle)") {
+                        model.openSubscriptionPage(for: article)
+                    }
+                    .help("使用设置中选定的同一个浏览器账号完成订阅")
+                }
+                if model.isArticleActivelyProcessing(article) {
+                    Button("停止处理", role: .cancel) { model.stopProcessing(article) }
+                } else {
+                    Button("重新处理") { model.restartProcessing(article) }
+                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                        .help("重新打开原页并严格校验完整排版")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(MarkXTypography.title2)
+            }
+            .menuStyle(.borderlessButton)
+            .help("更多文章操作：打开文件、定位、访问原文或重新采集")
+        }
+        .fixedSize()
     }
 
     private func articleDetailBody(_ article: ArchivedArticle) -> some View {
@@ -926,15 +928,15 @@ private struct SidebarSectionHeader: View {
         Button { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } } label: {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(MarkXTypography.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.primary)
                 if let count {
-                    Text(count, format: .number.grouping(.never)).font(.system(size: 10)).monospacedDigit()
+                    Text(count, format: .number.grouping(.never)).font(MarkXTypography.system(size: 10)).monospacedDigit()
                         .accessibilityLabel("\(count) \(countUnit)")
                 }
                 Spacer(minLength: 4)
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(MarkXTypography.system(size: 9, weight: .semibold))
                     .frame(width: 10)
             }
             .foregroundStyle(.secondary)
@@ -970,7 +972,7 @@ struct DownloadResultView: View {
                         }
                     }
                     MarkXSection(title: "结果说明") {
-                        Text(notice.message).font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text(notice.message).font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
                             .lineSpacing(4).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -984,6 +986,7 @@ struct DownloadResultView: View {
             }
         }
         .background(MarkXInterface.canvas)
+        .font(MarkXTypography.body)
         .frame(width: 620, height: MarkXInterface.sheetHeight(600))
         .onExitCommand { dismiss() }
     }
@@ -1006,8 +1009,8 @@ private struct DownloadResultMetricText: View {
                 Image(systemName: metric.systemImage).foregroundStyle(color).frame(width: 13)
                 Text(metric.label).foregroundStyle(.secondary)
             }
-            .font(.system(size: 11)).lineLimit(1)
-            Text(metric.value).font(.system(size: 24, weight: .semibold)).monospacedDigit()
+            .font(MarkXTypography.system(size: 11)).lineLimit(1)
+            Text(metric.value).font(MarkXTypography.system(size: 24, weight: .semibold)).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
@@ -1023,16 +1026,16 @@ private struct CreatorProfileToolbarHeader: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             Text(creator.displayName)
-                .font(.title2.weight(.semibold))
+                .font(MarkXTypography.title2.weight(.semibold))
                 .lineLimit(1)
 
             Button(action: openProfile) {
                 HStack(alignment: .center, spacing: 4) {
                     Text("查看主页")
                     Image(systemName: "arrow.up.right")
-                        .font(.caption.weight(.semibold))
+                        .font(MarkXTypography.caption.weight(.semibold))
                 }
-                .font(.body)
+                .font(MarkXTypography.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: true, vertical: false)
                 .contentShape(Rectangle())
@@ -1054,7 +1057,7 @@ private struct ArticleTypography {
         self.scale = CGFloat(scale)
     }
 
-    var bodySize: CGFloat { 13 * scale }
+    var bodySize: CGFloat { MarkXTypography.pointSize(13, scale: scale) }
     var bodyLineSpacing: CGFloat { 6.5 * scale }
     var paragraphSpacing: CGFloat { 16 * scale }
     var headingTopSpacing: CGFloat { 20 * scale }
@@ -1092,20 +1095,21 @@ private struct ArticleDocumentPreview: View {
     var body: some View {
         let orderedMarkers = ArticleListMarkerResolver.orderedMarkers(for: document.blocks)
         LazyVStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: fidelityIcon)
-                    .foregroundStyle(fidelityColor)
-                Text(fidelityTitle)
-                    .fontWeight(.semibold)
+            MarkXFlowLayout(spacing: 6) {
+                Label {
+                    Text(fidelityTitle).fontWeight(.semibold)
+                } icon: {
+                    Image(systemName: fidelityIcon).foregroundStyle(fidelityColor)
+                }
                 Text("· \(characterCount) 字")
                 Text("· \(document.media.count) 张图片")
                 if let videoCount = document.videos?.count, videoCount > 0 {
                     Text("· \(videoCount) 个视频")
                 }
             }
-            .font(.system(size: 12.5 * textScale))
+            .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale)))
             .foregroundStyle(.secondary)
-            .padding(.bottom, typography.blockSpacing)
+            .padding(.bottom, 12 * typography.scale)
 
             ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
                 ArticleBlockView(
@@ -1121,12 +1125,12 @@ private struct ArticleDocumentPreview: View {
             if !document.warnings.isEmpty {
                 VStack(alignment: .leading, spacing: 6 * typography.scale) {
                     Label("原始排版说明", systemImage: "info.circle")
-                        .font(.system(size: 12.5 * textScale, weight: .semibold))
+                        .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale), weight: .semibold))
                     ForEach(document.warnings, id: \.self) { warning in
                         Text("• \(warning)")
                     }
                 }
-                .font(.system(size: 11 * textScale))
+                .font(MarkXTypography.system(size: 11, scale: CGFloat(textScale)))
                 .foregroundStyle(.secondary)
                 .padding(12 * typography.scale)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1231,7 +1235,7 @@ private struct ArticleBlockView: View {
         case .code:
             ScrollView(.horizontal) {
                 Text(block.text)
-                    .font(.system(size: 13 * textScale, design: .monospaced))
+                    .font(MarkXTypography.system(size: 13, scale: CGFloat(textScale), design: .monospaced))
                     .lineSpacing(4 * typography.scale)
                     .padding(14 * typography.scale)
                     .textSelection(.enabled)
@@ -1249,7 +1253,7 @@ private struct ArticleBlockView: View {
                             GridRow {
                                 ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                                     tableCellText(cell)
-                                        .font(.system(size: 12.5 * textScale, weight: cell.isHeader ? .semibold : .regular))
+                                        .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale), weight: cell.isHeader ? .semibold : .regular))
                                         .lineSpacing(4.5 * typography.scale)
                                         .padding(.horizontal, 12 * typography.scale)
                                         .padding(.vertical, 9 * typography.scale)
@@ -1272,7 +1276,7 @@ private struct ArticleBlockView: View {
             } else {
                 ScrollView(.horizontal) {
                     Text(block.text)
-                        .font(.system(size: 12.5 * textScale, design: .monospaced))
+                        .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale), design: .monospaced))
                         .lineSpacing(4 * typography.scale)
                         .padding(12 * typography.scale)
                 }
@@ -1324,14 +1328,14 @@ private struct ArticleBlockView: View {
 
     private var headingFont: Font {
         switch block.level {
-        case 0...1: .system(size: 22 * textScale, weight: .bold)
-        case 2: .system(size: 18 * textScale, weight: .bold)
-        default: .system(size: 14 * textScale, weight: .semibold)
+        case 0...1: MarkXTypography.system(size: 22, scale: CGFloat(textScale), weight: .bold)
+        case 2: MarkXTypography.system(size: 18, scale: CGFloat(textScale), weight: .bold)
+        default: MarkXTypography.system(size: 14, scale: CGFloat(textScale), weight: .semibold)
         }
     }
 
     private var bodyFont: Font {
-        .system(size: typography.bodySize)
+        MarkXTypography.system(size: 13, scale: typography.scale)
     }
 
     private func listRow(marker: String) -> some View {
@@ -1419,7 +1423,7 @@ private struct ArticleBlockView: View {
 
                 if let altText = media.altText, !altText.isEmpty {
                     Text(altText)
-                        .font(.system(size: 11 * textScale))
+                        .font(MarkXTypography.system(size: 11, scale: CGFloat(textScale)))
                         .lineSpacing(3 * typography.scale)
                         .foregroundStyle(.secondary)
                 }
@@ -1446,7 +1450,7 @@ private struct ArchivedVideoPlayer: View {
             Link(destination: url) {
                 Label("在默认播放器中打开视频", systemImage: "arrow.up.right.square")
             }
-            .font(.caption)
+            .font(MarkXTypography.caption)
         }
     }
 }
@@ -1497,14 +1501,14 @@ private struct ArticleRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text(index, format: .number.grouping(.never))
-                .font(.caption.monospacedDigit().weight(.semibold))
+                .font(MarkXTypography.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28, alignment: .trailing)
                 .accessibilityLabel("第 \(index) 篇")
 
             VStack(alignment: .leading, spacing: 7) {
                 Text(article.title)
-                    .font(.headline)
+                    .font(MarkXTypography.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .truncationMode(.tail)
@@ -1519,8 +1523,9 @@ private struct ArticleRow: View {
                     Spacer()
                     Text(article.publishedAt, style: .date)
                 }
-                .font(.caption)
+                .font(MarkXTypography.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
                 HStack(spacing: 6) {
                     Image(systemName: statusIcon)
                         .foregroundStyle(statusColor)
@@ -1528,7 +1533,7 @@ private struct ArticleRow: View {
                     if article.imageCount > 0 { Text("· \(article.imageCount) 张图") }
                     if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
                 }
-                .font(.caption)
+                .font(MarkXTypography.caption)
                 .foregroundStyle(.secondary)
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -1568,8 +1573,8 @@ private struct SidebarCountRow: View {
     let count: Int
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: systemImage).font(.system(size: 14, weight: .regular)).frame(width: 18)
-            Text(title).font(.system(size: 13))
+            Image(systemName: systemImage).font(MarkXTypography.system(size: 14, weight: .regular)).frame(width: 18)
+            Text(title).font(MarkXTypography.system(size: 13))
             Spacer(minLength: 4)
             SidebarCountBadge(count: count)
         }
@@ -1617,7 +1622,7 @@ private struct SidebarMetricBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10)).monospacedDigit()
+            .font(MarkXTypography.system(size: 10)).monospacedDigit()
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.85)
@@ -1632,7 +1637,7 @@ private struct SidebarCountBadge: View {
     var horizontalPadding: CGFloat = 0
     var body: some View {
         Text(count, format: .number.grouping(.never))
-            .font(.system(size: 11)).monospacedDigit()
+            .font(MarkXTypography.system(size: 11)).monospacedDigit()
             .foregroundStyle(.secondary)
             .frame(minWidth: 22, alignment: .trailing)
             .fixedSize(horizontal: true, vertical: false)
@@ -1712,16 +1717,16 @@ private struct ArticleProcessingPanel: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: icon)
-                        .font(.title3)
+                        .font(MarkXTypography.title3)
                         .foregroundStyle(color)
                     Text(title)
-                        .font(.headline)
+                        .font(MarkXTypography.headline)
                         .lineLimit(2)
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     Spacer(minLength: 0)
                 }
                 Text(detail)
-                    .font(.subheadline)
+                    .font(MarkXTypography.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -1754,10 +1759,10 @@ private struct ArticleProcessingPanel: View {
             if let lastError = article.lastError, !lastError.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(requiresSubscription ? "访问说明" : "错误原因")
-                        .font(.caption.weight(.semibold))
+                        .font(MarkXTypography.caption.weight(.semibold))
                         .foregroundStyle(color)
                     Text(lastError)
-                        .font(.callout)
+                        .font(MarkXTypography.callout)
                         .textSelection(.enabled)
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
@@ -1767,7 +1772,7 @@ private struct ArticleProcessingPanel: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("处理日志").font(.caption.weight(.semibold))
+                Text("处理日志").font(MarkXTypography.caption.weight(.semibold))
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
                         if article.processingLog.isEmpty {
@@ -1781,7 +1786,7 @@ private struct ArticleProcessingPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 120)
-                .font(.system(.caption, design: .monospaced))
+                .font(MarkXTypography.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             }
@@ -1815,10 +1820,10 @@ private struct SetupStatusRow: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: isReady ? "checkmark.circle.fill" : "circle.dashed")
                 .foregroundStyle(isReady ? .green : .secondary)
-                .font(.title3)
+                .font(MarkXTypography.title3)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).fontWeight(.semibold)
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                Text(detail).font(MarkXTypography.caption).foregroundStyle(.secondary).lineLimit(3)
             }
         }
     }
@@ -1827,7 +1832,7 @@ private struct SetupStatusRow: View {
 private struct CommercialContentBadge: View {
     var body: some View {
         Text("商单内容")
-            .font(.caption2.weight(.semibold))
+            .font(MarkXTypography.caption2.weight(.semibold))
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(Color.orange.opacity(0.13), in: Capsule())
@@ -1848,7 +1853,7 @@ private struct StatusPill: View {
 
     var body: some View {
         Text(title)
-            .font(.caption.weight(.medium))
+            .font(MarkXTypography.caption.weight(.medium))
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
             .background(color.opacity(0.13), in: Capsule())
@@ -1864,7 +1869,7 @@ private struct TaskProgressBar: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if isRunning { ProgressView().controlSize(.small) }
-                Text(progress.stage).font(.caption.weight(.medium))
+                Text(progress.stage).font(MarkXTypography.caption.weight(.medium))
                 Spacer()
             }
             HStack(spacing: 12) {
@@ -1877,7 +1882,7 @@ private struct TaskProgressBar: View {
                 Text("视频 \(progress.uploadedVideos)")
                 if progress.failedArticles > 0 { Text("失败 \(progress.failedArticles)").foregroundStyle(.red) }
             }
-            .font(.caption2)
+            .font(MarkXTypography.caption2)
             .foregroundStyle(.secondary)
         }
         .padding(12)
@@ -1910,7 +1915,9 @@ private struct ArticlePreviewContent: View {
                 ProgressView("正在加载正文…").frame(maxWidth: .infinity, minHeight: 200)
             } else if let document = preview?.document {
                 ArticleDocumentPreview(document: document, textScale: textScale)
-                    .padding(.horizontal, 30).padding(.vertical, 26 * textScale)
+                    .padding(.horizontal, 30)
+                    .padding(.top, 6 * textScale)
+                    .padding(.bottom, 24 * textScale)
             } else if article.markdownPath == nil {
                 ContentUnavailableView("正文尚未生成", systemImage: "doc.badge.clock",
                     description: Text("当前状态、错误原因和处理日志已显示在上方。"))
@@ -1923,7 +1930,7 @@ private struct ArticlePreviewContent: View {
                         FixedReprocessButton(isDisabled: isBusy, help: "重新打开原文并恢复完整预览", action: reprocess)
                     }
                     Text(preview?.markdown ?? "无法读取本地 Markdown。")
-                        .font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        .font(MarkXTypography.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading).padding(24)
             }

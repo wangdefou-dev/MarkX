@@ -57,6 +57,7 @@ struct DownloadProgressRootView: View {
         }
         .frame(minWidth: 760, minHeight: 590)
         .background(MarkXInterface.canvas)
+        .font(MarkXTypography.body)
         .onAppear { stage = model.showingBrowserCapture ? .capture : .discovery }
         .onChange(of: model.showingBrowserCapture) { _, value in if value { stage = .capture } }
     }

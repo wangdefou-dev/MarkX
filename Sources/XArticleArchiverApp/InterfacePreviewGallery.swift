@@ -38,6 +38,7 @@ struct InterfacePreviewGallery: View {
         }
         .frame(minWidth: 1120, minHeight: 790)
         .background(MarkXInterface.canvas)
+        .font(MarkXTypography.body)
         .preferredColorScheme(dark ? .dark : .light)
         .onChange(of: page) { _, value in
             model.showingCreatorArticleDiscovery = value == .progress

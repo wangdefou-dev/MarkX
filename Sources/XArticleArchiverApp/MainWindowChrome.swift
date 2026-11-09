@@ -50,9 +50,9 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
     private var toggleSidebar: (() -> Void)?
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 104, height: 28))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 112, height: 28))
         let label = NSTextField(labelWithString: "MarkX")
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .systemFont(ofSize: MarkXTypography.pointSize(13), weight: .semibold)
         label.textColor = .labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.required, for: .horizontal)

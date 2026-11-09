@@ -1141,16 +1141,16 @@ struct BrowserArticleCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "square.and.arrow.down").font(.system(size: 20)).foregroundStyle(.secondary)
+            Image(systemName: "square.and.arrow.down").font(MarkXTypography.system(size: 20)).foregroundStyle(.secondary)
                 .frame(width: 34, height: 34).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
-                Text(model.isSyncingTrackedCreators ? "正在同步文章" : "正在保存文章").font(.system(size: 17, weight: .semibold)).lineLimit(2)
-                Text("完整保存正文、图片和视频，保留原文顺序。").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                Text(model.isSyncingTrackedCreators ? "正在同步文章" : "正在保存文章").font(MarkXTypography.system(size: 17, weight: .semibold)).lineLimit(2)
+                Text("完整保存正文、图片和视频，保留原文顺序。").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 5) {
-                Text("\(currentDownloadNumber) / \(downloadCount)").font(.system(size: 12, weight: .medium)).monospacedDigit()
-                Text("X API · 0").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("\(currentDownloadNumber) / \(downloadCount)").font(MarkXTypography.system(size: 12, weight: .medium)).monospacedDigit()
+                Text("X API · 0").font(MarkXTypography.system(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
@@ -1159,8 +1159,8 @@ struct BrowserArticleCaptureView: View {
         HStack(spacing: 12) {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 5) {
-                Text(progressHeadline).font(.system(size: 12, weight: .medium)).lineLimit(2)
-                Text(captureSummaryText).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                Text(progressHeadline).font(MarkXTypography.system(size: 12, weight: .medium)).lineLimit(2)
+                Text(captureSummaryText).font(MarkXTypography.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -1174,22 +1174,22 @@ struct BrowserArticleCaptureView: View {
                 let state = model.browserCaptureState(for: item)
                 HStack(alignment: .top, spacing: 11) {
                     Image(systemName: state.systemImage)
-                        .font(.body.weight(.semibold))
+                        .font(MarkXTypography.body.weight(.semibold))
                         .foregroundStyle(color(for: state))
                         .frame(width: 24, height: 24)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(item.displayTitle)
-                            .font(.callout.weight(.semibold))
+                            .font(MarkXTypography.callout.weight(.semibold))
                             .lineLimit(2)
                         Text(XArticleNavigationURL.captureURL(for: item.link).absoluteString)
-                            .font(.caption.monospaced())
+                            .font(MarkXTypography.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .textSelection(.enabled)
                     }
                     Spacer(minLength: 8)
                     Text(state.title)
-                        .font(.caption.weight(.medium))
+                        .font(MarkXTypography.caption.weight(.medium))
                         .foregroundStyle(color(for: state))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)

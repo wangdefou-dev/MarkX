@@ -679,16 +679,16 @@ struct BrowserCreatorArticleDiscoveryView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "doc.text.magnifyingglass").font(.system(size: 20)).foregroundStyle(.secondary)
+            Image(systemName: "doc.text.magnifyingglass").font(MarkXTypography.system(size: 20)).foregroundStyle(.secondary)
                 .frame(width: 34, height: 34).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
-                Text(request.map { "正在检查 @\($0.username)" } ?? "正在查找博主文章").font(.system(size: 17, weight: .semibold)).lineLimit(2)
-                Text(model.isRefreshingCreatorCounts ? "完整扫描列表，更新线上文章总数。" : "新发现的文章会自动进入保存队列。").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                Text(request.map { "正在检查 @\($0.username)" } ?? "正在查找博主文章").font(MarkXTypography.system(size: 17, weight: .semibold)).lineLimit(2)
+                Text(model.isRefreshingCreatorCounts ? "完整扫描列表，更新线上文章总数。" : "新发现的文章会自动进入保存队列。").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 5) {
-                Text("博主 \(currentCreatorNumber) / \(creatorCount)").font(.system(size: 12, weight: .medium)).monospacedDigit()
-                Text("X API · 0").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("博主 \(currentCreatorNumber) / \(creatorCount)").font(MarkXTypography.system(size: 12, weight: .medium)).monospacedDigit()
+                Text("X API · 0").font(MarkXTypography.system(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
@@ -697,9 +697,9 @@ struct BrowserCreatorArticleDiscoveryView: View {
         HStack(spacing: 12) {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 5) {
-                Text(controller.pageStatus).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                Text(controller.pageStatus).font(MarkXTypography.system(size: 12, weight: .medium)).lineLimit(2)
                 Text("已识别 \(controller.discoveredCount) 篇文章")
-                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    .font(MarkXTypography.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
@@ -731,22 +731,22 @@ struct BrowserCreatorArticleDiscoveryView: View {
                                     .fill(Color.green.opacity(0.12))
                                     .frame(width: 28, height: 28)
                                 Image(systemName: "checkmark")
-                                    .font(.caption.bold())
+                                    .font(MarkXTypography.caption.bold())
                                     .foregroundStyle(.green)
                             }
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(item.title)
-                                    .font(.callout.weight(.semibold))
+                                    .font(MarkXTypography.callout.weight(.semibold))
                                     .lineLimit(2)
                                 Text(item.sourceURLText)
-                                    .font(.caption.monospaced())
+                                    .font(MarkXTypography.caption.monospaced())
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                                     .textSelection(.enabled)
                             }
                             Spacer(minLength: 8)
                             Text("\(index + 1)")
-                                .font(.caption2.monospacedDigit())
+                                .font(MarkXTypography.caption2.monospacedDigit())
                                 .foregroundStyle(.tertiary)
                         }
                         .padding(.vertical, 6)
