@@ -153,6 +153,27 @@ final class AppViewModel: ObservableObject {
     private static let maximumPinnedCreators = 5
 
     init() {
+        #if DEBUG
+        if InterfacePreviewGallery.isEnabled {
+            archiveRoot = URL(fileURLWithPath: "/Users/you/Documents/MarkX 资料库")
+            creators = [
+                Creator(xUserID: "preview-1", username: "wangdefou", displayName: "得否", knownArticleCount: 64),
+                Creator(xUserID: "preview-2", username: "ai_xiaomu", displayName: "黄小木", knownArticleCount: 56),
+                Creator(xUserID: "preview-3", username: "example", displayName: "一位名字比较长的创作者", knownArticleCount: 128)
+            ]
+            pinnedCreatorIDs = [creators[0].id]
+            for index in 0..<24 {
+                articles.append(ArchivedArticle(stableSourceKey: "preview-\(index)", creatorID: creators[index % 3].id,
+                    title: index.isMultiple(of: 2) ? "把值得读的文章，留在自己的资料库里" : "从一个想法，到可以长期使用的个人工作流",
+                    authorHandle: creators[index % 3].username, contentType: .xArticle,
+                    sourceURL: URL(string: "https://x.com/example/status/\(index + 1)")!, sourcePostID: "\(index + 1)",
+                    publishedAt: Date().addingTimeInterval(Double(-index * 86400)), sourceChecksum: "preview",
+                    imageCount: 3, pipelineState: index == 4 ? .failed : .committed))
+            }
+            selectedArticleID = articles.first?.id
+            return
+        }
+        #endif
         if let savedPinnedIDs = defaults.array(forKey: Self.pinnedCreatorIDsDefaultsKey) as? [String] {
             pinnedCreatorIDs = savedPinnedIDs.compactMap(UUID.init)
         }

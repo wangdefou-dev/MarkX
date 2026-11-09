@@ -219,8 +219,6 @@ struct RootView: View {
                 SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
             }
             Section {
-                creatorHeadingRow
-                    .padding(.top, 6)
                 if isCreatorsExpanded {
                     if !model.pinnedCreators.isEmpty {
                         ForEach(model.pinnedCreators) { creator in
@@ -234,9 +232,12 @@ struct RootView: View {
                         creatorSidebarRow(creator, statistics: statistics)
                     }
                 }
+            } header: {
+                creatorHeadingRow
             }
         }
         .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, 32)
         .safeAreaInset(edge: .top, spacing: SidebarChrome.downloadToLibrarySpacing) {
             sidebarDownloadEntry
                 .padding(.horizontal, SidebarChrome.moduleHorizontalInset)
@@ -244,7 +245,7 @@ struct RootView: View {
                 .padding(.bottom, 2)
                 .background(.bar)
         }
-        .safeAreaInset(edge: .bottom, spacing: 8) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             SidebarStatusCard(
                 isRunning: model.isRunning,
                 statusText: model.isRunning ? model.progress.stage : model.statusMessage,
@@ -255,41 +256,30 @@ struct RootView: View {
                 switchDirectory: { model.chooseArchiveFolder() }
             )
             .padding(.horizontal, SidebarChrome.moduleHorizontalInset)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
             .background(.bar)
         }
     }
 
     private var sidebarDownloadEntry: some View {
-        Button {
-            model.presentDownloadSheet()
-        } label: {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "square.and.arrow.down.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.orange)
-                    .frame(width: 18, alignment: .center)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("开始下载文章")
-                        .fontWeight(.semibold)
-                    Text("博主主页或文章链接")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
+        Button { model.presentDownloadSheet() } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
+                Text("开始下载文章").font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 4)
+                Image(systemName: "square.and.arrow.down").font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial, in: SidebarAccentPanel.shape)
-            .overlay {
-                SidebarAccentPanel.shape
-                    .stroke(.separator.opacity(0.55), lineWidth: 0.7)
-            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator.opacity(0.35), lineWidth: 0.5))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .disabled(model.isRunning || model.hasActiveDownloadProgress)
-        .help("输入博主主页或一个及多个 X Article 链接开始下载")
+        .help("输入博主主页或 X Article 链接开始下载")
     }
 
     private func sidebarMetricRow<Icon: View, Title: View, Value: View>(
@@ -301,30 +291,7 @@ struct RootView: View {
     }
 
     private var creatorHeadingRow: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isCreatorsExpanded.toggle()
-            }
-        } label: {
-            sidebarMetricRow {
-                Image(systemName: isCreatorsExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.primary)
-            } title: {
-                Text("博主")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            } value: {
-                SidebarMetricBadge(
-                    text: creatorCensus.trackedCount.formatted(.number.grouping(.never)),
-                    accessibilityLabel: "\(creatorCensus.trackedCount) 位博主"
-                )
-            }
-        }
-        .buttonStyle(.plain)
-        .selectionDisabled()
-        .help(isCreatorsExpanded ? "折叠博主" : "展开博主")
+        SidebarSectionHeader(title: "博主", count: model.enabledCreatorCount, countUnit: "位博主", isExpanded: $isCreatorsExpanded)
     }
 
     private func creatorArticleCountHelp(
@@ -353,17 +320,19 @@ struct RootView: View {
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
         return sidebarMetricRow {
             Image(systemName: creator.isProtected
-                  ? "lock.circle"
-                  : model.isCreatorPinned(creator) ? "pin.circle.fill" : "person.crop.circle")
-                .foregroundStyle(model.isCreatorPinned(creator) ? .orange : .secondary)
+                  ? "lock"
+                  : model.isCreatorPinned(creator) ? "pin.fill" : "person")
+                .font(.system(size: model.isCreatorPinned(creator) ? 11 : 13, weight: .regular))
+                .foregroundStyle(.secondary)
         } title: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(creator.displayName)
-                    .lineLimit(1)
+                    .lineLimit(1).help(creator.displayName + " · @" + creator.username)
                 Text("@\(creator.username)")
-                    .font(.caption)
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
+            .font(.system(size: 12, weight: .medium))
         } value: {
             let verifiedEmpty = creator.completeness == .fullArchiveVerified
                 && downloadedArticleCount == 0
@@ -389,6 +358,7 @@ struct RootView: View {
                 localArticleCount: localArticleCount
             ))
         }
+        .frame(minHeight: 38)
         .padding(.vertical, 2)
         .tag(AppViewModel.SidebarSelection.creator(creator.id))
         .contextMenu {
@@ -844,7 +814,7 @@ struct RootView: View {
             Button {
                 model.presentConnectionSetup()
             } label: {
-                Label("连接设置", systemImage: "gearshape")
+                Label("连接与存储", systemImage: "gearshape")
             }
             .help("配置归档目录以及图片、视频存储方式")
         }
@@ -902,13 +872,6 @@ struct RootView: View {
         }
     }
 
-    private var creatorCensus: CreatorArchiveCensus {
-        let statistics = model.sidebarStatistics
-        return CreatorArchiveCensus(creators: model.creators) { creatorID in
-            statistics.downloadedArticleCount(for: creatorID)
-        }
-    }
-
     private var selectedSidebarCreator: Creator? {
         guard case .creator(let id) = model.sidebarSelection else { return nil }
         return model.creators.first { $0.id == id }
@@ -935,192 +898,92 @@ private struct SidebarSectionHeader: View {
     @Binding var isExpanded: Bool
 
     var body: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 12)
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 4)
+        Button { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } } label: {
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: 12, weight: .semibold))
                 if let count {
-                    SidebarCountBadge(count: count, unit: countUnit)
+                    Text(count, format: .number.grouping(.never)).font(.system(size: 10)).monospacedDigit()
+                        .accessibilityLabel("\(count) \(countUnit)")
                 }
+                Spacer(minLength: 4)
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
             }
+            .foregroundStyle(.secondary)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.top, 4)
-        .padding(.bottom, 8)
+        .textCase(nil)
+        .padding(.top, 8).padding(.bottom, 5)
         .help(isExpanded ? "折叠\(title)" : "展开\(title)")
     }
 }
 
-private struct DownloadResultView: View {
+struct DownloadResultView: View {
     let notice: DownloadResultNotice
     @Environment(\.dismiss) private var dismiss
-
-    private var hasDanger: Bool {
-        notice.metrics.contains { $0.tone == .danger }
+    private var hasDanger: Bool { notice.metrics.contains { $0.tone == .danger } }
+    private var hasWarning: Bool { notice.metrics.contains { $0.tone == .warning } }
+    private var statusColor: Color { hasDanger ? .red : hasWarning ? .orange : .green }
+    private var subtitle: String {
+        hasDanger ? "部分文章处理失败，已保存的内容会保留。" : hasWarning ? "部分文章仍需处理，可以稍后继续。" : "本次任务已结束，下面是处理结果。"
     }
-
-    private var hasWarning: Bool {
-        notice.metrics.contains { $0.tone == .warning }
-    }
-
-    private var statusColor: Color {
-        if hasDanger { return .red }
-        if hasWarning { return .orange }
-        return .green
-    }
-
-    private var statusImage: String {
-        if hasDanger { return "exclamationmark.triangle.fill" }
-        if hasWarning { return "exclamationmark.circle.fill" }
-        return "checkmark.seal.fill"
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: statusImage)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(statusColor)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill(statusColor.opacity(0.12))
-                    )
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(notice.title)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(2)
-                    Text(hasDanger
-                        ? "任务未完全完成，已保存的内容仍然保留"
-                        : hasWarning
-                        ? "部分任务需要继续处理，已完成内容仍然保留"
-                        : "任务结果已整理完成")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if !notice.metrics.isEmpty {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
-                    GridRow {
-                        metricCell(id: "queued", label: "进入队列", systemImage: "tray.and.arrow.down.fill")
-                        metricCell(id: "saved", label: "成功保存", systemImage: "checkmark.circle.fill")
-                        metricCell(id: "failed", label: "下载失败", systemImage: "xmark.circle.fill")
-                    }
-                    GridRow {
-                        metricCell(id: "skipped", label: "已跳过", systemImage: "forward.end.fill")
-                        metricCell(id: "subscription", label: "需订阅", systemImage: "lock.fill")
-                        metricCell(id: "pending", label: "待处理", systemImage: "clock.arrow.circlepath")
-                    }
-                    GridRow {
-                        metricCell(id: "images", label: "图片", systemImage: "photo.fill")
-                        metricCell(id: "videos", label: "视频", systemImage: "video.fill")
-                        Color.clear
-                            .gridCellUnsizedAxes([.horizontal, .vertical])
-                    }
-                }
-            }
-
+        VStack(spacing: 0) {
+            MarkXPaneHeader(title: notice.title, subtitle: subtitle,
+                symbol: hasDanger || hasWarning ? "exclamationmark.circle" : "checkmark.circle", symbolColor: statusColor)
             Divider()
-
             ScrollView {
-                Text(notice.message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
+                    if !notice.metrics.isEmpty {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                            ForEach(notice.metrics, id: \.id) { DownloadResultMetricText(metric: $0) }
+                        }
+                    }
+                    MarkXSection(title: "结果说明") {
+                        Text(notice.message).font(.system(size: 12)).foregroundStyle(.secondary)
+                            .lineSpacing(4).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(MarkXInterface.inset)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            HStack {
-                Spacer()
+            MarkXFooter {
                 Button("完成") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .help("关闭任务结果")
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .help("关闭结果窗口")
             }
         }
-        .padding(22)
-        .frame(width: 560, height: 480, alignment: .topLeading)
-    }
-
-    @ViewBuilder
-    private func metricCell(id: String, label: String, systemImage: String) -> some View {
-        DownloadResultMetricText(metric: displayMetric(id: id, label: label, systemImage: systemImage))
-    }
-
-    private func displayMetric(
-        id: String,
-        label: String,
-        systemImage: String
-    ) -> DownloadResultMetric {
-        let source = notice.metrics.first(where: { $0.id == id })
-            ?? fallbackMetric(for: id)
-        return DownloadResultMetric(
-            id: id,
-            label: label,
-            value: source?.value ?? "0",
-            systemImage: systemImage,
-            tone: source?.tone ?? .neutral
-        )
-    }
-
-    private func fallbackMetric(for id: String) -> DownloadResultMetric? {
-        switch id {
-        case "queued":
-            notice.metrics.first(where: { $0.id == "checked" })
-        case "saved":
-            notice.metrics.first(where: { $0.id == "downloaded" })
-        default:
-            nil
-        }
+        .background(MarkXInterface.canvas)
+        .frame(width: 620, height: MarkXInterface.sheetHeight(600))
+        .onExitCommand { dismiss() }
     }
 }
 
 private struct DownloadResultMetricText: View {
     let metric: DownloadResultMetric
-
     private var color: Color {
         switch metric.tone {
-        case .accent: .blue
+        case .accent: .secondary
         case .positive: .green
         case .neutral: .secondary
         case .warning: .orange
         case .danger: .red
         }
     }
-
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: metric.systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(color)
-                .frame(width: 14, height: 14, alignment: .center)
-            Text(metric.label)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-            Text(metric.value)
-                .font(.title3.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                Image(systemName: metric.systemImage).foregroundStyle(color).frame(width: 13)
+                Text(metric.label).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11)).lineLimit(1)
+            Text(metric.value).font(.system(size: 24, weight: .semibold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.6)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .padding(14).markxSurface()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1156,17 +1019,8 @@ private struct CreatorProfileToolbarHeader: View {
 }
 
 private enum SidebarChrome {
-    static let moduleHorizontalInset: CGFloat = 4
-    static let downloadToLibrarySpacing: CGFloat = 14
-    static let libraryToCreatorsSpacing: CGFloat = 18
-}
-
-private enum SidebarAccentPanel {
-    static let cornerRadius: CGFloat = 12
-
-    static var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-    }
+    static let moduleHorizontalInset: CGFloat = 12
+    static let downloadToLibrarySpacing: CGFloat = 8
 }
 
 private struct SidebarStatusCard: View {
@@ -1179,93 +1033,47 @@ private struct SidebarStatusCard: View {
     let switchDirectory: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                ZStack {
-                    Circle()
-                        .fill((isRunning ? Color.orange : Color.green).opacity(0.16))
-                        .frame(width: 22, height: 22)
-                    Image(systemName: isRunning ? SyncVisualStyle.symbolName : "checkmark")
-                        .font(.caption2.bold())
-                        .foregroundStyle(isRunning ? .orange : .green)
-                }
-                Text(isRunning ? "正在处理" : "归档器已就绪")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                if isRunning {
-                    ProgressView()
-                        .controlSize(.mini)
-                }
-            }
-
-            Text(statusText)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-
-            HStack(spacing: 6) {
-                SidebarConnectionBadge(title: "Chrome", isReady: hasChromeSession)
-                if hasImageHost {
-                    SidebarConnectionBadge(title: "存储", isReady: true)
-                } else {
-                    Button(action: configureImageHost) {
-                        SidebarConnectionBadge(title: "存储", isReady: false, showsDisclosure: true)
-                    }
-                    .buttonStyle(.plain)
-                    .help("媒体存储未就绪，点击直接打开存储配置")
-                    .disabled(isRunning)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
             Button(action: switchDirectory) {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.fill")
-                        .foregroundStyle(.tint)
-                    Text(archiveName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                HStack(spacing: 8) {
+                    Image(systemName: "folder").font(.system(size: 13))
+                    Text(archiveName).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 4)
-                    Image(systemName: "arrow.left.arrow.right")
-                        .font(.caption2.weight(.semibold))
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 10))
                 }
-                .contentShape(Rectangle())
+                .foregroundStyle(.secondary).contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
+            .buttonStyle(.plain).disabled(isRunning)
             .help("同步现有文章并切换保存目录")
-            .disabled(isRunning)
+            if isRunning {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.mini)
+                    Text(statusText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    SidebarConnectionBadge(title: "Chrome", isReady: hasChromeSession)
+                    Button(action: configureImageHost) {
+                        SidebarConnectionBadge(title: "存储", isReady: hasImageHost)
+                    }
+                    .buttonStyle(.plain).help("查看媒体存储设置")
+                }
+            }
         }
-        .padding(10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.separator.opacity(0.55), lineWidth: 0.7)
-        }
+        .padding(.horizontal, 4)
     }
 }
 
 private struct SidebarConnectionBadge: View {
     let title: String
     let isReady: Bool
-    var showsDisclosure = false
-
     var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(isReady ? Color.green : Color.orange)
-                .frame(width: 5, height: 5)
-            Text("\(title)\(isReady ? "已连接" : "待配置")")
-            if showsDisclosure {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 7, weight: .bold))
-            }
+        HStack(spacing: 5) {
+            Circle().fill(isReady ? Color.green : Color.orange).frame(width: 4, height: 4)
+            Text(title + (isReady ? "已连接" : "待配置"))
         }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.045), in: Capsule())
+        .font(.system(size: 10)).foregroundStyle(.secondary)
     }
 }
 
@@ -1788,14 +1596,14 @@ private struct SidebarCountRow: View {
     let title: String
     let systemImage: String
     let count: Int
-
     var body: some View {
-        HStack(spacing: 8) {
-            Label(title, systemImage: systemImage)
+        HStack(spacing: 9) {
+            Image(systemName: systemImage).font(.system(size: 14, weight: .regular)).frame(width: 18)
+            Text(title).font(.system(size: 13))
             Spacer(minLength: 4)
             SidebarCountBadge(count: count)
         }
-        .padding(.vertical, 1)
+        .frame(minHeight: 27)
         .contentShape(Rectangle())
     }
 }
@@ -1828,7 +1636,7 @@ private struct SidebarMetricRow<Icon: View, Title: View, Value: View>: View {
 
 private struct SidebarMetricBadge: View {
     static let iconColumn: CGFloat = 18
-    static let columnWidth: CGFloat = 64
+    static let columnWidth: CGFloat = 56
 
     let text: String
     let accessibilityLabel: String
@@ -1839,13 +1647,11 @@ private struct SidebarMetricBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.monospacedDigit().weight(.semibold))
+            .font(.system(size: 10)).monospacedDigit()
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(width: Self.columnWidth, alignment: .center)
-            .padding(.vertical, 2)
-            .background(Color.primary.opacity(0.07), in: Capsule())
+            .minimumScaleFactor(0.85)
+            .frame(width: Self.columnWidth, alignment: .trailing)
             .accessibilityLabel(accessibilityLabel)
     }
 }
@@ -1853,16 +1659,12 @@ private struct SidebarMetricBadge: View {
 private struct SidebarCountBadge: View {
     let count: Int
     var unit = "篇文章"
-    var horizontalPadding: CGFloat = 7
-
+    var horizontalPadding: CGFloat = 0
     var body: some View {
         Text(count, format: .number.grouping(.never))
-            .font(.caption.monospacedDigit().weight(.semibold))
+            .font(.system(size: 11)).monospacedDigit()
             .foregroundStyle(.secondary)
-            .padding(.horizontal, horizontalPadding)
-            .padding(.vertical, 2)
-            .frame(minWidth: 28)
-            .background(Color.primary.opacity(0.07), in: Capsule())
+            .frame(minWidth: 22, alignment: .trailing)
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel("\(count) \(unit)")
     }

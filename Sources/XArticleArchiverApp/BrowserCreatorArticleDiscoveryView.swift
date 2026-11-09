@@ -631,20 +631,17 @@ struct BrowserCreatorArticleDiscoveryView: View {
         model.currentCreatorArticleDiscoveryRequest
     }
 
-    private var isCompact: Bool { model.showingBrowserCapture }
 
     var body: some View {
-        VStack(spacing: isCompact ? 10 : 18) {
-            header
-            statusCard
-            if !isCompact {
-                discoveredArticleList
-                footer
-            }
+        VStack(spacing: 0) {
+            header.padding(20)
+            Divider()
+            statusCard.padding(.horizontal, 20).padding(.vertical, 16)
+            discoveredArticleList.padding(.horizontal, 20).padding(.bottom, 16)
+            footer
         }
-        .padding(isCompact ? 14 : 22)
-        .frame(minWidth: 760, minHeight: isCompact ? 128 : 590)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
+        .background(MarkXInterface.canvas)
         .background {
             // WebKit must stay mounted at a normal viewport size so X keeps
             // rendering its virtualized Articles timeline. The opaque app
@@ -681,83 +678,31 @@ struct BrowserCreatorArticleDiscoveryView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 44, height: 44)
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.tint)
+            Image(systemName: "doc.text.magnifyingglass").font(.system(size: 20)).foregroundStyle(.secondary)
+                .frame(width: 34, height: 34).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(request.map { "正在检查 @\($0.username)" } ?? "正在查找博主文章").font(.system(size: 17, weight: .semibold)).lineLimit(2)
+                Text(model.isRefreshingCreatorCounts ? "完整扫描列表，更新线上文章总数。" : "新发现的文章会自动进入保存队列。").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(request.map {
-                    model.isRefreshingCreatorCounts
-                        ? "正在刷新 @\($0.username) 的线上文章总数"
-                        : model.isSyncingTrackedCreators
-                        ? "正在同步 @\($0.username) 的文章"
-                        : "正在获取 @\($0.username) 的文章"
-                } ?? (model.isRefreshingCreatorCounts
-                      ? "正在刷新线上文章总数"
-                      : model.isSyncingTrackedCreators ? "正在同步博主文章" : "正在获取博主文章"))
-                    .font(.title3.weight(.semibold))
-                Text(model.isRefreshingCreatorCounts
-                     ? "完整扫描 Articles 列表，只更新总数，不下载文章"
-                     : isCompact
-                         ? "这位博主的列表读完后会立刻开始保存，下一位博主同时继续读列表"
-                         : model.isSyncingTrackedCreators
-                         ? (model.activeSyncResolvesTotalCount
-                             ? "先获取完整 Articles 列表总数，再处理选定范围；已有完整归档会自动跳过"
-                             : "只读取每位博主最近文章；已有完整归档会自动跳过")
-                         : (request?.resolvesTotalCount == true
-                             ? "先获取完整 Articles 列表总数，再处理选定范围；浏览器页面不会显示"
-                             : "只读取最近文章，线上总数可稍后手动刷新；浏览器页面不会显示"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 6) {
-                Label("X API 0 次", systemImage: "checkmark.shield.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.green)
-                Text("博主 \(currentCreatorNumber) / \(creatorCount)")
-                    .font(.caption.monospacedDigit().weight(.medium))
-                    .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 5) {
+                Text("博主 \(currentCreatorNumber) / \(creatorCount)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                Text("X API · 0").font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
 
     private var statusCard: some View {
         HStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.small)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(controller.pageStatus)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(2)
-                Text(model.isRefreshingCreatorCounts
-                     ? "已扫描 \(controller.discoveredCount) 篇文章卡片"
-                     : model.isSyncingTrackedCreators
-                         ? "已检查并识别 \(controller.discoveredItems.count) 篇文章标题和链接"
-                         : "已识别 \(controller.discoveredItems.count) 篇文章标题和链接")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            ProgressView().controlSize(.small)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(controller.pageStatus).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                Text("已识别 \(controller.discoveredCount) 篇文章")
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
             }
-            Spacer(minLength: 10)
-            if ChromeXSessionReader.hasLocalChromeProfile() {
-                Label("Chrome 登录态已启用", systemImage: "key.fill")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Color.green.opacity(0.1), in: Capsule())
-            }
+            Spacer(minLength: 0)
         }
-        .padding(14)
-        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.12))
-        }
+        .padding(14).markxSurface()
     }
 
     private var discoveredArticleList: some View {
@@ -807,37 +752,25 @@ struct BrowserCreatorArticleDiscoveryView: View {
                     }
                 }
                 .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
-        .frame(minHeight: 350)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(minHeight: 200, maxHeight: .infinity)
+        .background(MarkXInterface.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.55))
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
         }
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "eye.slash.fill")
-                .foregroundStyle(.secondary)
-            Text(model.isRefreshingCreatorCounts
-                 ? "完整扫描只用于更新线上总数，不会下载文章。"
-                 : model.isSyncingTrackedCreators
-                     ? "同步在后台自动运行，已有完整归档会跳过，完成后统一显示同步结果。"
-                     : "采集过程在后台自动运行，完成后会统一显示下载结果。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button("隐藏到后台") { model.hideDownloadProgressWindow() }
-                .help("隐藏进度窗口，文章发现会继续在后台执行")
+        MarkXFooter(note: "隐藏窗口后，任务仍会在后台继续") {
             Button("停止") { model.closeCreatorArticleDiscovery() }
-                .keyboardShortcut(.cancelAction)
-                .help(model.isRefreshingCreatorCounts
-                      ? "停止线上文章总数刷新"
-                      : model.isSyncingTrackedCreators
-                          ? "停止本次同步；已经完成的本地归档保留"
-                          : "停止当前博主的 Articles 列表发现；已发现的标题和链接保留")
+                .help("安全停止本次任务，已完成内容保留")
+            Button("隐藏到后台") { model.hideDownloadProgressWindow() }
+                .buttonStyle(.borderedProminent).keyboardShortcut(.cancelAction)
+                .help("隐藏窗口并继续后台任务")
         }
     }
 

@@ -1083,15 +1083,15 @@ struct BrowserArticleCaptureView: View {
     private var request: BrowserCaptureRequest? { model.currentBrowserCaptureRequest }
 
     var body: some View {
-        VStack(spacing: 18) {
-            header
-            summaryCard
-            downloadQueue
+        VStack(spacing: 0) {
+            header.padding(20)
+            Divider()
+            summaryCard.padding(.horizontal, 20).padding(.vertical, 16)
+            downloadQueue.padding(.horizontal, 20).padding(.bottom, 16)
             footer
         }
-        .padding(22)
-        .frame(minWidth: 800, minHeight: model.showingCreatorArticleDiscovery ? 420 : 620)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
+        .background(MarkXInterface.canvas)
         .background {
             // Keep the Article DOM alive at desktop width while fully covering
             // both the main page and any X popup with the native progress UI.
@@ -1140,68 +1140,31 @@ struct BrowserArticleCaptureView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 44, height: 44)
-                Image(systemName: "square.and.arrow.down.fill")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.tint)
+            Image(systemName: "square.and.arrow.down").font(.system(size: 20)).foregroundStyle(.secondary)
+                .frame(width: 34, height: 34).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.isSyncingTrackedCreators ? "正在同步文章" : "正在保存文章").font(.system(size: 17, weight: .semibold)).lineLimit(2)
+                Text("完整保存正文、图片和视频，保留原文顺序。").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(model.isSyncingTrackedCreators ? "正在后台同步 X Article" : "正在后台下载 X Article")
-                    .font(.title3.weight(.semibold))
-                Text(model.showingCreatorArticleDiscovery
-                     ? "列表读取和正文保存同时进行；已发现的文章会立刻入队下载"
-                     : model.isSyncingTrackedCreators
-                     ? "已同步文章自动跳过，新文章会保留文字、图片、视频和原始顺序"
-                     : "自动使用 Chrome 登录态并保存文字、图片、视频和原始顺序")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 6) {
-                Label("X API 0 次", systemImage: "checkmark.shield.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.green)
-                Text("\(currentDownloadNumber) / \(downloadCount)")
-                    .font(.caption.monospacedDigit().weight(.medium))
-                    .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 5) {
+                Text("\(currentDownloadNumber) / \(downloadCount)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                Text("X API · 0").font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
 
     private var summaryCard: some View {
         HStack(spacing: 12) {
-            if controller.isLoading || controller.isAutomaticCaptureRunning || model.isRunning {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+            ProgressView().controlSize(.small)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(progressHeadline).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                Text(captureSummaryText).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(progressHeadline)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(2)
-                Text(captureSummaryText)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Label("Chrome 登录态", systemImage: "key.fill")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.green)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(Color.green.opacity(0.1), in: Capsule())
+            Spacer(minLength: 0)
         }
-        .padding(14)
-        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.12))
-        }
+        .padding(14).markxSurface()
     }
 
     private var downloadQueue: some View {
@@ -1245,39 +1208,35 @@ struct BrowserArticleCaptureView: View {
             }
         }
         .listStyle(.inset)
-        .frame(minHeight: model.showingCreatorArticleDiscovery ? 220 : 365)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .scrollContentBackground(.hidden)
+        .frame(minHeight: 200, maxHeight: .infinity)
+        .background(MarkXInterface.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.55))
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
+        .overlay {
+            if model.visibleBrowserCaptureRequests.isEmpty {
+                ContentUnavailableView("正在建立保存队列", systemImage: "tray.and.arrow.down",
+                    description: Text("发现文章后会自动开始保存。"))
+            }
         }
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "eye.slash.fill")
-                .foregroundStyle(.secondary)
-            Text(model.showingCreatorArticleDiscovery
-                 ? "列表读取和正文保存同时进行；全部结束后会统一显示结果。"
-                 : model.isSyncingTrackedCreators
-                 ? "浏览器页面已隐藏；同步结束后会统一显示成功、跳过和失败结果。"
-                 : "浏览器页面已隐藏；全部处理结束后会统一告诉你下载结果。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
+        MarkXFooter(note: "隐藏窗口后，任务仍会在后台继续") {
             if model.pendingExactCaptureCount > 0 {
-                Button("删除待采集任务…", role: .destructive) {
-                    model.requestDeleteAllExactCaptureTasks()
-                }
-                .help("停止当前采集并清空所有待精确采集任务；已有归档保留")
+                Menu {
+                    Button("清空待处理任务…", role: .destructive) { model.requestDeleteAllExactCaptureTasks() }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize().help("更多队列操作")
             }
-            Button("隐藏到后台") { model.hideDownloadProgressWindow() }
-                .help("隐藏进度窗口，当前下载和后续队列会继续在后台执行")
             Button("停止") { model.closeBrowserCapture() }
-                .keyboardShortcut(.cancelAction)
-                .help(model.isSyncingTrackedCreators
-                      ? "立即停止本次后台同步；已完成归档保留，未完成任务之后可继续"
-                      : "立即停止精确采集；未完成任务保留，之后可继续")
+                .help("安全停止本次任务，已完成内容保留")
+            Button("隐藏到后台") { model.hideDownloadProgressWindow() }
+                .buttonStyle(.borderedProminent).keyboardShortcut(.cancelAction)
+                .help("隐藏窗口并继续后台任务")
         }
     }
 

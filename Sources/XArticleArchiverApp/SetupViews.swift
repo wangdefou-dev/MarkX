@@ -8,7 +8,6 @@ struct AddCreatorsView: View {
         case batch = "批量博主"
         case articleLinks = "文章链接"
     }
-
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
@@ -20,298 +19,145 @@ struct AddCreatorsView: View {
 
     private var parsedHandles: [String] { HandleParser.parse(input) }
     private var parsedArticleLinks: [XArticleLink] { XArticleURLParser.parse(input) }
-
-    private var validCreatorInput: Bool {
-        switch entryMode {
-        case .single: parsedHandles.count == 1
-        case .batch: !parsedHandles.isEmpty
-        case .articleLinks: false
-        }
-    }
-
     private var canDownload: Bool {
-        if !parsedArticleLinks.isEmpty {
-            return parsedArticleLinks.count <= 500
-        }
-        return validCreatorInput
+        if !parsedArticleLinks.isEmpty { return parsedArticleLinks.count <= 500 }
+        return entryMode == .single ? parsedHandles.count == 1 : entryMode == .batch && !parsedHandles.isEmpty
     }
-
     private var downloadTitle: String {
+        if entryMode == .articleLinks && parsedArticleLinks.isEmpty { return "下载文章" }
         if !parsedArticleLinks.isEmpty { return "下载 \(parsedArticleLinks.count) 篇文章" }
         return mode == .recentWindow ? "下载最近 \(articleLimit) 篇" : "下载全部文章"
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(model.downloadSheetPrefill.isEmpty ? "开始下载文章" : "重新拉取博主文章")
-                    .font(.title2.bold())
-                Text(entryMode == .articleLinks
-                     ? "每行粘贴一条 x.com 或 twitter.com 的文章链接；在应用内打开真实页面并保留段落、列表、表格、代码、图片和视频顺序。"
-                     : (model.downloadSheetPrefill.isEmpty
-                        ? "粘贴 @handle 或 X 博主主页链接，选择数量后下载其官方 X Article。"
-                        : "已带入这位博主。你可以再次选择数量并重新拉取；既有文章会校验更新，新文章会继续添加。"))
-                    .foregroundStyle(.secondary)
-            }
-
-            Picker("添加方式", selection: $entryMode) {
-                ForEach(EntryMode.allCases, id: \.self) { item in
-                    Text(item.rawValue).tag(item)
+        VStack(spacing: 0) {
+            MarkXPaneHeader(title: model.downloadSheetPrefill.isEmpty ? "开始下载文章" : "重新拉取文章",
+                subtitle: "选择来源与下载范围，完整文章会保存在你的 Mac。", symbol: "square.and.arrow.down")
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
+                    Picker("添加方式", selection: $entryMode) {
+                        ForEach(EntryMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden().pickerStyle(.segmented)
+                    .help("选择输入单个博主、多个博主，或 X Article 链接")
+                    inputSection
+                    if entryMode != .articleLinks { rangeSection }
+                    MarkXInfoLine(symbol: "checkmark.shield", text: "仅下载 X Article，保留正文排版、图片与视频。")
                 }
+                .padding(MarkXInterface.inset)
             }
-            .pickerStyle(.segmented)
-            .help("选择输入单个博主、多个博主，或一个及多个 X Article 链接")
-
-            entryInputSection
-
-            downloadOptionsSection
-
-            downloadFooter
+            MarkXFooter(note: "已有完整归档默认跳过") {
+                Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                    .help("关闭窗口，不创建下载任务")
+                Button(downloadTitle, action: startDownload)
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(!canDownload).frame(minWidth: 120)
+                    .help("按所选范围加入后台下载队列")
+            }
         }
-        .padding(24)
-        .frame(width: 680)
+        .background(MarkXInterface.canvas)
+        .frame(width: 640, height: MarkXInterface.sheetHeight(610))
         .onAppear {
             input = model.downloadSheetPrefill
             entryMode = model.downloadSheetUsesArticleLinks ? .articleLinks : .single
         }
-        .onChange(of: input) { _, newValue in
-            // The default tab is "single creator". Detect a pasted /status/
-            // or /article/ URL immediately so it goes straight to full-page
-            // capture instead of the creator Articles-list discovery flow.
-            if !XArticleURLParser.parse(newValue).isEmpty {
-                entryMode = .articleLinks
-            }
+        .onChange(of: input) { _, value in
+            if !XArticleURLParser.parse(value).isEmpty { entryMode = .articleLinks }
         }
-        .onChange(of: entryMode) { _, newMode in
-            if newMode == .single {
-                input = SingleCreatorInputPolicy.sanitize(input)
-            }
+        .onChange(of: entryMode) { _, value in
+            if value == .single { input = SingleCreatorInputPolicy.sanitize(input) }
         }
     }
 
-    @ViewBuilder
-    private var entryInputSection: some View {
+    @ViewBuilder private var inputSection: some View {
         switch entryMode {
         case .single:
-            VStack(alignment: .leading, spacing: 7) {
-                Text("博主主页").font(.headline)
-                StrictSingleLineTextField(
-                    text: Binding(
-                        get: { input },
-                        set: { input = SingleCreatorInputPolicy.sanitize($0) }
-                    ),
-                    placeholder: "@username 或 https://x.com/username"
-                )
-                    .frame(height: 23)
-                Text("仅支持一行；按回车不会换行，粘贴多行内容时只保留第一条非空内容。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if parsedHandles.count > 1 {
-                    Label("单个模式一次只接受一个博主", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+            MarkXSection(title: "博主主页", detail: "输入用户名或 X 主页链接。") {
+                StrictSingleLineTextField(text: Binding(get: { input }, set: { input = SingleCreatorInputPolicy.sanitize($0) }),
+                    placeholder: "@username 或 https://x.com/username")
+                    .frame(height: 32)
+                    .help("只接受一行；粘贴多行时保留第一条非空内容")
+                if let handle = parsedHandles.first {
+                    MarkXInfoLine(symbol: "person.crop.circle.badge.checkmark", text: "已识别 @\(handle)")
                 }
             }
         case .batch:
-            VStack(alignment: .leading, spacing: 7) {
-                Text("博主列表").font(.headline)
-                Text("每行一个 @handle 或 X 主页链接。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                multilineInput(minHeight: 115)
+            MarkXSection(title: "博主列表", detail: "每行一位，支持 @用户名或主页链接。") {
+                multilineInput(placeholder: "@username\nhttps://x.com/another_creator")
+                Text("已识别 \(parsedHandles.count) 位博主")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
             }
         case .articleLinks:
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Text("X Article 链接").font(.headline)
-                    Spacer()
-                    Text("已识别 \(parsedArticleLinks.count) 条")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(parsedArticleLinks.count > 500 ? .red : .secondary)
+            MarkXSection(title: "X Article 链接", detail: "每行一条，最多 500 条；重复链接会自动合并。") {
+                multilineInput(placeholder: "https://x.com/username/status/…")
+                Text("已识别 \(parsedArticleLinks.count) 条链接")
+                    .font(.system(size: 11)).monospacedDigit()
+                    .foregroundStyle(parsedArticleLinks.count > 500 ? Color.red : .secondary)
+                Divider()
+                Toggle("重新获取已归档文章", isOn: $refreshExistingLinks)
+                    .font(.system(size: 12)).help("重新打开原页并校验完整排版，手工修改的 Markdown 受到保护")
+                if refreshExistingLinks {
+                    Text("校验成功后更新本地归档，手工修改的正文不会被直接覆盖。")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                Text("每行一个，支持 /status/PostID 和 /article/PostID；一次 1–500 条并自动去重。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                multilineInput(minHeight: 150)
-                Toggle("本地已存在时仍重新获取完整排版", isOn: $refreshExistingLinks)
-                    .help("开启后，已完成的文章也会重新打开原页并校验排版")
-                Text(refreshExistingLinks
-                     ? "会在应用内重新打开页面，严格校验后再替换本地 Markdown。"
-                     : "默认跳过已通过精确排版校验的文章。直接链接模式不调用 X API。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func multilineInput(minHeight: CGFloat) -> some View {
+    private func multilineInput(placeholder: String) -> some View {
         TextEditor(text: $input)
-            .font(.system(.body, design: .monospaced))
-            .frame(minHeight: minHeight)
-            .padding(8)
+            .font(.system(size: 12, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .frame(height: 120).padding(10)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
-    }
-
-    @ViewBuilder
-    private var downloadOptionsSection: some View {
-        if entryMode == .articleLinks {
-            GroupBox {
-                Label("链接模式的正文、图片和视频全部来自当前展示的 X Article 页面；X API 调用为 0。多条链接会进入队列，逐篇确认并保存。", systemImage: "safari")
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            creatorDownloadOptions
-        }
-    }
-
-    @ViewBuilder
-    private var creatorDownloadOptions: some View {
-        Picker("归档范围", selection: $mode) {
-            ForEach(ArchiveMode.allCases, id: \.self) { archiveMode in
-                Text(archiveMode.displayName).tag(archiveMode)
-            }
-        }
-        .pickerStyle(.segmented)
-        .help("选择只下载最近指定数量，或自动滚动 Articles 列表下载全部可见文章")
-
-        if mode == .recentWindow {
-            recentRangeControls
-            totalCountOption
-        } else {
-            Label(
-                "全部文章会扫描到 Articles 列表底部，不受 100 篇限制，并同时更新线上文章总数。",
-                systemImage: "number"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-
-        creatorModeExplanation
-    }
-
-    private var recentRangeControls: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("每位博主下载数量").font(.headline)
-                        Text("默认最近 10 篇；超过 100 篇请选全部文章。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    articleLimitMenu
-                    Stepper(value: $articleLimit, in: 1...100) {
-                        Text("\(articleLimit) 篇")
-                    }
-                    .fixedSize()
-                    .help("调整每位博主要下载的最近 X Article 数量，范围 1–100 篇")
-                    Button("全部文章") { mode = .fullArchive }
-                        .help("不限 100 篇，滚动到列表底部并下载该博主全部可见 X Article")
+            .overlay(alignment: .topLeading) {
+                if input.isEmpty {
+                    Text(placeholder).font(.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary)
+                        .padding(14).allowsHitTesting(false).accessibilityHidden(true)
                 }
-                Label(
-                    "数量只针对 Articles 专属列表中的文章，不会读取或扫描普通 Post。",
-                    systemImage: "checkmark.shield"
-                )
-                .font(.caption)
-                .foregroundStyle(.green)
             }
-        }
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator.opacity(0.5), lineWidth: 0.5))
+            .accessibilityLabel(entryMode == .batch ? "博主列表" : "文章链接")
     }
 
-    private var articleLimitMenu: some View {
-        Menu("快捷选择") {
-            Button("5 篇") {
-                articleLimit = 5
-                mode = .recentWindow
+    private var rangeSection: some View {
+        MarkXSection(title: "下载范围") {
+            Picker("归档范围", selection: $mode) {
+                ForEach(ArchiveMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
-                .help("将每位博主的下载数量设为最近 5 篇")
-            Button("10 篇") {
-                articleLimit = 10
-                mode = .recentWindow
+            .labelsHidden().pickerStyle(.segmented).help("选择最近文章或全部可见文章")
+            if mode == .recentWindow {
+                HStack {
+                    Text("每位博主").font(.system(size: 12))
+                    Spacer()
+                    Menu("预设") {
+                        ForEach([5, 10, 20, 50, 100], id: \.self) { value in
+                            Button("最近 \(value) 篇") { articleLimit = value }
+                        }
+                    }
+                    .fixedSize().help("快速选择每位博主的文章数量")
+                    Stepper(value: $articleLimit, in: 1...100) {
+                        Text("\(articleLimit) 篇").monospacedDigit().frame(minWidth: 44, alignment: .trailing)
+                    }
+                    .fixedSize().help("每位博主下载最近 1–100 篇文章")
+                }
+                Divider()
+                Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
+                    .font(.system(size: 12)).help("扫描完整列表来更新总数，下载范围仍为最近指定数量")
+                Text(resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数也可稍后单独刷新。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+                MarkXInfoLine(symbol: "text.page", text: "扫描到列表底部，下载全部可见文章，不受 100 篇限制。")
             }
-                .help("将每位博主的下载数量设为默认的最近 10 篇")
-            Button("20 篇") {
-                articleLimit = 20
-                mode = .recentWindow
-            }
-                .help("将每位博主的下载数量设为最近 20 篇")
-            Button("50 篇") {
-                articleLimit = 50
-                mode = .recentWindow
-            }
-                .help("将每位博主的下载数量设为最近 50 篇")
-            Button("100 篇") {
-                articleLimit = 100
-                mode = .recentWindow
-            }
-                .help("将每位博主的下载数量设为最近 100 篇")
-            Divider()
-            Button("全部文章") { mode = .fullArchive }
-                .help("不限 100 篇，下载 Articles 列表中的全部可见文章")
-        }
-        .help("快速设置每位博主要下载的文章数量，或改为下载全部")
-    }
-
-    private var totalCountOption: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("同时获取线上文章总数", isOn: $resolveTotalCount)
-                    .help("开启后会完整扫描 Articles 列表并更新左侧博主的线上总数，仍只下载最近指定数量")
-                Text(resolveTotalCount
-                     ? "会完整扫描列表来更新总数，等待时间会更长，但下载范围仍是最近 \(articleLimit) 篇。"
-                     : "默认只读取最近 \(articleLimit) 篇，速度更快；之后可在左侧博主菜单中单独刷新线上总数。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var creatorModeExplanation: some View {
-        GroupBox {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "safari")
-                    .foregroundStyle(.blue)
-                Text(mode == .recentWindow
-                     ? (resolveTotalCount
-                         ? "应用会先完整扫描 x.com/<博主>/articles 更新线上总数，再取前 \(articleLimit) 个官方 Article 链接逐篇保存。X API 调用为 0。"
-                         : "应用会直接打开 x.com/<博主>/articles，只读取前 \(articleLimit) 个官方 Article 链接，再逐篇保存完整排版。线上总数可稍后刷新。X API 调用为 0。")
-                     : "应用会自动滚动 x.com/<博主>/articles 直到列表底部，再逐篇保存全部可见文章，不受 100 篇限制。不会调用 Full-Archive Search，也不会扫描普通 Post，X API 调用为 0。")
-                    .font(.callout)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var downloadFooter: some View {
-        HStack {
-            Button("取消") { dismiss() }
-                .help("关闭下载窗口，不创建任务")
-            Spacer()
-            Button(downloadTitle, action: startDownload)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!canDownload)
-                .help(parsedArticleLinks.isEmpty
-                      ? "进入博主 Articles 列表，发现标题和链接后逐篇下载"
-                      : "把已识别的 \(parsedArticleLinks.count) 条链接加入精确排版下载队列")
         }
     }
 
     private func startDownload() {
-        // Direct Article URLs always take the zero-API path even if the
-        // segmented control has not visually updated yet.
         if !parsedArticleLinks.isEmpty {
             model.archiveArticleLinks(input: input, refreshExisting: refreshExistingLinks)
         } else {
-            model.addAndArchiveCreators(
-                input: input,
-                mode: mode,
-                articleLimit: articleLimit,
-                resolveTotalCount: resolveTotalCount
-            )
+            model.addAndArchiveCreators(input: input, mode: mode, articleLimit: articleLimit, resolveTotalCount: resolveTotalCount)
         }
     }
 }
@@ -332,7 +178,8 @@ private struct StrictSingleLineTextField: NSViewRepresentable {
         let field = StrictSingleLineNSTextField()
         field.delegate = context.coordinator
         field.placeholderString = placeholder
-        field.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        field.font = .systemFont(ofSize: 13)
+        field.controlSize = .large
         field.bezelStyle = .roundedBezel
         field.isBezeled = true
         field.drawsBackground = true
@@ -464,215 +311,242 @@ private struct UnsafeSendableBox<Value>: @unchecked Sendable {
 struct ConnectionSetupView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var accessKey = ""
-    @State private var secretKey = ""
-    @State private var isTestingUPic = false
-    @State private var isTestingS3 = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(connectionTitle).font(.title2.bold())
-                    Text("所有正文在本地转换；S3/R2 凭证仅保存在这台 Mac 的钥匙串。")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .help("关闭连接设置")
-            }
+        VStack(spacing: 0) {
+            MarkXPaneHeader(title: "连接与存储", subtitle: "选择归档位置，以及图片和视频的保存方式。", symbol: "externaldrive")
             Divider()
-
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        setupSection(number: "1", title: "选择本地归档目录") {
-                            HStack {
-                                Text(model.archiveRoot?.path ?? "尚未选择")
-                                    .font(.callout.monospaced())
-                                    .lineLimit(2)
-                                    .foregroundStyle(model.archiveRoot == nil ? .secondary : .primary)
-                                Spacer()
-                                Button(model.archiveRoot == nil ? "选择目录" : "更换") { model.chooseArchiveFolder() }
-                                    .help(model.archiveRoot == nil
-                                          ? "选择 Markdown、快照和资料库的本地保存目录"
-                                          : "同步现有文章后切换到新的本地保存目录")
-                            }
-                        }
-                        .id("archive-directory")
-
-                        setupSection(number: "2", title: "选择图片和视频存储") {
-                            imageHostConfiguration
-                        }
-                        .id("image-host")
+                    VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
+                        MarkXSection(title: "归档位置", detail: "Markdown、原图、视频与资料库会一起保存。") {
+                            ArchiveFolderRow()
+                        }.id("archive-directory")
+                        MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }.id("image-host")
+                        MarkXInfoLine(symbol: "lock.shield", text: "正文在本机转换，访问密钥仅保存在 macOS 钥匙串。")
                     }
-                    .padding(.trailing, 8)
+                    .padding(MarkXInterface.inset)
                 }
                 .onAppear {
                     if case .imageHost = model.connectionSetupTarget {
                         Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(120))
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo("image-host", anchor: .top)
-                            }
+                            try? await Task.sleep(for: .milliseconds(100))
+                            proxy.scrollTo("image-host", anchor: .top)
                         }
                     }
                 }
             }
-
-            Divider()
-            HStack {
-                Image(systemName: "lock.shield")
-                Text("零遥测；Chrome 的 X 会话只复制到当前内存采集窗口；不把文章交给 AI。")
+            MarkXFooter(note: "配置保存在这台 Mac") {
+                Button("完成") { dismiss() }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .help("关闭连接与存储配置")
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
-        .padding(24)
-        .frame(width: 720, height: 640)
+        .background(MarkXInterface.canvas)
+        .frame(width: 680, height: MarkXInterface.sheetHeight(660))
+        .onExitCommand { dismiss() }
     }
+}
 
-    private var connectionTitle: String {
-        if case .imageHost = model.connectionSetupTarget { return "媒体存储设置" }
-        return "开始前配置"
-    }
-
-    @ViewBuilder
-    private var imageHostConfiguration: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("存储方式", selection: Binding(
-                get: { model.imageHostChoice },
-                set: { model.selectImageHost($0) }
-            )) {
-                ForEach(AppViewModel.ImageHostChoice.allCases) { choice in
-                    Text(choice.displayName).tag(choice)
-                }
+private struct ArchiveFolderRow: View {
+    @EnvironmentObject private var model: AppViewModel
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "folder").font(.system(size: 20)).foregroundStyle(.secondary).frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择归档目录").font(.system(size: 13, weight: .medium))
+                Text(model.archiveRoot?.path ?? "选择一个你方便管理和备份的文件夹")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             }
-            .pickerStyle(.segmented)
-            .help("默认只保存在归档目录；选择 uPic 时会同时保存本地备份与远程副本")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(model.archiveRoot?.path ?? "尚未选择")
+            Button(model.archiveRoot == nil ? "选择目录…" : "更换…") { model.chooseArchiveFolder() }
+                .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                .help("同步现有资料后切换归档位置，旧目录保留")
+        }
+    }
+}
 
-            if model.imageHostChoice == .local {
-                Label("无需额外配置，已可用", systemImage: "externaldrive.fill.badge.checkmark")
-                    .foregroundStyle(.green)
-                Text("图片保存到归档目录的 media/images，视频保存到 media/videos；Markdown 使用可随整个归档目录移动的相对路径。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if model.imageHostChoice == .uPic {
-                Label(model.upicCapability.detail, systemImage: model.upicCapability.isAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(model.upicCapability.isAvailable ? .green : .orange)
-                Text("会让 uPic 使用当前默认图床上传一张 1×1 无隐私测试图，再由本应用验证返回的 HTTPS 图片。验证后，每张图片和视频都会先保存到本地 media，再上传 uPic。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button(isTestingUPic ? "正在测试…" : "验证 uPic 默认图床") {
-                    isTestingUPic = true
-                    Task {
-                        _ = await model.testUPic()
-                        isTestingUPic = false
+struct MediaStorageConfiguration: View {
+    @EnvironmentObject private var model: AppViewModel
+    @State private var accessKey = ""
+    @State private var secretKey = ""
+    @State private var isTestingUPic = false
+    @State private var isTestingS3 = false
+    @State private var showsAdvanced = false
+    @State private var confirmsRemovingKeys = false
+    private var isTesting: Bool { isTestingUPic || isTestingS3 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { model.selectImageHost($0) })) {
+                Text("本地存储").tag(AppViewModel.ImageHostChoice.local)
+                Text("本地 + uPic").tag(AppViewModel.ImageHostChoice.uPic)
+                Text("S3 / R2").tag(AppViewModel.ImageHostChoice.s3)
+            }
+            .labelsHidden().pickerStyle(.segmented).disabled(isTesting)
+            .help("选择本地保存，或同时使用外部媒体存储")
+            Group {
+                switch model.imageHostChoice {
+                case .local:
+                    MarkXInfoLine(symbol: "internaldrive", text: "无需额外配置。原图和视频保存在归档目录内，整个目录可以一起移动或备份。")
+                case .uPic:
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("使用 uPic 当前选择的默认图床，原图和视频仍保留本地备份。")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                        MarkXInfoLine(symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
+                            text: model.upicCapability.detail, color: model.upicCapability.isAvailable ? .green : .orange)
+                        Button(isTestingUPic ? "正在验证…" : "验证 uPic 连接") {
+                            isTestingUPic = true
+                            Task { _ = await model.testUPic(); isTestingUPic = false }
+                        }
+                        .disabled(!model.upicCapability.isAvailable || isTesting)
+                        .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
+                        Text("验证会上传一张无隐私测试图片；本应用不读取 uPic 密钥。")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
+                case .s3: s3Fields
                 }
-                .disabled(!model.upicCapability.isAvailable || isTestingUPic || isTestingS3)
-                .help("上传一张无隐私测试图，验证 uPic 当前默认图床能返回可访问的 HTTPS 地址")
-                Text("Markdown 默认写入 uPic 的 HTTPS 链接，本地 media 文件作为备份和应用内预览来源。本应用不读取、复制或记录 uPic 的密钥。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else {
-                nativeS3Fields
             }
-
-            Label(model.imageHostDetail, systemImage: model.imageHostVerified ? "checkmark.seal.fill" : "exclamationmark.triangle")
-                .foregroundStyle(model.imageHostVerified ? .green : .orange)
+            Divider()
+            HStack(spacing: 7) {
+                if isTesting { ProgressView().controlSize(.small) }
+                else {
+                    Circle().fill(model.imageHostVerified ? Color.green : Color.orange).frame(width: 5, height: 5)
+                }
+                Text(isTesting ? "正在检查媒体上传与公开访问…" : model.imageHostDetail)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .confirmationDialog("移除已保存的 S3 / R2 密钥？", isPresented: $confirmsRemovingKeys, titleVisibility: .visible) {
+            Button("移除密钥", role: .destructive) { model.removeS3Credentials() }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("之后需要重新填写密钥才能上传。已有文章、本地媒体和远程文件会保留。")
         }
     }
 
-    @ViewBuilder
-    private var nativeS3Fields: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            TextField("Endpoint，例如 https://<account>.r2.cloudflarestorage.com", text: $model.s3Endpoint)
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: model.s3Endpoint) { _, _ in model.invalidateImageHostVerification() }
-            HStack {
-                TextField("Bucket", text: $model.s3Bucket)
-                TextField("Region（R2 填 auto）", text: $model.s3Region)
+    private var s3Fields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            field("Endpoint", placeholder: "https://<account>.r2.cloudflarestorage.com", text: $model.s3Endpoint)
+            HStack(alignment: .top, spacing: 12) {
+                field("存储桶 · Bucket", placeholder: "my-bucket", text: $model.s3Bucket)
+                field("公开访问地址", placeholder: "https://img.example.com", text: $model.s3PublicBaseURL)
             }
-            .textFieldStyle(.roundedBorder)
-            .onChange(of: model.s3Bucket) { _, _ in model.invalidateImageHostVerification() }
-            .onChange(of: model.s3Region) { _, _ in model.invalidateImageHostVerification() }
-            TextField("图片公开访问根地址，例如 https://img.example.com", text: $model.s3PublicBaseURL)
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: model.s3PublicBaseURL) { _, _ in model.invalidateImageHostVerification() }
-            TextField("对象路径前缀", text: $model.s3KeyPrefix)
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: model.s3KeyPrefix) { _, _ in model.invalidateImageHostVerification() }
-            HStack {
-                SecureField(model.hasS3Credentials ? "Access Key（留空使用已保存值）" : "Access Key", text: $accessKey)
-                SecureField(model.hasS3Credentials ? "Secret Key（留空使用已保存值）" : "Secret Key", text: $secretKey)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Access Key").font(.system(size: 11, weight: .medium))
+                    SecureField(model.hasS3Credentials ? "留空使用已保存值" : "输入 Access Key", text: $accessKey)
+                        .textFieldStyle(.roundedBorder).accessibilityLabel("Access Key")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Secret Key").font(.system(size: 11, weight: .medium))
+                    SecureField(model.hasS3Credentials ? "留空使用已保存值" : "输入 Secret Key", text: $secretKey)
+                        .textFieldStyle(.roundedBorder).accessibilityLabel("Secret Key")
+                }
             }
-            .textFieldStyle(.roundedBorder)
-            Text("密钥仅保存在 macOS 钥匙串；非敏感的 endpoint、bucket 和公开域名保存在本机设置。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button(isTestingS3 ? "正在上传测试图…" : "保存并测试 S3/R2") {
+            DisclosureGroup("高级选项", isExpanded: $showsAdvanced) {
+                HStack(alignment: .top, spacing: 12) {
+                    field("Region", placeholder: "R2 使用 auto", text: $model.s3Region)
+                    field("对象路径前缀", placeholder: "x-archive", text: $model.s3KeyPrefix)
+                }.padding(.top, 10)
+            }
+            .font(.system(size: 12)).help("查看区域和对象路径前缀")
+            HStack(spacing: 12) {
+                Button(isTestingS3 ? "正在验证…" : "保存并验证连接") {
                     isTestingS3 = true
                     Task {
-                        let success = await model.saveAndTestS3(accessKey: accessKey, secretKey: secretKey)
-                        if success { accessKey = ""; secretKey = "" }
+                        if await model.saveAndTestS3(accessKey: accessKey, secretKey: secretKey) { accessKey = ""; secretKey = "" }
                         isTestingS3 = false
                     }
                 }
-                .disabled(isTestingS3 || model.s3Endpoint.isEmpty || model.s3PublicBaseURL.isEmpty)
-                .help("将 S3/R2 密钥安全保存到钥匙串，并上传测试图验证公开访问")
+                .disabled(isTesting || model.s3Endpoint.isEmpty || model.s3PublicBaseURL.isEmpty)
+                .help("将凭证保存到钥匙串，并上传测试图片验证公开访问")
+                Spacer()
                 if model.hasS3Credentials {
-                    Button("移除已保存密钥", role: .destructive) { model.removeS3Credentials() }
-                        .help("从 macOS 钥匙串删除已保存的 S3/R2 Access Key 和 Secret Key")
+                    Button("移除密钥…", role: .destructive) { confirmsRemovingKeys = true }
+                        .disabled(isTesting).help("移除本机保存的 S3 / R2 凭证")
                 }
             }
         }
+        .controlSize(.regular)
     }
 
-    private func setupSection<Content: View>(number: String, title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Text(number)
-                .font(.headline)
-                .frame(width: 30, height: 30)
-                .background(.tint, in: Circle())
-                .foregroundStyle(.white)
-            VStack(alignment: .leading, spacing: 10) {
-                Text(title).font(.headline)
-                content()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 11, weight: .medium))
+            TextField(placeholder, text: text).textFieldStyle(.roundedBorder).accessibilityLabel(title)
+                .onChange(of: text.wrappedValue) { _, _ in model.invalidateImageHostVerification() }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppViewModel
+    @State private var tab = 0
 
     var body: some View {
-        Form {
-            Section("本地归档") {
-                LabeledContent("目录", value: model.archiveRoot?.path ?? "未选择")
-                Button("选择或更换目录") { model.chooseArchiveFolder() }
-                    .help("同步现有文章后选择新的本地归档目录")
+        TabView(selection: $tab) {
+            pane(title: "通用", subtitle: "管理本地资料库与 X 连接。", symbol: "slider.horizontal.3") {
+                MarkXSection(title: "本地资料库") { ArchiveFolderRow() }
+                MarkXSection(title: "X 页面连接") {
+                    MarkXInfoLine(symbol: ChromeXSessionReader.hasLocalChromeProfile() ? "checkmark.circle" : "exclamationmark.circle",
+                        text: ChromeXSessionReader.hasLocalChromeProfile() ? "可复用本机 Chrome 的 X 登录状态" : "请先在本机 Chrome 登录 x.com",
+                        color: ChromeXSessionReader.hasLocalChromeProfile() ? .green : .orange)
+                    Text("下载在后台进行，文章只保存在你选择的位置。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
             }
-            Section("X 页面登录") {
-                LabeledContent("Chrome", value: ChromeXSessionReader.hasLocalChromeProfile() ? "可自动导入" : "未找到本地配置")
-                Text("博主发现直接读取 /articles 专属列表，完整历史通过自动滚动列表获取；不需要 X Developer API。")
-                    .font(.caption).foregroundStyle(.secondary)
+            .tabItem { Label("通用", systemImage: "slider.horizontal.3") }.tag(0)
+            pane(title: "媒体与存储", subtitle: "选择图片、视频的保存方式，管理本地缓存。", symbol: "externaldrive") {
+                MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }
+                MarkXSection(title: "缓存管理", detail: "保留完整媒体备份，整理已经重复保存的隐藏缓存。") {
+                    Button("整理重复媒体缓存…") { model.cleanVerifiedMediaCache() }
+                        .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
+                        .help("核对内容后移除已有完整备份的重复缓存")
+                }
             }
-            Section("媒体存储") {
-                LabeledContent("当前方式", value: model.imageHostChoice.displayName)
-                LabeledContent("状态", value: model.imageHostDetail)
-                Button("打开连接配置") { model.showingConnectionSetup = true }
-                    .help("打开归档目录与媒体存储设置")
+            .tabItem { Label("存储", systemImage: "externaldrive") }.tag(1)
+            pane(title: "隐私与关于", subtitle: "你的资料，由你掌握。", symbol: "hand.raised") {
+                MarkXSection(title: "隐私") {
+                    privacyRow("本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
+                    Divider()
+                    privacyRow("会话仅在内存使用", detail: "仅复用 Chrome 中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
+                    Divider()
+                    privacyRow("外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
+                }
+                MarkXSection(title: "MarkX") {
+                    LabeledContent("版本", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "开发版本") · Build \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—")")
+                        .font(.system(size: 12))
+                    Text("原生 X 长文归档工具 · © 2026 得否").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
-            Section("隐私") {
-                Text("软件不收集遥测，不上传诊断日志。文章链接与正文仅从你在应用内打开的 X 页面读取并在本机转换，不调用 X API；图片和视频只发送到你明确选择并测试通过的存储。")
+            .tabItem { Label("隐私与关于", systemImage: "hand.raised") }.tag(2)
+        }
+        .background(MarkXInterface.canvas)
+        .frame(width: 700, height: 620)
+    }
+
+    private func pane<Content: View>(title: String, subtitle: String, symbol: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            MarkXPaneHeader(title: title, subtitle: subtitle, symbol: symbol)
+            ScrollView {
+                VStack(alignment: .leading, spacing: MarkXInterface.spacing) { content() }
+                    .padding(.horizontal, MarkXInterface.inset).padding(.bottom, MarkXInterface.inset)
             }
         }
-        .formStyle(.grouped)
-        .padding()
+    }
+
+    private func privacyRow(_ title: String, detail: String, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 12, weight: .medium))
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }

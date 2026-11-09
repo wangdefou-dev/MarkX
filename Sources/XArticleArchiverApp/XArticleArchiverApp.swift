@@ -7,12 +7,15 @@ struct XArticleArchiverApp: App {
 
     var body: some Scene {
         Window("MarkX", id: "main") {
-            RootView()
-                .environmentObject(model)
-                .frame(minWidth: 1_080, minHeight: 680)
-                .onAppear {
-                    MarkXWindowPolicy.enforceSingleMainWindow()
-                }
+            #if DEBUG
+            if InterfacePreviewGallery.isEnabled {
+                InterfacePreviewGallery().environmentObject(model)
+            } else {
+                libraryWindow
+            }
+            #else
+            libraryWindow
+            #endif
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 1_280, height: 780)
@@ -29,7 +32,14 @@ struct XArticleArchiverApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
-                .frame(width: 640, height: 560)
+                .frame(width: 700, height: 620)
         }
+    }
+
+    private var libraryWindow: some View {
+        RootView()
+            .environmentObject(model)
+            .frame(minWidth: 1_080, minHeight: 680)
+            .onAppear { MarkXWindowPolicy.enforceSingleMainWindow() }
     }
 }

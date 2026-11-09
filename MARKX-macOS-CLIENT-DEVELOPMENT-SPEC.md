@@ -24,8 +24,8 @@
 
 ### 3.1 字号
 
-- 侧边栏分组标题：略大、半粗，当前基线为 14px 左右。
-- 侧边栏资料库条目和博主名称：使用系统默认正文级别，不额外写死更大的字号。
+- 侧边栏分组标题：12px 半粗，使用 secondary；条目 13px，博主名称 12px，用户名与分数 10–11px。
+- 侧边栏资料库条目和博主名称：使用系统默认正文级别，避免通过放大条目强化层级。
 - 博主 ID、文章数量、分数和状态辅助信息：使用 `caption`；数量使用 `monospacedDigit()`，保持紧凑稳定。
 - 文章列表标题：`headline`；作者、类型、发布时间和状态说明：`caption`。
 - 文章详情标题：`title2` 加粗；作者、类型、发布时间：`subheadline` 和 secondary。
@@ -123,3 +123,15 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - [ ] 应用仓库和官网仓库已分别推送，生产官网已部署。
 - [ ] `/Applications/MarkX.app` 已由最终 DMG 覆盖并启动，版本和运行路径已核对。
 - [ ] 旧版 App 已移入废纸篓，失败环节和残留产物已如实记录。
+
+
+## 9. 界面布局与视觉验收（0.3.38）
+
+- 侧边栏下载入口保持单行约 36px 高，目录与连接状态共用紧凑底部区域；列表数字右对齐，不为每项增加胶囊底色。
+- 配置与结果弹窗统一使用 `MarkXPaneHeader`、`MarkXSection`、`MarkXFooter`；内容区可滚动，底栏固定，不在标题区放置完成按钮。
+- 输入使用可见标签，说明只保留与决策相关的内容；危险操作使用系统确认，不自制替代系统警告的对话框。
+- 设置使用原生分类标签；成功、待处理和失败维持语义色，表面使用适配浅色/深色的中性颜色。
+- 进度阶段切换只改变可见性，必须保持隐藏 WebKit 及任务挂载；Escape 与关闭窗口一样只隐藏，停止要点击明确的停止按钮。
+- 发布前用独立 Debug 预览包检查布局，并在最终安装版确认侧边栏、实际弹窗、设置分类、长路径及字体缩放。
+
+参考：[Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)、[Settings](https://developer.apple.com/design/human-interface-guidelines/settings)、[Sheets](https://developer.apple.com/design/human-interface-guidelines/sheets)、[Buttons](https://developer.apple.com/design/human-interface-guidelines/buttons)。
