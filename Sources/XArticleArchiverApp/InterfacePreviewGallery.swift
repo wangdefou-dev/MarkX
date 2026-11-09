@@ -2,7 +2,8 @@
 import SwiftUI
 
 /// A separate debug bundle uses this gallery to review layouts with fixtures.
-/// It never bootstraps a real archive, imports Chrome cookies, or starts jobs.
+/// It never bootstraps a real archive or starts jobs. Browser settings still use
+/// real local probes so data-access failures can be reviewed accurately.
 struct InterfacePreviewGallery: View {
     static var isEnabled: Bool { Bundle.main.object(forInfoDictionaryKey: "MarkXInterfacePreview") as? Bool == true }
     private enum Page: String, CaseIterable {

@@ -314,7 +314,7 @@ struct ConnectionSetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: "连接与存储", subtitle: "管理 Chrome 连接、归档位置，以及图片和视频的保存方式。", symbol: "externaldrive")
+            MarkXPaneHeader(title: "连接与存储", subtitle: "管理浏览器会话、归档位置，以及图片和视频的保存方式。", symbol: "externaldrive")
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -322,7 +322,7 @@ struct ConnectionSetupView: View {
                         MarkXSection(title: "归档位置", detail: "Markdown、原图、视频与资料库会一起保存。") {
                             ArchiveFolderRow()
                         }.id("archive-directory")
-                        MarkXSection(title: "Chrome 与 X 登录") { ChromeConnectionConfiguration() }.id("chrome-session")
+                        MarkXSection(title: "浏览器与 X 登录") { BrowserConnectionConfiguration() }.id("browser-session")
                         MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }.id("image-host")
                         MarkXInfoLine(symbol: "lock.shield", text: "正文在本机转换，访问密钥仅保存在 macOS 钥匙串。")
                     }
@@ -331,7 +331,7 @@ struct ConnectionSetupView: View {
                 .onAppear {
                     let target: String? = switch model.connectionSetupTarget {
                     case .overview: nil
-                    case .chrome: "chrome-session"
+                    case .browser: "browser-session"
                     case .imageHost: "image-host"
                     }
                     if let target {
@@ -354,27 +354,58 @@ struct ConnectionSetupView: View {
     }
 }
 
-private struct ChromeConnectionConfiguration: View {
+private struct BrowserConnectionConfiguration: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
+    @State private var isChecking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            MarkXInfoLine(symbol: model.hasChromeProfile ? "checkmark.circle" : "exclamationmark.circle",
-                text: model.hasChromeProfile ? "已检测到本机 Chrome 配置，下载时会复用其中的 X 登录状态。" : "请先在本机 Chrome 登录 x.com，登录后返回 MarkX。",
-                color: model.hasChromeProfile ? .green : .orange)
-            HStack(spacing: 12) {
-                Button("打开 Chrome 登录 X", systemImage: "arrow.up.right.square") { model.openChromeXLogin() }
-                    .help("在本机 Chrome 打开 X 登录页面")
-                Button("刷新状态", systemImage: "arrow.clockwise") { model.refreshChromeStatus() }
-                    .help("重新检查本机 Chrome 配置")
+            Picker("使用浏览器", selection: $model.preferredBrowserID) {
+                Text("自动查找已登录的配置").tag("automatic")
+                ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
             }
-            Text("登录状态只在本机使用；MarkX 不会保存你的 X 密码。")
+            .font(.system(size: 12))
+            .disabled(isChecking)
+            MarkXInfoLine(symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
+                text: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
+                color: model.hasBrowserSessionData ? .green : .orange)
+            HStack(spacing: 12) {
+                Button(isChecking ? "正在验证…" : "验证会话读取") {
+                    isChecking = true
+                    Task { await model.verifyBrowserSession(); isChecking = false }
+                }
+                .disabled(isChecking || model.isRefreshingBrowserStatus)
+                .help("仅在本机解密并验证 X 登录数据，不发起下载或修改浏览器")
+                Button("刷新状态", systemImage: "arrow.clockwise") { model.refreshBrowserStatus() }
+                    .disabled(model.isRefreshingBrowserStatus || isChecking)
+                    .help("重新检查全部受支持的浏览器与配置")
+            }
+            HStack(spacing: 12) {
+                Button("选择浏览器数据目录…") { model.chooseBrowserDataDirectory() }
+                    .disabled(isChecking)
+                    .help("为自定义目录或 macOS 读取受限的目录保存访问授权")
+                Button("在浏览器打开 X", systemImage: "arrow.up.right.square") { model.openBrowserXLogin() }
+            }
+            if let message = model.browserSessionCheckMessage {
+                Text(message).font(.system(size: 11)).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            if !model.browserSessionProbe.profiles.isEmpty {
+                DisclosureGroup("检测到的配置（\(model.browserSessionProbe.profiles.count)）") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(model.browserSessionProbe.profiles) { profile in
+                            Text(profile.description + (profile.hasLoginCookies ? " · 有 X 登录数据" : " · 未检测到 X 登录数据"))
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }.padding(.top, 8)
+                }.font(.system(size: 11))
+            }
+            Text("兼容 Chrome、Edge、Brave、Arc、Vivaldi、Opera、Chromium、夸克、豆包及 Firefox。仅读取 X 会话，不保存密码或 Cookie。Safari 暂不支持自动导入。")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .onAppear { model.refreshChromeStatus() }
+        .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.refreshChromeStatus() }
+            if phase == .active { model.refreshBrowserStatus() }
         }
     }
 }
@@ -524,7 +555,7 @@ struct SettingsView: View {
             pane(title: "通用", subtitle: "管理本地资料库与 X 连接。", symbol: "slider.horizontal.3") {
                 MarkXSection(title: "本地资料库") { ArchiveFolderRow() }
                 MarkXSection(title: "X 页面连接") {
-                    ChromeConnectionConfiguration()
+                    BrowserConnectionConfiguration()
                     Text("下载在后台进行，文章只保存在你选择的位置。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
@@ -543,7 +574,7 @@ struct SettingsView: View {
                 MarkXSection(title: "隐私") {
                     privacyRow("本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
                     Divider()
-                    privacyRow("会话仅在内存使用", detail: "仅复用 Chrome 中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
+                    privacyRow("会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
                     Divider()
                     privacyRow("外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
                 }

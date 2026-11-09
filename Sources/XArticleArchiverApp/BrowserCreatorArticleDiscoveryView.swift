@@ -97,7 +97,7 @@ private struct CreatorArticleListSnapshot: Decodable {
 private final class BrowserCreatorArticleDiscoveryController: NSObject, ObservableObject, WKNavigationDelegate {
     @Published var isLoading = false
     @Published var isDiscovering = false
-    @Published var isImportingChromeSession = false
+    @Published var isImportingBrowserSession = false
     @Published var pageStatus = "正在准备博主文章列表…"
     @Published var currentURL: URL?
     @Published var discoveredItems: [CreatorArticleListItem] = []
@@ -107,7 +107,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
     private(set) var webView: WKWebView
     private var currentListURL: URL?
     private var creatorsSinceRecycle = 0
-    private var hasImportedChromeSession = false
+    private var hasImportedBrowserSession = false
 
     override init() {
         webView = IsolatedXWebView.make()
@@ -119,7 +119,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         IsolatedXWebView.retire(webView)
         webView = IsolatedXWebView.make()
         webView.navigationDelegate = self
-        hasImportedChromeSession = false
+        hasImportedBrowserSession = false
         creatorsSinceRecycle = 0
         currentListURL = nil
         webViewEpoch += 1
@@ -140,23 +140,24 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         webView.reload()
     }
 
-    func importChromeSession() async throws -> ChromeXSession {
-        guard !isImportingChromeSession else {
-            throw BrowserArticleCaptureError.pageNotReady("正在从 Chrome 导入登录状态")
+    func importBrowserSession() async throws -> ChromeXSession {
+        guard !isImportingBrowserSession else {
+            throw BrowserArticleCaptureError.pageNotReady("正在从本机浏览器导入登录状态")
         }
-        isImportingChromeSession = true
-        pageStatus = "正在读取 Chrome 中的 X 登录状态…"
-        defer { isImportingChromeSession = false }
+        isImportingBrowserSession = true
+        pageStatus = "正在读取本机浏览器中的 X 登录状态…"
+        defer { isImportingBrowserSession = false }
 
         let session = try await Task.detached(priority: .userInitiated) {
-            try ChromeXSessionReader.readActiveSession()
+            try BrowserSessionAccess.readActiveSession()
         }.value
+        try Task.checkCancellation()
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
         for cookie in session.cookies {
             await cookieStore.setCookie(cookie)
         }
-        hasImportedChromeSession = true
-        pageStatus = "已导入 Chrome「\(session.profileName)」登录状态，正在刷新 Articles 列表…"
+        hasImportedBrowserSession = true
+        pageStatus = "已导入 \(session.sourceDescription)登录状态，正在刷新 Articles 列表…"
         if let currentListURL {
             webView.load(URLRequest(
                 url: currentListURL,
@@ -184,11 +185,11 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
             await Task.yield()
         }
         load(request)
-        if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
-            let session = try await importChromeSession()
-            pageStatus = "已使用 Chrome「\(session.profileName)」登录状态，正在只读取 Articles 列表…"
-        } else if !hasImportedChromeSession {
-            pageStatus = "未找到 Chrome 配置，正在尝试读取公开 Articles 列表…"
+        if !hasImportedBrowserSession, await BrowserSessionAccess.hasLocalBrowserData() {
+            let session = try await importBrowserSession()
+            pageStatus = "已使用 \(session.sourceDescription)登录状态，正在只读取 Articles 列表…"
+        } else if !hasImportedBrowserSession {
+            pageStatus = "未发现可读取的本机浏览器配置，正在尝试读取公开 Articles 列表…"
         }
         creatorsSinceRecycle += 1
         try await Task.sleep(for: .milliseconds(700))
@@ -314,7 +315,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                     try await scrollForMore()
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
                     lastReason = detail
-                    pageStatus = "已使用 Chrome 登录状态，正在等待 Articles 列表…"
+                    pageStatus = "已使用浏览器登录状态，正在等待 Articles 列表…"
                 }
             }
             try await Task.sleep(for: .milliseconds(750))

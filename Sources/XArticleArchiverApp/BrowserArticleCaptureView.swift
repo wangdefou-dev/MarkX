@@ -7,7 +7,7 @@ import XArticleArchiverCore
 private final class BrowserArticleCaptureController: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published var isLoading = false
     @Published var isCapturing = false
-    @Published var isImportingChromeSession = false
+    @Published var isImportingBrowserSession = false
     @Published var isAutomaticCaptureRunning = false
     @Published var pageStatus = "正在准备 X 页面…"
     private var lastPageStatusPublish = Date.distantPast
@@ -17,7 +17,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
 
     private(set) var webView: WKWebView
     private var pagesSinceRecycle = 0
-    private var hasImportedChromeSession = false
+    private var hasImportedBrowserSession = false
 
     var visibleWebView: WKWebView { popupWebView ?? webView }
     var canGoBack: Bool { visibleWebView.canGoBack }
@@ -37,7 +37,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.customUserAgent = nil
-        hasImportedChromeSession = false
+        hasImportedBrowserSession = false
         pagesSinceRecycle = 0
         currentArticleURL = nil
         webViewEpoch += 1
@@ -74,24 +74,25 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         }
     }
 
-    func importChromeSession() async throws -> ChromeXSession {
-        guard !isImportingChromeSession else {
-            throw BrowserArticleCaptureError.pageNotReady("正在从 Chrome 导入登录状态")
+    func importBrowserSession() async throws -> ChromeXSession {
+        guard !isImportingBrowserSession else {
+            throw BrowserArticleCaptureError.pageNotReady("正在从本机浏览器导入登录状态")
         }
-        isImportingChromeSession = true
-        pageStatus = "正在读取 Chrome 中的 X 登录状态…"
-        defer { isImportingChromeSession = false }
+        isImportingBrowserSession = true
+        pageStatus = "正在读取本机浏览器中的 X 登录状态…"
+        defer { isImportingBrowserSession = false }
 
         let session = try await Task.detached(priority: .userInitiated) {
-            try ChromeXSessionReader.readActiveSession()
+            try BrowserSessionAccess.readActiveSession()
         }.value
+        try Task.checkCancellation()
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
         for cookie in session.cookies {
             await cookieStore.setCookie(cookie)
         }
         closeLoginWindow(reloadArticle: false)
-        hasImportedChromeSession = true
-        pageStatus = "已导入 Chrome「\(session.profileName)」的 X 登录状态"
+        hasImportedBrowserSession = true
+        pageStatus = "已导入 \(session.sourceDescription)的 X 登录状态"
         return session
     }
 
@@ -174,12 +175,12 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             await Task.yield()
         }
         var didJustImportCookies = false
-        if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
-            let session = try await importChromeSession()
-            pageStatus = "已自动使用 Chrome「\(session.profileName)」登录状态，正在等待完整排版…"
+        if !hasImportedBrowserSession, await BrowserSessionAccess.hasLocalBrowserData() {
+            let session = try await importBrowserSession()
+            pageStatus = "已自动使用 \(session.sourceDescription)登录状态，正在等待完整排版…"
             didJustImportCookies = true
-        } else if !hasImportedChromeSession {
-            pageStatus = "未找到 Chrome 配置，正在尝试读取公开文章…"
+        } else if !hasImportedBrowserSession {
+            pageStatus = "未发现可读取的本机浏览器配置，正在尝试读取公开文章…"
         }
         load(request)
         pagesSinceRecycle += 1
@@ -226,7 +227,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     lastNotReadyReason = detail
                     previousPayload = nil
                     stableMatches = 0
-                    setPageStatus("已使用 Chrome 登录状态，正在等待正文完整加载…")
+                    setPageStatus("已使用浏览器登录状态，正在等待正文完整加载…")
                 }
             }
             try await Task.sleep(
@@ -238,11 +239,11 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     }
 
     private func captureDisclosure(_ request: BrowserCaptureRequest) async throws -> BrowserArticleCapturePayload {
-        if !hasImportedChromeSession, ChromeXSessionReader.hasLocalChromeProfile() {
-            let session = try await importChromeSession()
-            pageStatus = "已自动使用 Chrome「\(session.profileName)」登录状态，正在核对商单内容…"
-        } else if !hasImportedChromeSession {
-            pageStatus = "未找到 Chrome 配置，正在尝试核对公开文章的商单标记…"
+        if !hasImportedBrowserSession, await BrowserSessionAccess.hasLocalBrowserData() {
+            let session = try await importBrowserSession()
+            pageStatus = "已自动使用 \(session.sourceDescription)登录状态，正在核对商单内容…"
+        } else if !hasImportedBrowserSession {
+            pageStatus = "未发现可读取的本机浏览器配置，正在尝试核对公开文章的商单标记…"
         }
         load(request)
         try await Task.sleep(for: .milliseconds(700))
@@ -294,7 +295,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         } else {
             pageStatus = isAutomaticCaptureRunning
                 ? "页面已加载，正在自动检查完整排版…"
-                : "页面已加载，可重新导入 Chrome 登录状态或立即保存。"
+                : "页面已加载，可重新导入浏览器登录状态或立即保存。"
         }
     }
 

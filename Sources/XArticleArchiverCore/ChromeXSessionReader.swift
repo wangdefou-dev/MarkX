@@ -20,7 +20,7 @@ public enum ChromeXSessionError: LocalizedError, Sendable {
         case .cookieDatabaseNotFound:
             "没有找到 Chrome Cookie 数据库"
         case .cookieDatabase(let detail):
-            "无法读取 Chrome 的 X 登录状态：\(detail)"
+            "无法读取浏览器的 X 登录状态：\(detail)"
         case .safeStorageUnavailable(let status):
             if status == errSecUserCanceled {
                 "已取消访问 Chrome 安全存储"
@@ -32,7 +32,7 @@ public enum ChromeXSessionError: LocalizedError, Sendable {
         case .invalidCookie:
             "Chrome 返回了无法导入的 X Cookie"
         case .noAuthenticatedXSession:
-            "Chrome 当前没有可用的 X 登录状态；请先在 Chrome 打开 x.com 并确认已登录"
+            "当前配置没有可导入的 X 会话，请检查设置中的浏览器和配置来源"
         }
     }
 }
@@ -40,15 +40,20 @@ public enum ChromeXSessionError: LocalizedError, Sendable {
 public struct ChromeXSession: Sendable {
     public var profileName: String
     public var cookies: [HTTPCookie]
+    public var browserName: String
+    public var browserBundleIdentifier: String
+    public var sourceDescription: String { "\(browserName)「\(profileName)」" }
 
-    public init(profileName: String, cookies: [HTTPCookie]) {
+    public init(profileName: String, cookies: [HTTPCookie], browserName: String = "Chrome", browserBundleIdentifier: String = "com.google.Chrome") {
         self.profileName = profileName
         self.cookies = cookies
+        self.browserName = browserName
+        self.browserBundleIdentifier = browserBundleIdentifier
     }
 }
 
-/// Reads only X/Twitter session cookies from the currently active local Chrome
-/// profile. Values are decrypted in memory and are never logged or persisted by
+/// Chromium cookie decoder retained behind the multi-browser session reader.
+/// Reads only X/Twitter cookies from one chosen profile. Values are decrypted in memory and are never logged or persisted by
 /// this component. Google and every unrelated site are excluded at the SQL
 /// query boundary.
 public enum ChromeXSessionReader {
@@ -64,25 +69,14 @@ public enum ChromeXSessionReader {
         chromeRoot: URL = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Application Support/Google/Chrome", directoryHint: .isDirectory)
     ) -> Bool {
-        guard let profile = try? activeProfile(at: chromeRoot) else { return false }
-        return FileManager.default.fileExists(atPath: cookieDatabaseURL(profileURL: profile.url).path)
+        !BrowserXSessionReader.probe(browsers: [.chrome], customRoots: ["chrome": chromeRoot]).profiles.isEmpty
     }
 
     public static func readActiveSession(
         chromeRoot: URL = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Application Support/Google/Chrome", directoryHint: .isDirectory)
     ) throws -> ChromeXSession {
-        let profile = try activeProfile(at: chromeRoot)
-        let databaseURL = cookieDatabaseURL(profileURL: profile.url)
-        guard FileManager.default.fileExists(atPath: databaseURL.path) else {
-            throw ChromeXSessionError.cookieDatabaseNotFound
-        }
-        let password = try chromeSafeStoragePassword()
-        return try readSession(
-            databaseURL: databaseURL,
-            profileName: profile.name,
-            safeStoragePassword: password
-        )
+        try BrowserXSessionReader.readActiveSession(browsers: [.chrome], customRoots: ["chrome": chromeRoot])
     }
 
     static func readSession(
@@ -99,16 +93,18 @@ public enum ChromeXSessionReader {
             throw ChromeXSessionError.cookieDatabase(detail)
         }
         defer { sqlite3_close(database) }
+        sqlite3_busy_timeout(database, 1_500)
 
         let databaseVersion = try readDatabaseVersion(database)
         let placeholders = allowedHosts.map { _ in "?" }.joined(separator: ",")
         let names = allowedCookieNames.sorted()
         let namePlaceholders = names.map { _ in "?" }.joined(separator: ",")
+        let partitionClause = BrowserXSessionReader.tableColumns(database, table: "cookies").contains("top_frame_site_key") ? " AND top_frame_site_key = ''" : ""
         let sql = """
         SELECT host_key, name, value, encrypted_value, path, expires_utc,
                is_secure, is_httponly, samesite
         FROM cookies
-        WHERE host_key IN (\(placeholders)) AND name IN (\(namePlaceholders));
+        WHERE host_key IN (\(placeholders)) AND name IN (\(namePlaceholders))\(partitionClause);
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
@@ -125,22 +121,29 @@ public enum ChromeXSessionReader {
         }
 
         var cookies: [HTTPCookie] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            defer { step = sqlite3_step(statement) }
             guard let host = text(statement, 0),
                   let name = text(statement, 1),
                   let path = text(statement, 4) else { continue }
+            let chromeExpiry = sqlite3_column_int64(statement, 5)
+            if chromeExpiry > 0, TimeInterval(chromeExpiry) / 1_000_000 - chromiumEpochOffset <= Date().timeIntervalSince1970 { continue }
             let clearValue = text(statement, 2) ?? ""
             let value: String
             if !clearValue.isEmpty {
                 value = clearValue
             } else {
                 let encrypted = data(statement, 3)
-                value = try decryptCookieValue(
+                do { value = try decryptCookieValue(
                     encrypted,
                     host: host,
                     password: safeStoragePassword,
                     databaseVersion: databaseVersion
-                )
+                ) } catch {
+                    if name == "auth_token" || name == "ct0" { throw error }
+                    continue
+                }
             }
             guard !value.isEmpty else { continue }
 
@@ -161,7 +164,6 @@ public enum ChromeXSessionReader {
             case 2: properties[HTTPCookiePropertyKey("SameSite")] = "Strict"
             default: break
             }
-            let chromeExpiry = sqlite3_column_int64(statement, 5)
             if chromeExpiry > 0 {
                 let unixSeconds = TimeInterval(chromeExpiry) / 1_000_000 - chromiumEpochOffset
                 properties[.expires] = Date(timeIntervalSince1970: unixSeconds)
@@ -171,6 +173,7 @@ public enum ChromeXSessionReader {
             }
             cookies.append(cookie)
         }
+        guard step == SQLITE_DONE else { throw ChromeXSessionError.cookieDatabase(String(cString: sqlite3_errmsg(database))) }
 
         guard cookies.contains(where: { $0.name == "auth_token" && $0.domain.contains("x.com") }) else {
             throw ChromeXSessionError.noAuthenticatedXSession
@@ -241,61 +244,6 @@ public enum ChromeXSessionReader {
             throw ChromeXSessionError.decryptionFailed
         }
         return value
-    }
-
-    private static func activeProfile(at root: URL) throws -> (url: URL, name: String) {
-        let localStateURL = root.appending(path: "Local State")
-        guard let data = try? Data(contentsOf: localStateURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let profile = json["profile"] as? [String: Any] else {
-            throw ChromeXSessionError.chromeProfileNotFound
-        }
-        let directoryName = (profile["last_used"] as? String).flatMap(safeProfileDirectory) ?? "Default"
-        let profileURL = root.appending(path: directoryName, directoryHint: .isDirectory)
-        guard FileManager.default.fileExists(atPath: profileURL.path) else {
-            throw ChromeXSessionError.chromeProfileNotFound
-        }
-        let profileName: String
-        if let infoCache = profile["info_cache"] as? [String: Any],
-           let info = infoCache[directoryName] as? [String: Any],
-           let name = info["name"] as? String,
-           !name.isEmpty {
-            profileName = name
-        } else {
-            profileName = directoryName
-        }
-        return (profileURL, profileName)
-    }
-
-    private static func safeProfileDirectory(_ value: String) -> String? {
-        guard !value.isEmpty,
-              !value.contains("/"),
-              !value.contains("\\"),
-              value != ".",
-              value != ".." else { return nil }
-        return value
-    }
-
-    private static func cookieDatabaseURL(profileURL: URL) -> URL {
-        let current = profileURL.appending(path: "Cookies")
-        if FileManager.default.fileExists(atPath: current.path) { return current }
-        return profileURL.appending(path: "Network/Cookies")
-    }
-
-    private static func chromeSafeStoragePassword() throws -> Data {
-        do {
-            guard let password = try KeychainStore.read(
-                account: "Chrome",
-                service: "Chrome Safe Storage"
-            ), !password.isEmpty else {
-                throw ChromeXSessionError.safeStorageUnavailable(errSecItemNotFound)
-            }
-            return Data(password.utf8)
-        } catch let error as ChromeXSessionError {
-            throw error
-        } catch {
-            throw ChromeXSessionError.safeStorageUnavailable(errSecAuthFailed)
-        }
     }
 
     private static func readDatabaseVersion(_ database: OpaquePointer) throws -> Int {

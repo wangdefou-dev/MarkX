@@ -48,7 +48,7 @@ final class AppViewModel: ObservableObject {
 
     enum ConnectionSetupTarget {
         case overview
-        case chrome
+        case browser
         case imageHost
     }
 
@@ -96,7 +96,18 @@ final class AppViewModel: ObservableObject {
     @Published var showingSyncAllConfiguration = false
     @Published var showingConnectionSetup = false
     @Published var connectionSetupTarget: ConnectionSetupTarget = .overview
-    @Published private(set) var hasChromeProfile = ChromeXSessionReader.hasLocalChromeProfile()
+    @Published private(set) var browserSessionProbe = BrowserSessionProbe()
+    @Published private(set) var isRefreshingBrowserStatus = false
+    @Published var browserSessionCheckMessage: String?
+    @Published var preferredBrowserID = UserDefaults.standard.string(forKey: BrowserSessionAccess.preferredBrowserKey) ?? "automatic" {
+        didSet {
+            defaults.set(preferredBrowserID, forKey: BrowserSessionAccess.preferredBrowserKey)
+            browserSessionCheckMessage = nil
+            refreshBrowserStatus()
+        }
+    }
+    private var browserProbeTask: Task<Void, Never>?
+    var hasBrowserSessionData: Bool { !browserSessionProbe.loggedInProfiles.isEmpty }
     @Published var downloadSheetPrefill = ""
     @Published var downloadSheetUsesArticleLinks = false
     @Published var showingCreatorArticleDiscovery = false
@@ -453,7 +464,7 @@ final class AppViewModel: ObservableObject {
 
     var configurationSummary: String {
         let folder = archiveRoot?.lastPathComponent ?? "未选择归档目录"
-        let x = ChromeXSessionReader.hasLocalChromeProfile() ? "Chrome X 可用" : "Chrome X 未就绪"
+        let x = hasBrowserSessionData ? "浏览器 X 登录已检测" : "浏览器登录需检查"
         let storage = imageHostVerified ? "媒体存储已就绪" : "媒体存储未验证"
         return "\(x) · \(storage) · \(folder)"
     }
@@ -515,17 +526,60 @@ final class AppViewModel: ObservableObject {
     }
 
     func presentConnectionSetup(focusing target: ConnectionSetupTarget = .overview) {
-        refreshChromeStatus()
+        refreshBrowserStatus()
         connectionSetupTarget = target
         showingConnectionSetup = true
     }
 
-    func refreshChromeStatus() {
-        hasChromeProfile = ChromeXSessionReader.hasLocalChromeProfile()
+    func refreshBrowserStatus() {
+        browserProbeTask?.cancel()
+        isRefreshingBrowserStatus = true
+        browserProbeTask = Task { [weak self] in
+            let probe = await Task.detached(priority: .utility) { BrowserSessionAccess.probe() }.value
+            guard !Task.isCancelled, let self else { return }
+            browserSessionProbe = probe
+            isRefreshingBrowserStatus = false
+        }
     }
 
-    func openChromeXLogin() {
-        openInChrome(URL(string: "https://x.com/i/flow/login")!, successMessage: "已在 Chrome 打开 X 登录页面，登录后返回 MarkX 即可")
+    func openBrowserXLogin() {
+        openInSessionBrowser(URL(string: "https://x.com")!, successMessage: "已在浏览器打开 X，已登录时无需重复登录")
+    }
+
+    func verifyBrowserSession() async {
+        do {
+            let session = try await Task.detached(priority: .userInitiated) { try BrowserSessionAccess.readActiveSession() }.value
+            browserSessionCheckMessage = "已成功读取 \(session.sourceDescription) 的 X 会话，下载时会自动复用。"
+        } catch { browserSessionCheckMessage = error.localizedDescription }
+        refreshBrowserStatus()
+    }
+
+    private var preferredSessionBrowser: BrowserSessionDefinition {
+        BrowserSessionDefinition.supported.first(where: { $0.id == preferredBrowserID })
+            ?? browserSessionProbe.loggedInProfiles.first?.browser
+            ?? browserSessionProbe.profiles.first?.browser ?? .chrome
+    }
+
+    func chooseBrowserDataDirectory() {
+        let browser = preferredSessionBrowser
+        let panel = NSOpenPanel()
+        panel.title = "允许读取 \(browser.name) 的 X 登录数据"
+        panel.message = "选择浏览器数据目录（包含 Local State/Default），或含 Cookies、cookies.sqlite 的配置目录。仅用于读取 X 登录记录，不需要重新登录。"
+        panel.prompt = "允许读取"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = browser.root(home: FileManager.default.homeDirectoryForCurrentUser)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+            var bookmarks = defaults.dictionary(forKey: BrowserSessionAccess.directoryBookmarksKey) as? [String: Data] ?? [:]
+            bookmarks[browser.id] = bookmark
+            defaults.set(bookmarks, forKey: BrowserSessionAccess.directoryBookmarksKey)
+            browserSessionCheckMessage = nil
+            refreshBrowserStatus()
+        } catch { browserSessionCheckMessage = "未能保存目录授权：\(error.localizedDescription)" }
     }
 
     func showDownloadProgressWindow() {
@@ -2359,9 +2413,9 @@ final class AppViewModel: ObservableObject {
             postID: article.sourcePostID
         ) ?? article.sourceURL
         if article.pipelineState == .subscriptionRequired {
-            openInChrome(
+            openInSessionBrowser(
                 sourceURL,
-                successMessage: "已在 Chrome 打开《\(article.title)》原文"
+                successMessage: "已在会话对应的浏览器打开《\(article.title)》原文"
             )
         } else {
             NSWorkspace.shared.open(sourceURL)
@@ -2373,18 +2427,18 @@ final class AppViewModel: ObservableObject {
               let subscriptionURL = XArticleNavigationURL.subscriptionURL(
                 authorHandle: handle
               ) else { return }
-        openInChrome(
+        openInSessionBrowser(
             subscriptionURL,
-            successMessage: "已在 Chrome 打开 @\(handle) 的订阅页面"
+            successMessage: "已在会话对应的浏览器打开 @\(handle) 的订阅页面"
         )
     }
 
-    private func openInChrome(_ url: URL, successMessage: String) {
+    private func openInSessionBrowser(_ url: URL, successMessage: String) {
         guard let chromeURL = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: "com.google.Chrome"
+            withBundleIdentifier: preferredSessionBrowser.bundleIdentifier
         ) else {
             NSWorkspace.shared.open(url)
-            statusMessage = "未检测到 Google Chrome，已在默认浏览器打开"
+            statusMessage = "未找到所选浏览器应用，已在默认浏览器打开"
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()

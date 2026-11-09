@@ -25,6 +25,7 @@ struct RootView: View {
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
+        .background(MainWindowChrome().frame(width: 0, height: 0))
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
         .onChange(of: model.sidebarSelection) { _, _ in
@@ -34,9 +35,9 @@ struct RootView: View {
             columnVisibility = .all
         }
         .toolbar { toolbar }
-        .onAppear { model.refreshChromeStatus() }
+        .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.refreshChromeStatus() }
+            if phase == .active { model.refreshBrowserStatus() }
         }
         .onOpenURL { model.handleOpenURL($0) }
         .handlesExternalEvents(
@@ -133,14 +134,10 @@ struct RootView: View {
         VStack(spacing: 0) {
             sidebarDownloadEntry
             sidebarLibrary
-            SidebarStatusCard(
+            SidebarFooter(
                 isRunning: model.isRunning,
                 statusText: model.isRunning ? model.progress.stage : model.statusMessage,
                 archiveName: model.archiveRoot?.lastPathComponent ?? "未选择归档目录",
-                hasChromeSession: model.hasChromeProfile,
-                hasImageHost: model.imageHostVerified,
-                configureChrome: { model.presentConnectionSetup(focusing: .chrome) },
-                configureImageHost: { model.presentConnectionSetup(focusing: .imageHost) },
                 switchDirectory: { model.chooseArchiveFolder() }
             )
             .padding(.horizontal, 16)
@@ -278,7 +275,7 @@ struct RootView: View {
             .foregroundStyle(.orange)
             .padding(.horizontal, 18)
             .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
-            .background(Color.orange.opacity(0.1))
+            .background(Color.orange.opacity(0.1), ignoresSafeAreaEdges: [])
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -470,7 +467,7 @@ struct RootView: View {
                                         Button {
                                             model.openSubscriptionPage(for: article)
                                         } label: {
-                                            Label("在 Chrome 订阅 @\(article.authorHandle)", systemImage: "lock.open")
+                                            Label("在浏览器订阅 @\(article.authorHandle)", systemImage: "lock.open")
                                         }
                                     }
                                     if model.isArticleActivelyProcessing(article) {
@@ -562,7 +559,7 @@ struct RootView: View {
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 12) {
                     SetupStatusRow(title: "本地归档目录", isReady: model.archiveRoot != nil, detail: model.archiveRoot?.path ?? "尚未选择")
-                    SetupStatusRow(title: "Chrome X 登录状态", isReady: ChromeXSessionReader.hasLocalChromeProfile(), detail: ChromeXSessionReader.hasLocalChromeProfile() ? "自动复用本机 Chrome 登录态，无需重复输入密码" : "请先在 Chrome 登录 x.com")
+                    SetupStatusRow(title: "浏览器 X 登录状态", isReady: model.hasBrowserSessionData, detail: model.browserSessionProbe.summary)
                     SetupStatusRow(title: "媒体存储", isReady: model.imageHostVerified, detail: model.imageHostDetail)
                 }
                 HStack {
@@ -585,29 +582,26 @@ struct RootView: View {
     @ViewBuilder
     private var detail: some View {
         if let article = model.selectedArticle {
-            VStack(spacing: 0) {
-                articleDetailHeader(article)
-                Divider()
-                ScrollView {
-                    VStack(spacing: 0) {
-                        if article.pipelineState != .committed || article.lastError != nil {
-                            ArticleProcessingPanel(
-                                article: article,
-                                isActive: model.isArticleActivelyProcessing(article),
-                                isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                                stop: { model.stopProcessing(article) },
-                                restart: { model.restartProcessing(article) },
-                                openSubscription: { model.openSubscriptionPage(for: article) }
-                            )
-                        }
-                        articleDetailBody(article)
+            ScrollView {
+                VStack(spacing: 0) {
+                    articleDetailHeader(article)
+                    if article.pipelineState != .committed || article.lastError != nil {
+                        ArticleProcessingPanel(
+                            article: article,
+                            isActive: model.isArticleActivelyProcessing(article),
+                            isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                            stop: { model.stopProcessing(article) },
+                            restart: { model.restartProcessing(article) },
+                            openSubscription: { model.openSubscriptionPage(for: article) }
+                        )
                     }
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
+                    articleDetailBody(article)
                 }
-                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
+            .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: .textBackgroundColor))
         } else {
             ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -733,10 +727,10 @@ struct RootView: View {
                     Button("访问原文") { model.openSource() }
                         .help("在默认浏览器打开当前 X Article 原页")
                     if article.pipelineState == .subscriptionRequired {
-                        Button("在 Chrome 订阅 @\(article.authorHandle)") {
+                        Button("在浏览器订阅 @\(article.authorHandle)") {
                             model.openSubscriptionPage(for: article)
                         }
-                        .help("使用 MarkX 会读取登录状态的同一个 Chrome 完成订阅")
+                        .help("使用设置中选定的同一个浏览器账号完成订阅")
                     }
                     if model.isArticleActivelyProcessing(article) {
                         Button("停止处理", role: .cancel) { model.stopProcessing(article) }
@@ -827,9 +821,9 @@ struct RootView: View {
 
             Menu {
                 Button {
-                    model.presentConnectionSetup(focusing: .chrome)
+                    model.presentConnectionSetup(focusing: .browser)
                 } label: {
-                    Label("Chrome" + (model.hasChromeProfile ? "已连接" : "待配置"), systemImage: "globe")
+                    Label("浏览器登录" + (model.hasBrowserSessionData ? "已检测" : "需检查"), systemImage: "globe")
                 }
                 Button {
                     model.presentConnectionSetup(focusing: .imageHost)
@@ -843,7 +837,7 @@ struct RootView: View {
                 Label("设置", systemImage: "gearshape")
             }
             .menuIndicator(.hidden)
-            .help("Chrome\(model.hasChromeProfile ? "已连接" : "待配置") · 存储\(model.imageHostVerified ? "已连接" : "待配置")")
+            .help("\(model.browserSessionProbe.summary) · 存储\(model.imageHostVerified ? "已连接" : "待配置")")
         }
     }
 
@@ -1045,14 +1039,10 @@ private struct CreatorProfileToolbarHeader: View {
     }
 }
 
-private struct SidebarStatusCard: View {
+private struct SidebarFooter: View {
     let isRunning: Bool
     let statusText: String
     let archiveName: String
-    let hasChromeSession: Bool
-    let hasImageHost: Bool
-    let configureChrome: () -> Void
-    let configureImageHost: () -> Void
     let switchDirectory: () -> Void
 
     var body: some View {
@@ -1074,31 +1064,7 @@ private struct SidebarStatusCard: View {
                     Text(statusText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
-            HStack(spacing: 10) {
-                Button(action: configureChrome) {
-                    SidebarConnectionBadge(title: "Chrome", isReady: hasChromeSession)
-                        .padding(.vertical, 3).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).help("查看 Chrome 与 X 登录配置")
-                Button(action: configureImageHost) {
-                    SidebarConnectionBadge(title: "存储", isReady: hasImageHost)
-                        .padding(.vertical, 3).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).help("查看媒体存储设置")
-            }
         }
-    }
-}
-
-private struct SidebarConnectionBadge: View {
-    let title: String
-    let isReady: Bool
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle().fill(isReady ? Color.green : Color.orange).frame(width: 4, height: 4)
-            Text(title + (isReady ? "已连接" : "待配置"))
-        }
-        .font(.system(size: 10)).foregroundStyle(.secondary)
     }
 }
 
@@ -1738,7 +1704,7 @@ private struct ArticleProcessingPanel: View {
 
     private var detail: String {
         if requiresSubscription {
-            return "MarkX 不会绕过 X 的订阅权限。请在 Chrome 中订阅，或切换到已订阅账号，然后重新处理；任务会一直保留。"
+            return "MarkX 不会绕过 X 的订阅权限。请在会话对应的浏览器中订阅，或切换到已订阅账号，然后重新处理；任务会一直保留。"
         }
         if article.pipelineState == .failed || article.lastError != nil {
             return "错误原因和处理日志已保存在资料库；本地已完成的媒体不会被删除。"
@@ -1789,7 +1755,7 @@ private struct ArticleProcessingPanel: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 } else if requiresSubscription {
-                    Button("在 Chrome 订阅", action: openSubscription)
+                    Button("在浏览器订阅", action: openSubscription)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     Button("订阅后重新处理", action: restart)
@@ -1852,7 +1818,7 @@ private struct ArticleProcessingPanel: View {
                 Button("停止处理", role: .cancel, action: stop)
             } else {
                 if requiresSubscription {
-                    Button("在 Chrome 订阅", action: openSubscription)
+                    Button("在浏览器订阅", action: openSubscription)
                 }
                 Button("重新处理", action: restart)
                     .disabled(isActionDisabled)
