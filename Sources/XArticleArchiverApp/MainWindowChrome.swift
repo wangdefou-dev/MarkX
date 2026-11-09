@@ -50,17 +50,19 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
     private var toggleSidebar: (() -> Void)?
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 112, height: 28))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 116, height: 36))
         let label = NSTextField(labelWithString: "MarkX")
         label.font = .systemFont(ofSize: MarkXTypography.pointSize(13), weight: .semibold)
         label.textColor = .labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         sidebarButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: nil)
+        sidebarButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
         sidebarButton.imagePosition = .imageOnly
         sidebarButton.imageScaling = .scaleProportionallyDown
-        sidebarButton.bezelStyle = .texturedRounded
-        sidebarButton.isBordered = false
+        sidebarButton.bezelStyle = .circular
+        sidebarButton.controlSize = .large
+        sidebarButton.isBordered = true
         sidebarButton.contentTintColor = .labelColor
         sidebarButton.target = self
         sidebarButton.action = #selector(toggleSidebarClicked)
@@ -73,8 +75,8 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
             label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             sidebarButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             sidebarButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            sidebarButton.widthAnchor.constraint(equalToConstant: 28),
-            sidebarButton.heightAnchor.constraint(equalToConstant: 28)
+            sidebarButton.widthAnchor.constraint(equalToConstant: 36),
+            sidebarButton.heightAnchor.constraint(equalToConstant: 32)
         ])
         view = container
     }

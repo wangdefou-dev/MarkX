@@ -1,9 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// A two-point increase over the original interface, before the reader's own zoom.
+/// Interface type stays one point above the original sizes; reading type keeps
+/// its two-point increase before applying the user's independent zoom.
 enum MarkXTypography {
     static func pointSize(_ base: CGFloat, scale: CGFloat = 1) -> CGFloat {
+        (base + 1) * scale
+    }
+
+    static func readingPointSize(_ base: CGFloat, scale: CGFloat = 1) -> CGFloat {
         (base + 2) * scale
     }
 
@@ -12,7 +17,20 @@ enum MarkXTypography {
         .system(size: pointSize(size, scale: scale), weight: weight, design: design)
     }
 
+    static func reading(size: CGFloat, scale: CGFloat = 1, weight: Font.Weight = .regular,
+                        design: Font.Design = .default) -> Font {
+        .system(size: readingPointSize(size, scale: scale), weight: weight, design: design)
+    }
+
     static func system(_ style: Font.TextStyle, design: Font.Design = .default) -> Font {
+        semantic(style, design: design, increase: 1)
+    }
+
+    static func reading(_ style: Font.TextStyle, design: Font.Design = .default) -> Font {
+        semantic(style, design: design, increase: 2)
+    }
+
+    private static func semantic(_ style: Font.TextStyle, design: Font.Design, increase: CGFloat) -> Font {
         let nativeStyle: NSFont.TextStyle
         switch style {
         case .largeTitle: nativeStyle = .largeTitle
@@ -36,7 +54,7 @@ enum MarkXTypography {
         }
         let base = NSFont.preferredFont(forTextStyle: nativeStyle)
         let descriptor = base.fontDescriptor.withDesign(nativeDesign) ?? base.fontDescriptor
-        return Font(NSFont(descriptor: descriptor, size: pointSize(base.pointSize)) ?? base)
+        return Font(NSFont(descriptor: descriptor, size: base.pointSize + increase) ?? base)
     }
 
     static var largeTitle: Font { system(.largeTitle) }

@@ -602,6 +602,8 @@ struct RootView: View {
                     }
                     articleDetailBody(article)
                 }
+                .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
+                .padding(.horizontal, 30)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
             .id(article.id)
@@ -614,7 +616,7 @@ struct RootView: View {
     }
 
     private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 Text(article.title)
                     .font(MarkXTypography.title2.bold())
@@ -624,7 +626,7 @@ struct RootView: View {
                     .textSelection(.enabled)
                 articleReadingControls(article)
             }
-            MarkXFlowLayout(spacing: 6) {
+            MarkXFlowLayout(spacing: 8) {
                 Button {
                     model.openCreatorProfile(handle: article.authorHandle)
                 } label: {
@@ -646,7 +648,7 @@ struct RootView: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            MarkXFlowLayout(spacing: 6) {
+            MarkXFlowLayout(spacing: 8) {
                 StatusPill(
                     article.pipelineState.displayName,
                     color: article.pipelineState == .committed
@@ -681,9 +683,8 @@ struct RootView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 30)
-        .padding(.top, 14)
-        .padding(.bottom, 6)
+        .padding(.top, 22)
+        .padding(.bottom, 16)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
     }
 
@@ -1057,7 +1058,7 @@ private struct ArticleTypography {
         self.scale = CGFloat(scale)
     }
 
-    var bodySize: CGFloat { MarkXTypography.pointSize(13, scale: scale) }
+    var bodySize: CGFloat { MarkXTypography.readingPointSize(13, scale: scale) }
     var bodyLineSpacing: CGFloat { 6.5 * scale }
     var paragraphSpacing: CGFloat { 16 * scale }
     var headingTopSpacing: CGFloat { 20 * scale }
@@ -1084,33 +1085,11 @@ private struct ArticleDocumentPreview: View {
         Dictionary(uniqueKeysWithValues: (document.videos ?? []).map { ($0.id, $0) })
     }
 
-    private var characterCount: Int {
-        document.blocks
-            .filter { $0.kind != .image && $0.kind != .video && $0.kind != .divider }
-            .reduce(0) { $0 + $1.text.count }
-    }
-
     private var typography: ArticleTypography { ArticleTypography(textScale) }
 
     var body: some View {
         let orderedMarkers = ArticleListMarkerResolver.orderedMarkers(for: document.blocks)
         LazyVStack(alignment: .leading, spacing: 0) {
-            MarkXFlowLayout(spacing: 6) {
-                Label {
-                    Text(fidelityTitle).fontWeight(.semibold)
-                } icon: {
-                    Image(systemName: fidelityIcon).foregroundStyle(fidelityColor)
-                }
-                Text("· \(characterCount) 字")
-                Text("· \(document.media.count) 张图片")
-                if let videoCount = document.videos?.count, videoCount > 0 {
-                    Text("· \(videoCount) 个视频")
-                }
-            }
-            .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale)))
-            .foregroundStyle(.secondary)
-            .padding(.bottom, 12 * typography.scale)
-
             ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
                 ArticleBlockView(
                     block: block,
@@ -1125,12 +1104,12 @@ private struct ArticleDocumentPreview: View {
             if !document.warnings.isEmpty {
                 VStack(alignment: .leading, spacing: 6 * typography.scale) {
                     Label("原始排版说明", systemImage: "info.circle")
-                        .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale), weight: .semibold))
+                        .font(MarkXTypography.reading(size: 12.5, scale: CGFloat(textScale), weight: .semibold))
                     ForEach(document.warnings, id: \.self) { warning in
                         Text("• \(warning)")
                     }
                 }
-                .font(MarkXTypography.system(size: 11, scale: CGFloat(textScale)))
+                .font(MarkXTypography.reading(size: 11, scale: CGFloat(textScale)))
                 .foregroundStyle(.secondary)
                 .padding(12 * typography.scale)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1138,23 +1117,8 @@ private struct ArticleDocumentPreview: View {
                 .padding(.top, 8 * typography.scale)
             }
         }
-        .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
-    }
-
-    private var fidelityTitle: String {
-        document.layoutFidelity?.displayName ?? "旧快照 · 待重新下载校验"
-    }
-
-    private var fidelityIcon: String {
-        document.layoutFidelity == .textAndMediaOnly || document.layoutFidelity == nil
-            ? "exclamationmark.triangle.fill"
-            : "checkmark.seal.fill"
-    }
-
-    private var fidelityColor: Color {
-        document.layoutFidelity == .textAndMediaOnly || document.layoutFidelity == nil ? .orange : .green
     }
 
     private func spacingAfterBlock(at index: Int) -> CGFloat {
@@ -1235,7 +1199,7 @@ private struct ArticleBlockView: View {
         case .code:
             ScrollView(.horizontal) {
                 Text(block.text)
-                    .font(MarkXTypography.system(size: 13, scale: CGFloat(textScale), design: .monospaced))
+                    .font(MarkXTypography.reading(size: 13, scale: CGFloat(textScale), design: .monospaced))
                     .lineSpacing(4 * typography.scale)
                     .padding(14 * typography.scale)
                     .textSelection(.enabled)
@@ -1253,7 +1217,7 @@ private struct ArticleBlockView: View {
                             GridRow {
                                 ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                                     tableCellText(cell)
-                                        .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale), weight: cell.isHeader ? .semibold : .regular))
+                                        .font(MarkXTypography.reading(size: 12.5, scale: CGFloat(textScale), weight: cell.isHeader ? .semibold : .regular))
                                         .lineSpacing(4.5 * typography.scale)
                                         .padding(.horizontal, 12 * typography.scale)
                                         .padding(.vertical, 9 * typography.scale)
@@ -1276,7 +1240,7 @@ private struct ArticleBlockView: View {
             } else {
                 ScrollView(.horizontal) {
                     Text(block.text)
-                        .font(MarkXTypography.system(size: 12.5, scale: CGFloat(textScale), design: .monospaced))
+                        .font(MarkXTypography.reading(size: 12.5, scale: CGFloat(textScale), design: .monospaced))
                         .lineSpacing(4 * typography.scale)
                         .padding(12 * typography.scale)
                 }
@@ -1328,14 +1292,14 @@ private struct ArticleBlockView: View {
 
     private var headingFont: Font {
         switch block.level {
-        case 0...1: MarkXTypography.system(size: 22, scale: CGFloat(textScale), weight: .bold)
-        case 2: MarkXTypography.system(size: 18, scale: CGFloat(textScale), weight: .bold)
-        default: MarkXTypography.system(size: 14, scale: CGFloat(textScale), weight: .semibold)
+        case 0...1: MarkXTypography.reading(size: 22, scale: CGFloat(textScale), weight: .bold)
+        case 2: MarkXTypography.reading(size: 18, scale: CGFloat(textScale), weight: .bold)
+        default: MarkXTypography.reading(size: 14, scale: CGFloat(textScale), weight: .semibold)
         }
     }
 
     private var bodyFont: Font {
-        MarkXTypography.system(size: 13, scale: typography.scale)
+        MarkXTypography.reading(size: 13, scale: typography.scale)
     }
 
     private func listRow(marker: String) -> some View {
@@ -1423,7 +1387,7 @@ private struct ArticleBlockView: View {
 
                 if let altText = media.altText, !altText.isEmpty {
                     Text(altText)
-                        .font(MarkXTypography.system(size: 11, scale: CGFloat(textScale)))
+                        .font(MarkXTypography.reading(size: 11, scale: CGFloat(textScale)))
                         .lineSpacing(3 * typography.scale)
                         .foregroundStyle(.secondary)
                 }
@@ -1915,8 +1879,7 @@ private struct ArticlePreviewContent: View {
                 ProgressView("正在加载正文…").frame(maxWidth: .infinity, minHeight: 200)
             } else if let document = preview?.document {
                 ArticleDocumentPreview(document: document, textScale: textScale)
-                    .padding(.horizontal, 30)
-                    .padding(.top, 6 * textScale)
+                    .padding(.top, 8 * textScale)
                     .padding(.bottom, 24 * textScale)
             } else if article.markdownPath == nil {
                 ContentUnavailableView("正文尚未生成", systemImage: "doc.badge.clock",
@@ -1930,9 +1893,10 @@ private struct ArticlePreviewContent: View {
                         FixedReprocessButton(isDisabled: isBusy, help: "重新打开原文并恢复完整预览", action: reprocess)
                     }
                     Text(preview?.markdown ?? "无法读取本地 Markdown。")
-                        .font(MarkXTypography.system(.body, design: .monospaced)).textSelection(.enabled)
+                        .font(MarkXTypography.reading(.body, design: .monospaced)).textSelection(.enabled)
                 }
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading).padding(24)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+                .padding(.top, 8).padding(.bottom, 24)
             }
         }
         .task(id: key) {

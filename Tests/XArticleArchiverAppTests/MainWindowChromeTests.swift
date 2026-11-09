@@ -14,7 +14,14 @@ final class MainWindowChromeTests: XCTestCase {
         anchor.configureWindow()
 
         XCTAssertEqual(window.titlebarAccessoryViewControllers.count, 1)
-        let button = try XCTUnwrap(window.titlebarAccessoryViewControllers.first?.view.subviews.compactMap { $0 as? NSButton }.first)
+        let controls = window.titlebarAccessoryViewControllers.first?.view.subviews.compactMap { $0 as? NSButton } ?? []
+        XCTAssertEqual(controls.count, 1)
+        let button = try XCTUnwrap(controls.first)
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.titlebarAccessoryViewControllers.first?.view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(button.frame.width, 36)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 32)
+        XCTAssertEqual(button.controlSize, .large)
         XCTAssertEqual(button.accessibilityLabel(), "隐藏侧边栏")
         XCTAssertEqual(window.titlebarAccessoryViewControllers.first?.layoutAttribute, .left)
     }
