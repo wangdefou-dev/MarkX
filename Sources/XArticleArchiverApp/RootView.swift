@@ -458,6 +458,26 @@ struct RootView: View {
 
     private var articleList: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("搜索标题、博主或正文", text: $model.searchText)
+                    .textFieldStyle(.plain)
+                    .help("在当前分类内搜索，支持中文正文")
+                    .accessibilityIdentifier("librarySearchField")
+                if model.isSearching { ProgressView().controlSize(.small) }
+                if !model.searchText.isEmpty {
+                    Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("清空搜索")
+                }
+            }
+            .padding(12)
+            if model.isPreparingSearch {
+                Text("正在整理历史文章，搜索结果会逐步补齐…")
+                    .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
+            }
+            Divider()
             Group {
                 if !model.filteredArticles.isEmpty {
                     List(selection: $model.selectedArticleID) {
@@ -757,46 +777,11 @@ struct RootView: View {
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
     }
 
-    @ViewBuilder
     private func articleDetailBody(_ article: ArchivedArticle) -> some View {
-        if let document = model.previewDocument(for: article) {
-            ArticleDocumentPreview(document: document, textScale: previewTextScale)
-                .padding(.horizontal, 30)
-                .padding(.vertical, 26 * previewTextScale)
-        } else if article.pipelineState != .committed || article.lastError != nil {
-            if article.markdownPath != nil {
-                Text(model.markdownPreview(for: article))
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-                    .padding(24)
-            } else {
-                ContentUnavailableView(
-                    "正文尚未生成",
-                    systemImage: "doc.badge.clock",
-                    description: Text("当前状态、错误原因和处理日志已显示在上方。")
-                )
-                .frame(maxWidth: .infinity, minHeight: 240)
+        ArticlePreviewContent(article: article, root: model.archiveRoot, textScale: previewTextScale,
+            isBusy: model.isRunning || model.hasActiveDownloadProgress) {
+                model.restartProcessing(article)
             }
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("文章预览不可用", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text("当前记录缺少可用于应用内预览的完整来源快照；本地 Markdown 仍显示在下方，可以重新处理以恢复预览。")
-                    .foregroundStyle(.secondary)
-                FixedReprocessButton(
-                    isDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                    help: "重新打开这篇 X Article 并恢复完整预览"
-                ) {
-                    model.restartProcessing(article)
-                }
-                Text(model.markdownPreview(for: article))
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-            .padding(24)
-        }
     }
 
     @ToolbarContentBuilder
@@ -877,7 +862,8 @@ struct RootView: View {
     }
 
     private var emptyFilterTitle: String {
-        switch model.sidebarSelection {
+        if !model.searchText.isEmpty { return model.isSearching ? "正在搜索…" : "没有找到相关文章" }
+        return switch model.sidebarSelection {
         case .today: "今天还没有新文章"
         case .commercial: "还没有商单内容"
         case .pending: "没有等待继续的文章"
@@ -899,7 +885,8 @@ struct RootView: View {
     }
 
     private var emptyFilterDescription: String {
-        switch model.sidebarSelection {
+        if !model.searchText.isEmpty { return "可以换个关键词，或清空搜索查看当前分类的全部文章。" }
+        return switch model.sidebarSelection {
         case .today:
             "“今日推文”只显示 X 原始发布时间为今天的文章。"
         case .commercial:
@@ -1623,12 +1610,8 @@ private struct ArticleBlockView: View {
         if let media, let url = media.remoteURL ?? Optional(media.sourceURL) {
             VStack(alignment: .leading, spacing: 7) {
                 Group {
-                    if let localPath = media.localCachePath,
-                       let localImage = NSImage(contentsOfFile: localPath) {
-                        Image(nsImage: localImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity)
+                    if let localPath = media.localCachePath {
+                        LocalArticleImage(path: localPath, fallbackURL: url)
                     } else {
                         AsyncImage(url: url) { phase in
                             switch phase {
@@ -2127,5 +2110,96 @@ private struct TaskProgressBar: View {
         }
         .padding(12)
         .background(.bar)
+    }
+}
+
+private struct ArticlePreviewContent: View {
+    let article: ArchivedArticle
+    let root: URL?
+    let textScale: Double
+    let isBusy: Bool
+    let reprocess: () -> Void
+    @State private var preview: ArticlePreviewData?
+    @State private var loadedKey: PreviewKey?
+
+    private struct PreviewKey: Hashable {
+        var id: UUID
+        var synced: Date
+        var root: URL?
+        var path: String?
+    }
+    private var key: PreviewKey {
+        PreviewKey(id: article.id, synced: article.lastSyncedAt, root: root, path: article.markdownPath)
+    }
+
+    var body: some View {
+        Group {
+            if loadedKey != key {
+                ProgressView("正在加载正文…").frame(maxWidth: .infinity, minHeight: 200)
+            } else if let document = preview?.document {
+                ArticleDocumentPreview(document: document, textScale: textScale)
+                    .padding(.horizontal, 30).padding(.vertical, 26 * textScale)
+            } else if article.markdownPath == nil {
+                ContentUnavailableView("正文尚未生成", systemImage: "doc.badge.clock",
+                    description: Text("当前状态、错误原因和处理日志已显示在上方。"))
+                    .frame(maxWidth: .infinity, minHeight: 240)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    if article.pipelineState == .committed {
+                        Label("文章预览不可用", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Text("完整来源快照不可用，下面显示本地 Markdown。").foregroundStyle(.secondary)
+                        FixedReprocessButton(isDisabled: isBusy, help: "重新打开原文并恢复完整预览", action: reprocess)
+                    }
+                    Text(preview?.markdown ?? "无法读取本地 Markdown。")
+                        .font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading).padding(24)
+            }
+        }
+        .task(id: key) {
+            let requestedKey = key
+            preview = nil
+            loadedKey = nil
+            let article = article
+            let root = root
+            let worker = Task.detached(priority: .userInitiated) {
+                ArticlePreviewData.load(article: article, root: root)
+            }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: { worker.cancel() }
+            guard !Task.isCancelled else { return }
+            preview = result
+            loadedKey = requestedKey
+        }
+    }
+}
+
+private struct LocalArticleImage: View {
+    let path: String
+    let fallbackURL: URL
+    @State private var thumbnail: CGImage?
+    @State private var finished = false
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(decorative: thumbnail, scale: 1).resizable().scaledToFit()
+            } else if finished {
+                AsyncImage(url: fallbackURL) { image in image.resizable().scaledToFit() }
+                    placeholder: { Label("图片暂时无法加载", systemImage: "photo") }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 150)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .task(id: path) {
+            thumbnail = nil
+            finished = false
+            let image = await ArticleThumbnailCache.shared.image(path: path)
+            guard !Task.isCancelled else { return }
+            thumbnail = image
+            finished = true
+        }
     }
 }

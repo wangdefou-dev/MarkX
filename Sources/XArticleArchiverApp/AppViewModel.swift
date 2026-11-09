@@ -54,6 +54,13 @@ final class AppViewModel: ObservableObject {
     @Published var creators: [Creator] = []
     @Published private(set) var pinnedCreatorIDs: [UUID] = []
     @Published var articles: [ArchivedArticle] = []
+    @Published var searchText = "" {
+        didSet { updateSearchResults() }
+    }
+    @Published private(set) var isPreparingSearch = false
+    @Published private(set) var isSearching = false
+    @Published private var searchResultIDs = Set<UUID>()
+    private var searchTask: Task<Void, Never>?
     @Published var selectedArticleID: UUID? {
         didSet {
             guard oldValue != selectedArticleID else { return }
@@ -126,8 +133,9 @@ final class AppViewModel: ObservableObject {
     private var sessionCaptureCursor = 0
     private var creatorDiscoveryFinished = true
     private var creatorDiscoveryFailureNotes: [String] = []
+    private var creatorDiscoveryIncompleteNotes: [String] = []
     private var captureIdleWaitingForDiscovery = false
-    private var inflightArticleArchives: [Task<Void, Never>] = []
+    private let articleArchiveTasks = ArticleArchiveTasks()
     private var browserCaptureStopRequested = false
     private var activeArchiveOperation: ActiveArchiveOperation = .download
     private var scheduledRunActive = false
@@ -199,7 +207,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var filteredArticles: [ArchivedArticle] {
-        switch sidebarSelection {
+        let visible = switch sidebarSelection {
         case .all, .none:
             articles
         case .today:
@@ -214,6 +222,38 @@ final class AppViewModel: ObservableObject {
             articles.filter(ArchiveSidebarStatistics.needsAttention)
         case .creator(let id):
             articles.filter { $0.creatorID == id }
+        }
+        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return visible }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return visible.filter { searchResultIDs.contains($0.id)
+            || $0.title.localizedCaseInsensitiveContains(query)
+            || $0.authorHandle.localizedCaseInsensitiveContains(query) }
+    }
+
+    private func updateSearchResults() {
+        searchTask?.cancel()
+        let query = searchText
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            searchResultIDs = []
+            isSearching = false
+            synchronizeSelectedArticleWithSidebar()
+            return
+        }
+        isSearching = true
+        searchTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                guard let self, let database = self.database else { return }
+                let matches = try await database.searchArticleIDs(query)
+                guard !Task.isCancelled, self.searchText == query else { return }
+                self.searchResultIDs = matches
+                self.isSearching = false
+                self.synchronizeSelectedArticleWithSidebar()
+            } catch is CancellationError { } catch {
+                guard !Task.isCancelled else { return }
+                self?.isSearching = false
+                self?.errorMessage = "搜索暂时不可用：\(error.localizedDescription)"
+            }
         }
     }
 
@@ -477,6 +517,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func beginDownloadProgressSession() {
+        browserCaptureStopRequested = false
         downloadProgressWindowHiddenByUser = false
         downloadProgressAnchorWindow = resolveDownloadProgressAnchorWindow(
             excluding: downloadProgressWindowController?.window
@@ -742,6 +783,36 @@ final class AppViewModel: ObservableObject {
             return
         }
         synchronizeAndSwitchArchiveFolder(from: currentRoot, to: destination)
+    }
+
+    func cleanVerifiedMediaCache() {
+        guard !isRunning, !hasActiveDownloadProgress, let root = archiveRoot else { return }
+        let alert = NSAlert()
+        alert.messageText = "整理重复媒体缓存？"
+        alert.informativeText = "将逐字节核对隐藏缓存与 media 备份，只移除内容完全相同的隐藏缓存副本。文章、media 备份和没有匹配备份的缓存都会保留。过程中可以安全停止。"
+        alert.addButton(withTitle: "核对并整理")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        isRunning = true
+        statusMessage = "正在核对并整理重复媒体缓存…"
+        progress.stage = statusMessage
+        runningTask = Task {
+            defer { isRunning = false; runningTask = nil }
+            let worker = Task.detached(priority: .utility) {
+                try MediaCacheMaintenance.removeVerifiedDuplicates(root: root)
+            }
+            do {
+                let result = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: { worker.cancel() }
+                statusMessage = "已整理 \(result.removedFiles) 个重复缓存，逻辑体积 \(ByteCountFormatter.string(fromByteCount: result.removedLogicalBytes, countStyle: .file))；完整媒体备份保留"
+            } catch is CancellationError {
+                statusMessage = "缓存整理已停止；完整媒体备份保留"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "缓存整理未完成，已保留未处理文件"
+            }
+        }
     }
 
     private func synchronizeAndSwitchArchiveFolder(from source: URL, to destination: URL) {
@@ -1138,9 +1209,9 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryIndex = 0
         seenDiscoveredPostIDs = []
         creatorDiscoveryFailureNotes = []
+        creatorDiscoveryIncompleteNotes = []
         sessionAcceptedCaptureCount = 0
         sessionCaptureCursor = 0
-        inflightArticleArchives.removeAll()
         creatorDiscoveryFinished = false
         captureIdleWaitingForDiscovery = false
         showingBrowserCapture = false
@@ -1196,7 +1267,10 @@ final class AppViewModel: ObservableObject {
         for request: CreatorArticleDiscoveryRequest
     ) async {
         guard request.id == currentCreatorArticleDiscoveryRequest?.id else { return }
-        if let database {
+        if !result.isComplete {
+            creatorDiscoveryIncompleteNotes.append("@\(request.username)")
+        }
+        if let database, result.isComplete, (result.knownArticleCount != nil || result.confirmedEmpty) {
             do {
                 let existingCreator = try await database.creator(username: request.username)
                 let downloaded = existingCreator.map { creator in
@@ -1258,14 +1332,15 @@ final class AppViewModel: ObservableObject {
             seenDiscoveredPostIDs = []
             isRunning = false
             finishDownloadProgressWindow()
-            progress.stage = "线上文章总数刷新完成"
-            statusMessage = "已刷新 \(creatorCount) 位博主的线上文章总数；本次没有下载文章，X API 调用为 0"
+            let incomplete = !creatorDiscoveryIncompleteNotes.isEmpty || !creatorDiscoveryFailureNotes.isEmpty
+            progress.stage = incomplete ? "线上文章总数刷新未完成" : "线上文章总数刷新完成"
+            statusMessage = incomplete ? "部分博主的列表未读到底，原有总数保留，可重新刷新" : "已刷新 \(creatorCount) 位博主的线上文章总数；本次没有下载文章，X API 调用为 0"
             downloadResultNotice = DownloadResultNotice(
-                title: "线上文章总数已刷新",
-                message: "已完整扫描 Articles 列表并更新 \(creatorCount) 位博主的线上文章总数。本次没有下载文章，X API 调用为 0。\(creatorDiscoveryFailureNote)",
+                title: incomplete ? "线上文章总数刷新未完成" : "线上文章总数已刷新",
+                message: "已检查 \(creatorCount) 位博主的 Articles 列表；只有读到底的列表才更新线上总数。本次没有下载文章，X API 调用为 0。\(creatorDiscoveryFailureNote)",
                 metrics: [
                     DownloadResultMetric(id: "creators", label: "刷新博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
-                    DownloadResultMetric(id: "status", label: "总数状态", value: "已更新", systemImage: "number.circle.fill", tone: .positive),
+                    DownloadResultMetric(id: "status", label: "总数状态", value: incomplete ? "未完成" : "已更新", systemImage: "number.circle.fill", tone: incomplete ? .warning : .positive),
                     DownloadResultMetric(id: "downloaded", label: "下载文章", value: "0", systemImage: "arrow.down.circle", tone: .neutral)
                 ]
             )
@@ -1297,8 +1372,9 @@ final class AppViewModel: ObservableObject {
         creatorArticleDiscoveryIndex = 0
         seenDiscoveredPostIDs = []
         if showingBrowserCapture, !captureIdleWaitingForDiscovery {
-            progress.stage = "文章列表已读完，正文下载继续进行"
-            statusMessage = "所有博主的 Articles 列表已读完，正在继续保存正文"
+            let partial = !creatorDiscoveryIncompleteNotes.isEmpty || !creatorDiscoveryFailureNotes.isEmpty
+            progress.stage = partial ? "列表检查结束，部分博主仍需重新拉取；正文保存继续进行" : "文章列表已读完，正文下载继续进行"
+            statusMessage = partial ? "已发现文章继续保存，未完成的博主列表可重新拉取" : "所有博主的 Articles 列表已读完，正在继续保存正文"
             return
         }
         finishSessionIfIdle()
@@ -1322,15 +1398,16 @@ final class AppViewModel: ObservableObject {
     }
 
     private var creatorDiscoveryFailureNote: String {
-        guard !creatorDiscoveryFailureNotes.isEmpty else { return "" }
+        let incomplete = creatorDiscoveryIncompleteNotes.isEmpty ? "" : "\n\n以下博主的列表仍未读到底：\(creatorDiscoveryIncompleteNotes.prefix(8).joined(separator: "、"))。已发现的文章会保留；重新拉取这些博主可继续补全，已有归档会跳过。"
+        guard !creatorDiscoveryFailureNotes.isEmpty else { return incomplete }
         let shown = creatorDiscoveryFailureNotes.prefix(8).joined(separator: "\n")
         let remaining = creatorDiscoveryFailureNotes.count - 8
         let more = remaining > 0 ? "\n……另有 \(remaining) 位" : ""
-        return "\n\n有 \(creatorDiscoveryFailureNotes.count) 位博主的 Articles 列表没读到，已继续处理其余博主：\n\(shown)\(more)"
+        return "\n\n有 \(creatorDiscoveryFailureNotes.count) 位博主的 Articles 列表没读到，已继续处理其余博主：\n\(shown)\(more)\(incomplete)"
     }
 
     func closeCreatorArticleDiscovery() {
-        if showingBrowserCapture {
+        if showingBrowserCapture || articleArchiveTasks.count > 0 {
             closeBrowserCapture()
             return
         }
@@ -1479,6 +1556,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refillCaptureQueueFromDatabase() async {
+        guard !browserCaptureStopRequested else { return }
         let remaining = BrowserProcessBudget.remainingAfterCurrent(
             count: browserCaptureRequests.count,
             currentIndex: browserCaptureIndex
@@ -1498,6 +1576,7 @@ final class AppViewModel: ObservableObject {
                 limit: room,
                 excludingPostIDs: excluding
             )
+            guard !browserCaptureStopRequested else { return }
             let requests = browserCaptureRequests(from: pending)
             guard !requests.isEmpty else { return }
             browserCaptureRequests.append(contentsOf: requests)
@@ -1509,9 +1588,11 @@ final class AppViewModel: ObservableObject {
     }
 
     private func continueOrFinishCapture() async {
+        guard !browserCaptureStopRequested else { return }
         compactCaptureQueue()
         let countBeforeRefill = browserCaptureRequests.count
         await refillCaptureQueueFromDatabase()
+        guard !browserCaptureStopRequested else { return }
         if browserCaptureRequests.count > countBeforeRefill {
             captureIdleWaitingForDiscovery = false
             if countBeforeRefill == 0 || browserCaptureIndex >= countBeforeRefill - 1 {
@@ -1533,27 +1614,20 @@ final class AppViewModel: ObservableObject {
         _ payload: BrowserArticleCapturePayload,
         request: BrowserCaptureRequest
     ) async {
-        while inflightArticleArchives.count >= 2 {
-            let oldest = inflightArticleArchives.removeFirst()
-            await oldest.value
-        }
-        let task = Task { [weak self] in
-            guard let self else { return }
+        guard !browserCaptureStopRequested else { return }
+        await articleArchiveTasks.schedule { [weak self] in
+            guard let self, !self.browserCaptureStopRequested, !Task.isCancelled else { return }
             _ = await self.archiveBrowserCapture(payload, request: request)
         }
-        inflightArticleArchives.append(task)
     }
 
     private func waitForInflightArticleArchives() async {
-        let tasks = inflightArticleArchives
-        inflightArticleArchives.removeAll()
-        for task in tasks {
-            await task.value
-        }
+        await articleArchiveTasks.wait()
     }
 
     private func presentCaptureSessionResults() async {
         await waitForInflightArticleArchives()
+        guard !browserCaptureStopRequested else { return }
 
         let total = browserCaptureRequests.count
         let completed = browserCaptureSavedPostIDs.count
@@ -1578,6 +1652,7 @@ final class AppViewModel: ObservableObject {
             ? ""
             : "\n\n资料库仍有等待继续 \(waitingRemaining) 篇、需要处理 \(attentionRemaining) 篇；本次队列结束不代表这些文章已经完成。可在左侧对应分类中重新开始。"
         let hasUnfinishedWork = !pending.isEmpty || unaccounted > 0
+            || !creatorDiscoveryIncompleteNotes.isEmpty || !creatorDiscoveryFailureNotes.isEmpty
         let unaccountedNote = unaccounted == 0
             ? ""
             : "\n\n另有 \(unaccounted) 篇没有得到已保存或明确失败结果，系统未把它们计为完成。"
@@ -1600,10 +1675,10 @@ final class AppViewModel: ObservableObject {
         if progress.discoveredArticles == 0, queuedTotal == 0, completed == 0 {
             if let creatorCount = activeSyncCreatorCount {
                 let range = CreatorArticleDiscoveryPolicy.rangeDescription(maximumArticles: activeSyncArticleLimit)
-                progress.stage = "同步完成：没有发现可检查的 X Article"
+                progress.stage = hasUnfinishedWork ? "本次同步未完成" : "同步完成：没有发现可检查的 X Article"
                 statusMessage = "已检查 \(creatorCount) 位博主；没有发现文章，X API 调用为 0"
                 publishSyncResult(
-                    title: "同步完成",
+                    title: hasUnfinishedWork ? "本次同步未完成" : "同步完成",
                     message: "已检查 \(creatorCount) 位已跟踪博主的\(range) X Article，未发现可下载文章。本次 X API 调用为 0。\(discoveryFailureNote)",
                     metrics: [
                         DownloadResultMetric(id: "creators", label: "博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
@@ -1736,6 +1811,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func closeBrowserCapture() {
+        guard !browserCaptureStopRequested else { return }
         let stoppedRequest = currentBrowserCaptureRequest
         browserCaptureStopRequested = true
         showingBrowserCapture = false
@@ -1748,14 +1824,13 @@ final class AppViewModel: ObservableObject {
         browserCaptureRequests = []
         browserCaptureIndex = 0
         browserCaptureSkippedSubscriptionCount = 0
-        isRunning = false
-        finishDownloadProgressWindow()
-        statusMessage = isSyncingTrackedCreators
-            ? "已停止同步；已完成归档保留，未完成任务可继续"
-            : "已停止精确排版采集；未完成任务已保留"
-        guard let stoppedRequest, let database else { return }
+        isRunning = true
+        statusMessage = "正在停止后台保存，请稍候…"
         Task {
-            if var stopped = try? await database.article(sourcePostID: stoppedRequest.link.postID) {
+            await articleArchiveTasks.cancelAndWait()
+            if let stoppedRequest, let database,
+               var stopped = try? await database.article(sourcePostID: stoppedRequest.link.postID),
+               stopped.pipelineState != .committed {
                 if stoppedRequest.disclosureOnly {
                     stopped.appendProcessingLog("用户停止商单内容核对；本地归档保留")
                 } else {
@@ -1767,6 +1842,11 @@ final class AppViewModel: ObservableObject {
                 try? await database.upsertArticle(stopped)
                 try? await reload()
             }
+            isRunning = false
+            finishDownloadProgressWindow()
+            statusMessage = isSyncingTrackedCreators
+                ? "已停止同步；已完成归档保留，未完成任务可继续"
+                : "已停止精确排版采集；未完成任务已保留"
         }
     }
 
@@ -1857,12 +1937,6 @@ final class AppViewModel: ObservableObject {
         isRunning = true
         errorMessage = nil
         progress.stage = "正在校验页面原始排版"
-        defer {
-            if !showingCreatorArticleDiscovery {
-                isRunning = false
-            }
-        }
-
         do {
             if var restarting = try await database.article(sourcePostID: request.link.postID) {
                 restarting.pipelineState = .parsed
@@ -1971,12 +2045,28 @@ final class AppViewModel: ObservableObject {
             statusMessage = "已保存完整排版：\(document.title)"
             return .saved
         } catch is CancellationError {
+            await recordArchiveCancellation(request)
             statusMessage = "已停止精确排版采集；未完成任务已保留"
             return .stopped
         } catch {
+            if Task.isCancelled || browserCaptureStopRequested {
+                await recordArchiveCancellation(request)
+                return .stopped
+            }
             await recordBrowserCaptureFailure(error, request: request)
             return .failed
         }
+    }
+
+    private func recordArchiveCancellation(_ request: BrowserCaptureRequest) async {
+        guard let database,
+              var article = try? await database.article(sourcePostID: request.link.postID),
+              article.pipelineState != .committed else { return }
+        article.pipelineState = .cancelled
+        article.lastError = nil
+        article.appendProcessingLog("用户停止后台保存；原有归档和媒体已保留")
+        try? await database.upsertArticle(article)
+        try? await reload()
     }
 
     func cancelCurrentTask() {
@@ -2286,13 +2376,7 @@ final class AppViewModel: ObservableObject {
         NSWorkspace.shared.open(profileURL)
     }
 
-    func markdownPreview(for article: ArchivedArticle?) -> String {
-        guard let path = article?.markdownPath else { return "" }
-        return (try? String(contentsOfFile: path, encoding: .utf8)) ?? "无法读取本地 Markdown。"
-    }
-
-    func previewDocument(for article: ArchivedArticle?) -> CanonicalDocument? {
-        guard let article, let archiveRoot else { return nil }
+    nonisolated static func previewDocument(for article: ArchivedArticle, root archiveRoot: URL) -> CanonicalDocument? {
         let snapshotURL = archiveRoot
             .appending(path: ".x-article-archiver", directoryHint: .isDirectory)
             .appending(path: "source-snapshots", directoryHint: .isDirectory)
@@ -2331,7 +2415,7 @@ final class AppViewModel: ObservableObject {
         return document
     }
 
-    private static func previewMediaURL(_ storedURL: URL?, root: URL) -> URL? {
+    nonisolated private static func previewMediaURL(_ storedURL: URL?, root: URL) -> URL? {
         guard let storedURL else { return nil }
         if storedURL.scheme != nil { return storedURL }
         let relativePath = storedURL.relativeString.removingPercentEncoding ?? storedURL.relativeString
@@ -2344,8 +2428,9 @@ final class AppViewModel: ObservableObject {
         return resolved
     }
 
-    private static func previewLocalMediaPath(_ storedPath: String?, root: URL) -> String? {
+    nonisolated private static func previewLocalMediaPath(_ storedPath: String?, root: URL) -> String? {
         guard let storedPath else { return nil }
+        if let available = MediaCacheMaintenance.availablePath(storedPath, root: root) { return available }
         let storedURL = URL(fileURLWithPath: storedPath).standardizedFileURL
         if FileManager.default.fileExists(atPath: storedURL.path) { return storedURL.path }
         for marker in ["/media/", "/.x-article-archiver/"] {
@@ -2393,7 +2478,7 @@ final class AppViewModel: ObservableObject {
         errorMessage = nil
         progress.stage = "正在建立本地采集队列"
         defer {
-            isRunning = false
+            isRunning = hasActiveDownloadProgress || articleArchiveTasks.count > 0
             runningTask = nil
         }
         do {
@@ -2500,6 +2585,7 @@ final class AppViewModel: ObservableObject {
         skippedCount: Int = 0,
         skippedSubscriptionCount: Int = 0
     ) {
+        isRunning = true
         browserCaptureStopRequested = false
         var seen = Set<String>()
         browserCaptureRequests = requests.filter { seen.insert($0.link.postID).inserted }
@@ -2543,6 +2629,7 @@ final class AppViewModel: ObservableObject {
         _ requests: [BrowserCaptureRequest],
         additionalSkipped: Int
     ) {
+        guard !browserCaptureStopRequested else { return }
         progress.skippedArticles += additionalSkipped
         let merge = ParallelCreatorArchivePolicy.mergeQueue(
             existingPostIDs: browserCaptureRequests.map(\.link.postID),
@@ -2569,6 +2656,7 @@ final class AppViewModel: ObservableObject {
             waitingForMore: captureIdleWaitingForDiscovery
         )
         if previousCount == 0 {
+            isRunning = true
             browserCaptureStopRequested = false
             browserCaptureSavedPostIDs.removeAll()
             browserCaptureFailurePostIDs.removeAll()
@@ -2828,6 +2916,7 @@ final class AppViewModel: ObservableObject {
         creators = try await database.loadCreators().filter(\.isEnabled)
         reconcilePinnedCreatorIDs()
         articles = try await database.loadLibraryArticles()
+        if !searchText.isEmpty { updateSearchResults() }
         if case .creator(let creatorID) = sidebarSelection,
            !creators.contains(where: { $0.id == creatorID }) {
             sidebarSelection = .all
@@ -2920,6 +3009,9 @@ final class AppViewModel: ObservableObject {
 
     private func repairLibraryInBackground() async {
         guard let archiveRoot, let database else { return }
+        isPreparingSearch = true
+        defer { isPreparingSearch = false; if !searchText.isEmpty { updateSearchResults() } }
+        let indexed = (try? await database.indexedArticleIDs()) ?? []
         await clearUntrustedVerifiedEmptyTotalsIfNeeded()
         await repairMissingCreatorArticleTotals()
         let snapshot = articles
@@ -2965,14 +3057,27 @@ final class AppViewModel: ObservableObject {
                 pendingUpdates[updated.id] = updated
             }
             if shouldMigrateFormatting {
+                let migrationArticle = updated
                 await Task.detached(priority: .utility) {
-                    Self.migrateGeneratedMarkdownFormattingIfSafe([updated], root: archiveRoot)
+                    Self.migrateGeneratedMarkdownFormattingIfSafe([migrationArticle], root: archiveRoot)
                 }.value
+            }
+
+            if !indexed.contains(updated.id), let path = updated.markdownPath {
+                let body = await Task.detached(priority: .utility) {
+                    (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+                }.value
+                guard !Task.isCancelled else { return }
+                if !body.isEmpty {
+                    do { try await database.indexArticle(updated, body: body) }
+                    catch { statusMessage = "部分文章尚未加入搜索，下次打开时会继续" }
+                }
             }
 
             if (offset + 1).isMultiple(of: 25) {
                 applyBackgroundArticleUpdates(pendingUpdates)
                 pendingUpdates.removeAll(keepingCapacity: true)
+                if !searchText.isEmpty { updateSearchResults() }
                 await Task.yield()
             }
         }

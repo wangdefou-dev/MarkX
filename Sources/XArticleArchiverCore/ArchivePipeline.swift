@@ -40,6 +40,7 @@ public actor ArchivePipeline {
         root: URL,
         progress: (@Sendable (String) async -> Void)? = nil
     ) async throws -> ArchivedArticle {
+        try Task.checkCancellation()
         let stableKey = sourceDocument.sourceArticleID ?? sourceDocument.sourcePostID
         var document = sourceDocument
         // Fail before any download, upload, database completion state or file
@@ -92,6 +93,7 @@ public actor ArchivePipeline {
             archivedAt: existing?.archivedAt ?? Date(),
             lastSyncedAt: Date(),
             sourceChecksum: sourceChecksum,
+            markdownPath: existing?.markdownPath,
             imageCount: document.media.count,
             videoCount: document.videos?.count ?? 0,
             pipelineState: .parsed,
@@ -120,6 +122,10 @@ public actor ArchivePipeline {
         if !document.media.isEmpty {
             await progress?("正在缓存 \(document.media.count) 张原图")
             for index in document.media.indices {
+                try Task.checkCancellation()
+                if let path = document.media[index].localCachePath {
+                    document.media[index].localCachePath = MediaCacheMaintenance.availablePath(path, root: root)
+                }
                 if let path = document.media[index].localCachePath, FileManager.default.fileExists(atPath: path) { continue }
                 document.media[index] = try await downloader.cache(document.media[index], in: cache)
             }
@@ -161,6 +167,10 @@ public actor ArchivePipeline {
         if var videos = document.videos, !videos.isEmpty {
             await progress?("正在下载 \(videos.count) 个视频原文件")
             for index in videos.indices {
+                try Task.checkCancellation()
+                if let path = videos[index].localCachePath {
+                    videos[index].localCachePath = MediaCacheMaintenance.availablePath(path, root: root)
+                }
                 if let path = videos[index].localCachePath,
                    FileManager.default.fileExists(atPath: path) { continue }
                 videos[index] = try await videoDownloader.cache(videos[index], in: videoCache)
@@ -214,6 +224,7 @@ public actor ArchivePipeline {
         let destination = articlesDirectory.appending(path: fileName)
 
         await progress?("正在生成并校验 Markdown")
+        try Task.checkCancellation()
         let markdown = try MarkdownRenderer.render(
             document: document,
             archiveRoot: root,
@@ -230,7 +241,10 @@ public actor ArchivePipeline {
         try await database.upsertArticle(record)
 
         var obsoleteCleanFile: URL?
-        if let existing, let oldPath = existing.markdownPath, FileManager.default.fileExists(atPath: oldPath) {
+        // Also protect an existing destination when a previous crash left no
+        // database path. A retry must never bypass protection of manual edits.
+        let oldPath = existing?.markdownPath ?? destination.path
+        if FileManager.default.fileExists(atPath: oldPath) {
             let oldContents = try String(contentsOfFile: oldPath, encoding: .utf8)
             if !MarkdownRenderer.isUnmodifiedExport(oldContents) {
                 let incoming = destination.deletingPathExtension().appendingPathExtension("incoming.md")
@@ -242,6 +256,9 @@ public actor ArchivePipeline {
             }
         }
 
+        // Cancellation stops before this commit section; once it starts, finish
+        // the file/snapshot/database commit before reporting a stopped session.
+        try Task.checkCancellation()
         let finalMarkdown = MarkdownRenderer.addingExportChecksum(to: markdown)
         let staging = pending.appending(path: "\(stableKey)-\(UUID().uuidString).md")
         try Data(finalMarkdown.utf8).write(to: staging, options: .atomic)
@@ -264,7 +281,7 @@ public actor ArchivePipeline {
         record.lastSyncedAt = Date()
         record.warnings = document.warnings
         record.appendProcessingLog("处理完成，Markdown 已保存")
-        try await database.upsertArticle(record)
+        try await database.commitArticle(record, searchBody: MarkdownRenderer.visibleSourceText(document))
         try ArchiveIndexWriter.rebuild(root: root, creator: creator)
         await progress?("已完成：\(document.title)")
         return record

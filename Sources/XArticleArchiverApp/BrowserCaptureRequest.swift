@@ -23,6 +23,7 @@ struct CreatorArticleDiscoveryResult: Hashable {
     /// The Articles list stayed empty at the bottom long enough to treat zero
     /// as a real total. A timeout or a blocked gate does not set this.
     var confirmedEmpty = false
+    var isComplete = true
 }
 
 struct CreatorArticleListItem: Identifiable, Hashable {

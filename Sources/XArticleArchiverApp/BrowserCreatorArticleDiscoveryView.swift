@@ -204,7 +204,11 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
 
         // The list is virtualized: cards that leave the viewport may disappear
         // from the DOM. Accumulate each visible batch before scrolling again.
-        for _ in 0..<CreatorArticleListSettlePolicy.maxPolls {
+        // Bound lack of progress, rather than the total length of a creator's
+        // history. A growing list must not be cut off after 320 scrolls.
+        var progressBudget = CreatorArticleScanProgressBudget()
+        while !progressBudget.exhausted {
+            progressBudget.beginPoll()
             try Task.checkCancellation()
             if !isLoading {
                 if await revealBlockedArticleListIfNeeded() {
@@ -257,6 +261,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                     }
 
                     let gained = orderedItems.count - before
+                    if gained > 0 { progressBudget.foundNewItems() }
                     let waitingForRevealedList = gateSettlePolls > 0
                     if waitingForRevealedList {
                         gateSettlePolls -= 1
@@ -322,7 +327,8 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
             )
             return CreatorArticleDiscoveryResult(
                 items: request.countOnly ? [] : Array(orderedItems.prefix(selectedCount)),
-                knownArticleCount: nil
+                knownArticleCount: nil,
+                isComplete: false
             )
         }
         throw BrowserArticleCaptureError.pageNotReady(lastReason)

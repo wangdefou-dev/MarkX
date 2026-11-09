@@ -98,22 +98,14 @@ public struct S3ImageHostAdapter: ImageHostAdapter {
     }
 
     public func verify(remoteURL: URL) async throws {
-        guard remoteURL.scheme == "https", let host = remoteURL.host, !host.isEmpty,
-              host != "localhost", host != "127.0.0.1", host != "::1" else {
-            throw ImagePipelineError.insecureURL(remoteURL.absoluteString)
-        }
         try await retryingNetworkOperation(attempts: 4) {
-            var request = URLRequest(url: remoteURL)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 30
-            request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
-            let (_, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw ImagePipelineError.invalidHTTPStatus(0) }
-            guard (200..<300).contains(http.statusCode) else { throw ImagePipelineError.invalidHTTPStatus(http.statusCode) }
-            let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
-            guard mime?.hasPrefix("image/") == true || mime == "application/octet-stream" else {
-                throw ImagePipelineError.invalidMIME(mime)
-            }
+            try await RemoteMediaVerifier.verify(remoteURL, session: session)
+        }
+    }
+
+    public func verifyVideo(remoteURL: URL) async throws {
+        try await retryingNetworkOperation(attempts: 4) {
+            try await RemoteMediaVerifier.verify(remoteURL, video: true, session: session)
         }
     }
 

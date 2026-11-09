@@ -87,6 +87,15 @@ public enum CreatorArticleListSettlePolicy {
     }
 }
 
+public struct CreatorArticleScanProgressBudget: Sendable {
+    private var pollsWithoutProgress = 0
+    private let limit: Int
+    public init(limit: Int = CreatorArticleListSettlePolicy.maxPolls) { self.limit = limit }
+    public var exhausted: Bool { pollsWithoutProgress >= limit }
+    public mutating func beginPoll() { pollsWithoutProgress += 1 }
+    public mutating func foundNewItems() { pollsWithoutProgress = 0 }
+}
+
 extension CreatorArticleCountPolicy {
     /// 0.3.34 marked a creator verified-empty after a short page showed no
     /// cards. Those rows are not a real zero. Forget that mark once, so the

@@ -41,25 +41,7 @@ public extension ImageHostAdapter {
     var storesLocalBackup: Bool { false }
 
     func verifyVideo(remoteURL: URL) async throws {
-        guard remoteURL.scheme?.lowercased() == "https", let host = remoteURL.host, !host.isEmpty,
-              host != "localhost", host != "127.0.0.1", host != "::1" else {
-            throw VideoPipelineError.insecureURL(remoteURL.absoluteString)
-        }
-        var request = URLRequest(url: remoteURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 30
-        request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw VideoPipelineError.invalidHTTPStatus(0)
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw VideoPipelineError.invalidHTTPStatus(http.statusCode)
-        }
-        let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
-        guard mime?.hasPrefix("video/") == true || mime == "application/octet-stream" else {
-            throw VideoPipelineError.invalidMIME(mime)
-        }
+        try await RemoteMediaVerifier.verify(remoteURL, video: true)
     }
 }
 
@@ -119,11 +101,24 @@ public struct LocalMediaHostAdapter: ImageHostAdapter {
                     path: ".\(destination.lastPathComponent).\(UUID().uuidString).tmp"
                 )
                 do {
-                    try FileManager.default.copyItem(at: source, to: staging)
+                    // Cache and backup are immutable, content-addressed files
+                    // on the same archive volume. Share bytes when possible.
+                    do {
+                        try FileManager.default.linkItem(at: source, to: staging)
+                    } catch {
+                        try FileManager.default.copyItem(at: source, to: staging)
+                    }
                     guard try hashFile(staging) == digest else {
                         throw ImagePipelineError.localFileMismatch(staging.path)
                     }
-                    try FileManager.default.moveItem(at: staging, to: destination)
+                    do {
+                        try FileManager.default.moveItem(at: staging, to: destination)
+                    } catch {
+                        // Another archive may have committed the same digest.
+                        guard FileManager.default.fileExists(atPath: destination.path),
+                              try hashFile(destination) == digest else { throw error }
+                        try FileManager.default.removeItem(at: staging)
+                    }
                 } catch {
                     try? FileManager.default.removeItem(at: staging)
                     throw error
@@ -473,13 +468,16 @@ public struct UPicAdapter: ImageHostAdapter {
         }
         let executableURL = self.executableURL
         let processTimeout = self.processTimeout
-        return try await Task.detached(priority: .userInitiated) {
+        let worker = Task.detached(priority: .userInitiated) {
             try Self.runUploadProcess(
                 executableURL: executableURL,
                 fileURLs: fileURLs,
                 timeout: processTimeout
             )
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: { worker.cancel() }
     }
 
     private static func runUploadProcess(
@@ -502,7 +500,7 @@ public struct UPicAdapter: ImageHostAdapter {
         let finished = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        guard finished.wait(timeout: .now() + timeout) == .success else {
+        func terminate() {
             if process.isRunning {
                 process.terminate()
             }
@@ -510,6 +508,21 @@ public struct UPicAdapter: ImageHostAdapter {
                 kill(process.processIdentifier, SIGKILL)
                 _ = finished.wait(timeout: .now() + 2)
             }
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        var completed = false
+        while Date() < deadline {
+            if Task.isCancelled {
+                terminate()
+                throw CancellationError()
+            }
+            if finished.wait(timeout: .now() + 0.1) == .success {
+                completed = true
+                break
+            }
+        }
+        guard completed else {
+            terminate()
             throw ImagePipelineError.processTimedOut(Int(timeout.rounded(.up)))
         }
         let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
@@ -530,21 +543,11 @@ public struct UPicAdapter: ImageHostAdapter {
     }
 
     public func verify(remoteURL: URL) async throws {
-        guard remoteURL.scheme?.lowercased() == "https", let host = remoteURL.host, !host.isEmpty,
-              host != "localhost", host != "127.0.0.1", host != "::1" else {
-            throw ImagePipelineError.insecureURL(remoteURL.absoluteString)
-        }
-        var request = URLRequest(url: remoteURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 30
-        request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ImagePipelineError.invalidHTTPStatus(0) }
-        guard (200..<300).contains(http.statusCode) else { throw ImagePipelineError.invalidHTTPStatus(http.statusCode) }
-        let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
-        guard mime?.hasPrefix("image/") == true || mime == "application/octet-stream" else {
-            throw ImagePipelineError.invalidMIME(mime)
-        }
+        try await RemoteMediaVerifier.verify(remoteURL, session: session)
+    }
+
+    public func verifyVideo(remoteURL: URL) async throws {
+        try await RemoteMediaVerifier.verify(remoteURL, video: true, session: session)
     }
 
     private static func safeProcessMessage(_ message: String) -> String {

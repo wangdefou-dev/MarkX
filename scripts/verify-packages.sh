@@ -2,8 +2,10 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PROJECT_DIR/Config/Info.plist")"
+BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PROJECT_DIR/Config/Info.plist")"
 DIST_DIR="$PROJECT_DIR/dist"
-DMG_PATH="$DIST_DIR/MarkX-0.3.36.dmg"
+DMG_PATH="$DIST_DIR/MarkX-$APP_VERSION.dmg"
 VERIFY_DIR="$(mktemp -d /tmp/x-article-archiver-verify.XXXXXX)"
 MOUNT_DIR="$VERIFY_DIR/mount"
 

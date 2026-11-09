@@ -19,6 +19,11 @@ struct XArticleArchiverApp: App {
         .handlesExternalEvents(matching: MarkXWindowPolicy.externalEventKeys)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandMenu("资料库") {
+                Button("整理重复媒体缓存…") { model.cleanVerifiedMediaCache() }
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
+                    .help("核对并移除已有完整备份的重复隐藏缓存")
+            }
         }
 
         Settings {

@@ -217,6 +217,72 @@ public actor ArchiveDatabase {
         )
     }
 
+    public func indexedArticleIDs() throws -> Set<UUID> {
+        let statement = try prepare("SELECT article_id FROM article_search_v2;")
+        defer { sqlite3_finalize(statement) }
+        var ids = Set<UUID>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let raw = text(statement, 0), let id = UUID(uuidString: raw) { ids.insert(id) }
+        }
+        return ids
+    }
+
+    public func indexArticle(_ article: ArchivedArticle, body: String) throws {
+        let delete = try prepare("DELETE FROM article_search_v2 WHERE article_id = ?;")
+        defer { sqlite3_finalize(delete) }
+        bind(article.id.uuidString, to: 1, in: delete)
+        try step(delete)
+        let insert = try prepare("INSERT INTO article_search_v2(article_id, title, author_handle, body) VALUES (?, ?, ?, ?);")
+        defer { sqlite3_finalize(insert) }
+        bind(article.id.uuidString, to: 1, in: insert)
+        bind(article.title, to: 2, in: insert)
+        bind(article.authorHandle, to: 3, in: insert)
+        bind(body, to: 4, in: insert)
+        try step(insert)
+    }
+
+    public func commitArticle(_ article: ArchivedArticle, searchBody: String) throws {
+        try Self.execute(on: database, sql: "BEGIN IMMEDIATE;")
+        do {
+            try upsertArticle(article)
+            try indexArticle(article, body: searchBody)
+            try Self.execute(on: database, sql: "COMMIT;")
+        } catch {
+            try? Self.execute(on: database, sql: "ROLLBACK;")
+            throw error
+        }
+    }
+
+    public func searchArticleIDs(_ input: String) throws -> Set<UUID> {
+        let query = String(input.trimmingCharacters(in: .whitespacesAndNewlines).prefix(256))
+        guard !query.isEmpty else { return [] }
+        // Trigrams support Chinese substring search. One/two-character input
+        // uses literal LIKE because it cannot form a trigram.
+        let sql: String
+        let value: String
+        if query.count >= 3 {
+            sql = "SELECT article_id FROM article_search_v2 WHERE article_search_v2 MATCH ?;"
+            value = "\"" + query.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        } else {
+            sql = "SELECT article_id FROM article_search_v2 WHERE title LIKE ? ESCAPE '\\' OR author_handle LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\';"
+            value = "%" + query.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_") + "%"
+        }
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind(value, to: 1, in: statement)
+        if query.count < 3 { bind(value, to: 2, in: statement); bind(value, to: 3, in: statement) }
+        var ids = Set<UUID>()
+        var status = sqlite3_step(statement)
+        while status == SQLITE_ROW {
+            if let raw = text(statement, 0), let id = UUID(uuidString: raw) { ids.insert(id) }
+            status = sqlite3_step(statement)
+        }
+        guard status == SQLITE_DONE else { throw ArchiveDatabaseError.execute(String(cString: sqlite3_errmsg(database))) }
+        return ids
+    }
+
     private func loadArticles(sql: String, includeProcessingLog: Bool) throws -> [ArchivedArticle] {
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -360,6 +426,10 @@ public actor ArchiveDatabase {
     }
 
     public func deleteArticle(id: UUID) throws {
+        let search = try prepare("DELETE FROM article_search_v2 WHERE article_id = ?;")
+        defer { sqlite3_finalize(search) }
+        bind(id.uuidString, to: 1, in: search)
+        try step(search)
         let statement = try prepare("DELETE FROM articles WHERE id = ?;")
         defer { sqlite3_finalize(statement) }
         bind(id.uuidString, to: 1, in: statement)
@@ -432,7 +502,8 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_articles_content_type_published ON articles(content_type, published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_creators_username ON creators(username COLLATE NOCASE);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
-        PRAGMA user_version=6;
+        CREATE VIRTUAL TABLE IF NOT EXISTS article_search_v2 USING fts5(article_id UNINDEXED, title, author_handle, body, tokenize='trigram');
+        PRAGMA user_version=7;
         """)
         if !columnExists(on: database, table: "articles", column: "video_count") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
@@ -449,7 +520,7 @@ public actor ArchiveDatabase {
         if !columnExists(on: database, table: "articles", column: "paid_partnership_checked") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN paid_partnership_checked INTEGER NOT NULL DEFAULT 0;")
         }
-        try execute(on: database, sql: "PRAGMA user_version=6;")
+        try execute(on: database, sql: "PRAGMA user_version=7;")
     }
 
     private static let articleSelectColumns = "id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership, paid_partnership_checked"
