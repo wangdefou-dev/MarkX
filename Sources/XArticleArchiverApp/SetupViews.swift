@@ -314,7 +314,7 @@ struct ConnectionSetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: "连接与存储", subtitle: "选择归档位置，以及图片和视频的保存方式。", symbol: "externaldrive")
+            MarkXPaneHeader(title: "连接与存储", subtitle: "管理 Chrome 连接、归档位置，以及图片和视频的保存方式。", symbol: "externaldrive")
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -322,16 +322,22 @@ struct ConnectionSetupView: View {
                         MarkXSection(title: "归档位置", detail: "Markdown、原图、视频与资料库会一起保存。") {
                             ArchiveFolderRow()
                         }.id("archive-directory")
+                        MarkXSection(title: "Chrome 与 X 登录") { ChromeConnectionConfiguration() }.id("chrome-session")
                         MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }.id("image-host")
                         MarkXInfoLine(symbol: "lock.shield", text: "正文在本机转换，访问密钥仅保存在 macOS 钥匙串。")
                     }
                     .padding(MarkXInterface.inset)
                 }
                 .onAppear {
-                    if case .imageHost = model.connectionSetupTarget {
+                    let target: String? = switch model.connectionSetupTarget {
+                    case .overview: nil
+                    case .chrome: "chrome-session"
+                    case .imageHost: "image-host"
+                    }
+                    if let target {
                         Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(100))
-                            proxy.scrollTo("image-host", anchor: .top)
+                            proxy.scrollTo(target, anchor: .top)
                         }
                     }
                 }
@@ -345,6 +351,31 @@ struct ConnectionSetupView: View {
         .background(MarkXInterface.canvas)
         .frame(width: 680, height: MarkXInterface.sheetHeight(660))
         .onExitCommand { dismiss() }
+    }
+}
+
+private struct ChromeConnectionConfiguration: View {
+    @EnvironmentObject private var model: AppViewModel
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            MarkXInfoLine(symbol: model.hasChromeProfile ? "checkmark.circle" : "exclamationmark.circle",
+                text: model.hasChromeProfile ? "已检测到本机 Chrome 配置，下载时会复用其中的 X 登录状态。" : "请先在本机 Chrome 登录 x.com，登录后返回 MarkX。",
+                color: model.hasChromeProfile ? .green : .orange)
+            HStack(spacing: 12) {
+                Button("打开 Chrome 登录 X", systemImage: "arrow.up.right.square") { model.openChromeXLogin() }
+                    .help("在本机 Chrome 打开 X 登录页面")
+                Button("刷新状态", systemImage: "arrow.clockwise") { model.refreshChromeStatus() }
+                    .help("重新检查本机 Chrome 配置")
+            }
+            Text("登录状态只在本机使用；MarkX 不会保存你的 X 密码。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .onAppear { model.refreshChromeStatus() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.refreshChromeStatus() }
+        }
     }
 }
 
@@ -493,9 +524,7 @@ struct SettingsView: View {
             pane(title: "通用", subtitle: "管理本地资料库与 X 连接。", symbol: "slider.horizontal.3") {
                 MarkXSection(title: "本地资料库") { ArchiveFolderRow() }
                 MarkXSection(title: "X 页面连接") {
-                    MarkXInfoLine(symbol: ChromeXSessionReader.hasLocalChromeProfile() ? "checkmark.circle" : "exclamationmark.circle",
-                        text: ChromeXSessionReader.hasLocalChromeProfile() ? "可复用本机 Chrome 的 X 登录状态" : "请先在本机 Chrome 登录 x.com",
-                        color: ChromeXSessionReader.hasLocalChromeProfile() ? .green : .orange)
+                    ChromeConnectionConfiguration()
                     Text("下载在后台进行，文章只保存在你选择的位置。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }

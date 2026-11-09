@@ -48,6 +48,7 @@ final class AppViewModel: ObservableObject {
 
     enum ConnectionSetupTarget {
         case overview
+        case chrome
         case imageHost
     }
 
@@ -95,6 +96,7 @@ final class AppViewModel: ObservableObject {
     @Published var showingSyncAllConfiguration = false
     @Published var showingConnectionSetup = false
     @Published var connectionSetupTarget: ConnectionSetupTarget = .overview
+    @Published private(set) var hasChromeProfile = ChromeXSessionReader.hasLocalChromeProfile()
     @Published var downloadSheetPrefill = ""
     @Published var downloadSheetUsesArticleLinks = false
     @Published var showingCreatorArticleDiscovery = false
@@ -513,8 +515,17 @@ final class AppViewModel: ObservableObject {
     }
 
     func presentConnectionSetup(focusing target: ConnectionSetupTarget = .overview) {
+        refreshChromeStatus()
         connectionSetupTarget = target
         showingConnectionSetup = true
+    }
+
+    func refreshChromeStatus() {
+        hasChromeProfile = ChromeXSessionReader.hasLocalChromeProfile()
+    }
+
+    func openChromeXLogin() {
+        openInChrome(URL(string: "https://x.com/i/flow/login")!, successMessage: "已在 Chrome 打开 X 登录页面，登录后返回 MarkX 即可")
     }
 
     func showDownloadProgressWindow() {

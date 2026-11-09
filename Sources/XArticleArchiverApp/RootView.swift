@@ -5,6 +5,7 @@ import XArticleArchiverCore
 
 struct RootView: View {
     @EnvironmentObject private var model: AppViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
     @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
@@ -33,6 +34,10 @@ struct RootView: View {
             columnVisibility = .all
         }
         .toolbar { toolbar }
+        .onAppear { model.refreshChromeStatus() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.refreshChromeStatus() }
+        }
         .onOpenURL { model.handleOpenURL($0) }
         .handlesExternalEvents(
             preferring: MarkXWindowPolicy.externalEventKeys,
@@ -240,7 +245,7 @@ struct RootView: View {
         .environment(\.defaultMinListRowHeight, 32)
         .safeAreaInset(edge: .top, spacing: SidebarChrome.downloadToLibrarySpacing) {
             sidebarDownloadEntry
-                .padding(.horizontal, SidebarChrome.moduleHorizontalInset)
+                .padding(.horizontal, SidebarChrome.downloadHorizontalInset)
                 .padding(.top, 8)
                 .padding(.bottom, 2)
                 .background(.bar)
@@ -250,8 +255,9 @@ struct RootView: View {
                 isRunning: model.isRunning,
                 statusText: model.isRunning ? model.progress.stage : model.statusMessage,
                 archiveName: model.archiveRoot?.lastPathComponent ?? "未选择归档目录",
-                hasChromeSession: ChromeXSessionReader.hasLocalChromeProfile(),
+                hasChromeSession: model.hasChromeProfile,
                 hasImageHost: model.imageHostVerified,
+                configureChrome: { model.presentConnectionSetup(focusing: .chrome) },
                 configureImageHost: { model.presentConnectionSetup(focusing: .imageHost) },
                 switchDirectory: { model.chooseArchiveFolder() }
             )
@@ -268,13 +274,13 @@ struct RootView: View {
                 Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
                 Text("开始下载文章").font(.system(size: 13, weight: .medium))
                 Spacer(minLength: 4)
-                Image(systemName: "square.and.arrow.down").font(.system(size: 12)).foregroundStyle(.secondary)
+                Image(systemName: "square.and.arrow.down").font(.system(size: 12))
             }
-            .foregroundStyle(.primary)
+            .foregroundStyle(.orange)
             .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator.opacity(0.35), lineWidth: 0.5))
+            .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36)
+            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.5))
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
@@ -319,11 +325,11 @@ struct RootView: View {
         let localArticleCount = statistics.articleCount(for: creator.id)
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
         return sidebarMetricRow {
-            Image(systemName: creator.isProtected
-                  ? "lock"
-                  : model.isCreatorPinned(creator) ? "pin.fill" : "person")
+            Image(systemName: model.isCreatorPinned(creator)
+                  ? "pin.fill"
+                  : creator.isProtected ? "lock" : "person")
                 .font(.system(size: model.isCreatorPinned(creator) ? 11 : 13, weight: .regular))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(model.isCreatorPinned(creator) ? Color.orange : Color.secondary)
         } title: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(creator.displayName)
@@ -426,28 +432,34 @@ struct RootView: View {
         }
     }
 
+    private var librarySearchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("搜索标题、博主或正文", text: $model.searchText)
+                .textFieldStyle(.plain)
+                .help("在当前分类内搜索，支持中文正文")
+                .accessibilityLabel("搜索标题、博主或正文")
+                .accessibilityIdentifier("librarySearchField")
+            if model.isSearching { ProgressView().controlSize(.small) }
+            if !model.searchText.isEmpty {
+                Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("清空搜索")
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10)
+        .frame(width: 260, height: 30)
+    }
+
     private var articleList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜索标题、博主或正文", text: $model.searchText)
-                    .textFieldStyle(.plain)
-                    .help("在当前分类内搜索，支持中文正文")
-                    .accessibilityIdentifier("librarySearchField")
-                if model.isSearching { ProgressView().controlSize(.small) }
-                if !model.searchText.isEmpty {
-                    Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("清空搜索")
-                }
-            }
-            .padding(12)
             if model.isPreparingSearch {
                 Text("正在整理历史文章，搜索结果会逐步补齐…")
-                    .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
+                    .font(.caption).foregroundStyle(.secondary).padding(8)
+                Divider()
             }
-            Divider()
             Group {
                 if !model.filteredArticles.isEmpty {
                     List(selection: $model.selectedArticleID) {
@@ -775,6 +787,10 @@ struct RootView: View {
             }
         }
 
+        ToolbarItem(placement: .primaryAction) {
+            librarySearchField
+        }
+
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 model.presentDownloadSheet()
@@ -811,12 +827,25 @@ struct RootView: View {
                 .help("重新打开后台下载队列和当前进度")
             }
 
-            Button {
-                model.presentConnectionSetup()
+            Menu {
+                Button {
+                    model.presentConnectionSetup(focusing: .chrome)
+                } label: {
+                    Label("Chrome" + (model.hasChromeProfile ? "已连接" : "待配置"), systemImage: "globe")
+                }
+                Button {
+                    model.presentConnectionSetup(focusing: .imageHost)
+                } label: {
+                    Label("存储" + (model.imageHostVerified ? "已连接" : "待配置"), systemImage: "externaldrive")
+                }
+                Divider()
+                Button("连接与存储…", systemImage: "externaldrive") { model.presentConnectionSetup() }
+                SettingsLink { Label("更多设置…", systemImage: "slider.horizontal.3") }
             } label: {
-                Label("连接与存储", systemImage: "gearshape")
+                Label("设置", systemImage: "gearshape")
             }
-            .help("配置归档目录以及图片、视频存储方式")
+            .menuIndicator(.hidden)
+            .help("Chrome\(model.hasChromeProfile ? "已连接" : "待配置") · 存储\(model.imageHostVerified ? "已连接" : "待配置")")
         }
     }
 
@@ -1020,6 +1049,7 @@ private struct CreatorProfileToolbarHeader: View {
 
 private enum SidebarChrome {
     static let moduleHorizontalInset: CGFloat = 12
+    static let downloadHorizontalInset: CGFloat = 10
     static let downloadToLibrarySpacing: CGFloat = 8
 }
 
@@ -1029,6 +1059,7 @@ private struct SidebarStatusCard: View {
     let archiveName: String
     let hasChromeSession: Bool
     let hasImageHost: Bool
+    let configureChrome: () -> Void
     let configureImageHost: () -> Void
     let switchDirectory: () -> Void
 
@@ -1051,14 +1082,18 @@ private struct SidebarStatusCard: View {
                     ProgressView().controlSize(.mini)
                     Text(statusText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                 }
-            } else {
-                HStack(spacing: 10) {
+            }
+            HStack(spacing: 10) {
+                Button(action: configureChrome) {
                     SidebarConnectionBadge(title: "Chrome", isReady: hasChromeSession)
-                    Button(action: configureImageHost) {
-                        SidebarConnectionBadge(title: "存储", isReady: hasImageHost)
-                    }
-                    .buttonStyle(.plain).help("查看媒体存储设置")
+                        .padding(.vertical, 3).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).help("查看 Chrome 与 X 登录配置")
+                Button(action: configureImageHost) {
+                    SidebarConnectionBadge(title: "存储", isReady: hasImageHost)
+                        .padding(.vertical, 3).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("查看媒体存储设置")
             }
         }
         .padding(.horizontal, 4)
