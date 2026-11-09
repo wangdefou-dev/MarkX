@@ -25,15 +25,14 @@ struct RootView: View {
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
-        .background(MainWindowChrome().frame(width: 0, height: 0))
+        .toolbar(removing: .sidebarToggle)
+        .background(MainWindowChrome(isSidebarVisible: isSidebarVisible) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                columnVisibility = isSidebarVisible ? .doubleColumn : .all
+            }
+        }.frame(width: 0, height: 0))
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
-        .onChange(of: model.sidebarSelection) { _, _ in
-            columnVisibility = .all
-        }
-        .onChange(of: model.selectedArticleID) { _, _ in
-            columnVisibility = .all
-        }
         .toolbar { toolbar }
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
@@ -128,6 +127,10 @@ struct RootView: View {
         } message: {
             Text("只会停止跟踪并从侧边栏移除该博主。已经下载的文章、本地媒体缓存和远程图片/视频全部保留；以后再次添加该博主即可继续拉取。")
         }
+    }
+
+    private var isSidebarVisible: Bool {
+        columnVisibility != .doubleColumn && columnVisibility != .detailOnly
     }
 
     private var sidebar: some View {
