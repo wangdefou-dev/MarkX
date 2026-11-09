@@ -130,6 +130,27 @@ struct RootView: View {
     }
 
     private var sidebar: some View {
+        VStack(spacing: 0) {
+            sidebarDownloadEntry
+            sidebarLibrary
+            SidebarStatusCard(
+                isRunning: model.isRunning,
+                statusText: model.isRunning ? model.progress.stage : model.statusMessage,
+                archiveName: model.archiveRoot?.lastPathComponent ?? "未选择归档目录",
+                hasChromeSession: model.hasChromeProfile,
+                hasImageHost: model.imageHostVerified,
+                configureChrome: { model.presentConnectionSetup(focusing: .chrome) },
+                configureImageHost: { model.presentConnectionSetup(focusing: .imageHost) },
+                switchDirectory: { model.chooseArchiveFolder() }
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+        }
+        .background(.bar)
+    }
+
+    private var sidebarLibrary: some View {
         let statistics = model.sidebarStatistics
         return List(selection: $model.sidebarSelection) {
             Section {
@@ -242,30 +263,8 @@ struct RootView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 32)
-        .safeAreaInset(edge: .top, spacing: SidebarChrome.downloadToLibrarySpacing) {
-            sidebarDownloadEntry
-                .padding(.horizontal, SidebarChrome.downloadHorizontalInset)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-                .background(.bar)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            SidebarStatusCard(
-                isRunning: model.isRunning,
-                statusText: model.isRunning ? model.progress.stage : model.statusMessage,
-                archiveName: model.archiveRoot?.lastPathComponent ?? "未选择归档目录",
-                hasChromeSession: model.hasChromeProfile,
-                hasImageHost: model.imageHostVerified,
-                configureChrome: { model.presentConnectionSetup(focusing: .chrome) },
-                configureImageHost: { model.presentConnectionSetup(focusing: .imageHost) },
-                switchDirectory: { model.chooseArchiveFolder() }
-            )
-            .padding(.horizontal, SidebarChrome.moduleHorizontalInset)
-            .padding(.top, 10)
-            .padding(.bottom, 12)
-            .background(.bar)
-        }
     }
 
     private var sidebarDownloadEntry: some View {
@@ -277,11 +276,10 @@ struct RootView: View {
                 Image(systemName: "square.and.arrow.down").font(.system(size: 12))
             }
             .foregroundStyle(.orange)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36)
-            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.5))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+            .background(Color.orange.opacity(0.1))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(model.isRunning || model.hasActiveDownloadProgress)
@@ -1047,12 +1045,6 @@ private struct CreatorProfileToolbarHeader: View {
     }
 }
 
-private enum SidebarChrome {
-    static let moduleHorizontalInset: CGFloat = 12
-    static let downloadHorizontalInset: CGFloat = 10
-    static let downloadToLibrarySpacing: CGFloat = 8
-}
-
 private struct SidebarStatusCard: View {
     let isRunning: Bool
     let statusText: String
@@ -1065,7 +1057,6 @@ private struct SidebarStatusCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Divider()
             Button(action: switchDirectory) {
                 HStack(spacing: 8) {
                     Image(systemName: "folder").font(.system(size: 13))
@@ -1096,7 +1087,6 @@ private struct SidebarStatusCard: View {
                 .buttonStyle(.plain).help("查看媒体存储设置")
             }
         }
-        .padding(.horizontal, 4)
     }
 }
 
