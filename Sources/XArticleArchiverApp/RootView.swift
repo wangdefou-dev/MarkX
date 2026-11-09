@@ -269,7 +269,7 @@ struct RootView: View {
         Button { model.presentDownloadSheet() } label: {
             HStack(spacing: 9) {
                 Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
-                Text("开始下载文章").font(.system(size: 13, weight: .medium))
+                Text("开始下载文章").font(.system(size: 15, weight: .medium))
                 Spacer(minLength: 4)
                 Image(systemName: "square.and.arrow.down").font(.system(size: 12))
             }
@@ -922,7 +922,9 @@ private struct SidebarSectionHeader: View {
     var body: some View {
         Button { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } } label: {
             HStack(spacing: 6) {
-                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.primary)
                 if let count {
                     Text(count, format: .number.grouping(.never)).font(.system(size: 10)).monospacedDigit()
                         .accessibilityLabel("\(count) \(countUnit)")
