@@ -134,15 +134,16 @@ struct RootView: View {
         VStack(spacing: 0) {
             sidebarDownloadEntry
             sidebarLibrary
-            SidebarFooter(
-                isRunning: model.isRunning,
-                statusText: model.isRunning ? model.progress.stage : model.statusMessage,
-                archiveName: model.archiveRoot?.lastPathComponent ?? "未选择归档目录",
-                switchDirectory: { model.chooseArchiveFolder() }
-            )
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
+            if model.isRunning {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.mini)
+                    Text(model.progress.stage).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+            }
         }
         .background(.bar)
     }
@@ -929,8 +930,10 @@ private struct SidebarSectionHeader: View {
                 Spacer(minLength: 4)
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
+                    .frame(width: 10)
             }
             .foregroundStyle(.secondary)
+            .padding(.trailing, 16)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1036,35 +1039,6 @@ private struct CreatorProfileToolbarHeader: View {
         .fixedSize(horizontal: true, vertical: false)
         .frame(height: 36, alignment: .center)
         .padding(.leading, 12)
-    }
-}
-
-private struct SidebarFooter: View {
-    let isRunning: Bool
-    let statusText: String
-    let archiveName: String
-    let switchDirectory: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button(action: switchDirectory) {
-                HStack(spacing: 8) {
-                    Image(systemName: "folder").font(.system(size: 13))
-                    Text(archiveName).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 10))
-                }
-                .foregroundStyle(.secondary).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).disabled(isRunning)
-            .help("同步现有文章并切换保存目录")
-            if isRunning {
-                HStack(spacing: 7) {
-                    ProgressView().controlSize(.mini)
-                    Text(statusText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-        }
     }
 }
 
