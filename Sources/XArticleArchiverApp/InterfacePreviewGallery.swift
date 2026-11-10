@@ -7,7 +7,7 @@ import SwiftUI
 struct InterfacePreviewGallery: View {
     static var isEnabled: Bool { Bundle.main.object(forInfoDictionaryKey: "MarkXInterfacePreview") as? Bool == true }
     private enum Page: String, CaseIterable {
-        case sidebar = "侧边栏", download = "下载配置", connection = "连接存储"
+        case sidebar = "侧边栏", articleNumbers = "文章序号", download = "下载配置", connection = "连接存储"
         case sync = "同步", settings = "设置", result = "结果", progress = "进度"
     }
     @EnvironmentObject private var model: AppViewModel
@@ -26,6 +26,7 @@ struct InterfacePreviewGallery: View {
             Group {
                 switch page {
                 case .sidebar: RootView()
+                case .articleNumbers: articleNumberPreview
                 case .download: AddCreatorsView()
                 case .connection: ConnectionSetupView()
                 case .sync: SyncAllCreatorsView()
@@ -44,6 +45,27 @@ struct InterfacePreviewGallery: View {
             model.showingCreatorArticleDiscovery = value == .progress
             model.showingBrowserCapture = value == .progress
         }
+    }
+
+    private var articleNumberPreview: some View {
+        HStack(alignment: .top, spacing: 30) {
+            ForEach([360, 430], id: \.self) { width in
+                VStack(spacing: 12) {
+                    Text("\(width)pt 文章列表").font(MarkXTypography.headline)
+                    List {
+                        if let article = model.articles.first {
+                            ForEach([1, 999, 9999, 10000, 99999], id: \.self) { index in
+                                ArticleRow(article: article, index: index,
+                                           creator: model.creators.first { $0.id == article.creatorID })
+                            }
+                        }
+                    }
+                    .listStyle(.inset)
+                }
+                .frame(width: CGFloat(width))
+            }
+        }
+        .padding(24)
     }
 
     private var previewNotice: DownloadResultNotice {

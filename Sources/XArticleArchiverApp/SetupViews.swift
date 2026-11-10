@@ -554,15 +554,18 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            pane(title: "通用", subtitle: "管理本地资料库与 X 连接。", symbol: "slider.horizontal.3") {
+            pane(title: "通用", subtitle: "管理本地资料库的保存位置。", symbol: "slider.horizontal.3") {
                 MarkXSection(title: "本地资料库") { ArchiveFolderRow() }
-                MarkXSection(title: "X 页面连接") {
+            }
+            .tabItem { Label("通用", systemImage: "slider.horizontal.3") }.tag(0)
+            pane(title: "X 登录验证", subtitle: "选择浏览器并验证 X 登录会话。", symbol: "globe") {
+                MarkXSection(title: "浏览器与 X 登录") {
                     BrowserConnectionConfiguration()
                     Text("下载在后台进行，文章只保存在你选择的位置。")
                         .font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            .tabItem { Label("通用", systemImage: "slider.horizontal.3") }.tag(0)
+            .tabItem { Label("X 登录", systemImage: "globe") }.tag(1)
             pane(title: "媒体与存储", subtitle: "选择图片、视频的保存方式，管理本地缓存。", symbol: "externaldrive") {
                 MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }
                 MarkXSection(title: "缓存管理", detail: "保留完整媒体备份，整理已经重复保存的隐藏缓存。") {
@@ -571,7 +574,7 @@ struct SettingsView: View {
                         .help("核对内容后移除已有完整备份的重复缓存")
                 }
             }
-            .tabItem { Label("存储", systemImage: "externaldrive") }.tag(1)
+            .tabItem { Label("存储", systemImage: "externaldrive") }.tag(2)
             pane(title: "隐私与关于", subtitle: "你的资料，由你掌握。", symbol: "hand.raised") {
                 MarkXSection(title: "隐私") {
                     privacyRow("本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
@@ -586,7 +589,7 @@ struct SettingsView: View {
                     Text("原生 X 长文归档工具 · © 2026 得否").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
-            .tabItem { Label("隐私与关于", systemImage: "hand.raised") }.tag(2)
+            .tabItem { Label("隐私与关于", systemImage: "hand.raised") }.tag(3)
         }
         .background(MarkXInterface.canvas)
         .font(MarkXTypography.body)

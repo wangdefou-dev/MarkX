@@ -16,6 +16,7 @@ struct RootView: View {
             sidebar
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .navigationSplitViewColumnWidth(min: 210, ideal: 235, max: 280)
+                .toolbar(removing: .sidebarToggle)
         } content: {
             articleList
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -28,6 +29,7 @@ struct RootView: View {
                     }
                 })
                 .navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 500)
+                .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -829,25 +831,11 @@ struct RootView: View {
                 .help("重新打开后台下载队列和当前进度")
             }
 
-            Menu {
-                Button {
-                    model.presentConnectionSetup(focusing: .browser)
-                } label: {
-                    Label("浏览器登录" + (model.hasBrowserSessionData ? "已检测" : "需检查"), systemImage: "globe")
-                }
-                Button {
-                    model.presentConnectionSetup(focusing: .imageHost)
-                } label: {
-                    Label("存储" + (model.imageHostVerified ? "已连接" : "待配置"), systemImage: "externaldrive")
-                }
-                Divider()
-                Button("连接与存储…", systemImage: "externaldrive") { model.presentConnectionSetup() }
-                SettingsLink { Label("更多设置…", systemImage: "slider.horizontal.3") }
-            } label: {
+            SettingsLink {
                 Label("设置", systemImage: "gearshape")
             }
-            .menuIndicator(.hidden)
-            .help("\(model.browserSessionProbe.summary) · 存储\(model.imageHostVerified ? "已连接" : "待配置")")
+            .help("打开设置，管理 X 登录验证、存储与本地资料库")
+            .accessibilityIdentifier("openSettings")
         }
     }
 
@@ -1460,7 +1448,7 @@ private struct ArchivedAVPlayerView: NSViewRepresentable {
     }
 }
 
-private struct ArticleRow: View {
+struct ArticleRow: View {
     let article: ArchivedArticle
     let index: Int
     let creator: Creator?
@@ -1470,7 +1458,10 @@ private struct ArticleRow: View {
             Text(index, format: .number.grouping(.never))
                 .font(MarkXTypography.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 28, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 44, alignment: .trailing)
+                .layoutPriority(1)
                 .accessibilityLabel("第 \(index) 篇")
 
             VStack(alignment: .leading, spacing: 7) {
