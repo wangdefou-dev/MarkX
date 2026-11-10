@@ -21,9 +21,9 @@ struct RootView: View {
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .background(MainWindowChrome(
                     isSidebarVisible: isSidebarVisible,
-                    trailingListTitle: !isSidebarVisible && selectedSidebarCreator == nil ? listTitle : nil
+                    libraryTitle: selectedSidebarCreator == nil ? listTitle : nil
                 ) {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(.easeInOut(duration: MainWindowChrome.sidebarTransitionDuration)) {
                         columnVisibility = isSidebarVisible ? .doubleColumn : .all
                     }
                 })
@@ -546,7 +546,7 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle(isSidebarVisible && selectedSidebarCreator == nil ? listTitle : "")
+        .navigationTitle("")
         .safeAreaInset(edge: .bottom) {
             if model.isRunning || model.progress.scannedPosts > 0 {
                 TaskProgressBar(progress: model.progress, isRunning: model.isRunning)
