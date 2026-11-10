@@ -1535,9 +1535,11 @@ private struct SidebarCountRow: View {
     let systemImage: String
     let count: Int
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: systemImage).font(MarkXTypography.system(size: 14, weight: .regular)).frame(width: 18)
-            Text(title).font(MarkXTypography.system(size: 13))
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(MarkXTypography.system(size: 12, weight: .regular))
+                .frame(width: SidebarMetricBadge.iconColumn, height: SidebarMetricBadge.iconColumn)
+            Text(title).font(MarkXTypography.system(size: 12))
             Spacer(minLength: 4)
             SidebarCountBadge(count: count)
         }
@@ -1600,7 +1602,7 @@ private struct SidebarCountBadge: View {
     var horizontalPadding: CGFloat = 0
     var body: some View {
         Text(count, format: .number.grouping(.never))
-            .font(MarkXTypography.system(size: 11)).monospacedDigit()
+            .font(MarkXTypography.system(size: 10)).monospacedDigit()
             .foregroundStyle(.secondary)
             .frame(minWidth: 22, alignment: .trailing)
             .fixedSize(horizontal: true, vertical: false)
