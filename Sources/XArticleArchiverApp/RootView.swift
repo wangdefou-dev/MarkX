@@ -1499,6 +1499,8 @@ struct ArticleRow: View {
         }
         .padding(.vertical, 6)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+        .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
         .contentShape(Rectangle())
     }
 
