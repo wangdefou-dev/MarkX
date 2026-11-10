@@ -19,6 +19,14 @@ struct RootView: View {
         } content: {
             articleList
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .background(MainWindowChrome(
+                    isSidebarVisible: isSidebarVisible,
+                    trailingListTitle: !isSidebarVisible && selectedSidebarCreator == nil ? listTitle : nil
+                ) {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        columnVisibility = isSidebarVisible ? .doubleColumn : .all
+                    }
+                })
                 .navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 500)
         } detail: {
             detail
@@ -26,11 +34,6 @@ struct RootView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
-        .background(MainWindowChrome(isSidebarVisible: isSidebarVisible) {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                columnVisibility = isSidebarVisible ? .doubleColumn : .all
-            }
-        }.frame(width: 0, height: 0))
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
         .toolbar { toolbar }
@@ -543,7 +546,7 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle(selectedSidebarCreator == nil ? listTitle : "")
+        .navigationTitle(isSidebarVisible && selectedSidebarCreator == nil ? listTitle : "")
         .safeAreaInset(edge: .bottom) {
             if model.isRunning || model.progress.scannedPosts > 0 {
                 TaskProgressBar(progress: model.progress, isRunning: model.isRunning)
