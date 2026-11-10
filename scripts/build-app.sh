@@ -38,6 +38,7 @@ mkdir -p "$DIST_DIR" "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resource
 cp "$PROJECT_DIR/.build/arm64-apple-macosx/release/XArticleArchiverApp" "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
 cp "$PROJECT_DIR/Config/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 cp "$PROJECT_DIR/Config/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+cp "$PROJECT_DIR/LICENSE" "$APP_BUNDLE/Contents/Resources/LICENSE"
 chmod 755 "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
 xattr -cr "$APP_BUNDLE"
 

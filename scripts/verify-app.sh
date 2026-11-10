@@ -39,4 +39,5 @@ test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleURLTypes | grep -c xar
 test "$(defaults read "$APP_BUNDLE/Contents/Info" CFBundleIconFile)" = "AppIcon.icns"
 file "$APP_BUNDLE/Contents/Resources/AppIcon.icns" | grep -q 'Mac OS X icon'
 cmp -s "$PROJECT_DIR/Config/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+cmp -s "$PROJECT_DIR/LICENSE" "$APP_BUNDLE/Contents/Resources/LICENSE"
 printf 'APP_VERIFY=PASS\n'

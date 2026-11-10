@@ -10,6 +10,7 @@ APP_BUNDLE="$PREVIEW_DIR/MarkX UI Review.app"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_DIR/XArticleArchiverApp" "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
 cp Config/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP_BUNDLE/Contents/Resources/LICENSE"
 python3 - "$PROJECT_DIR/Config/Info.plist" "$APP_BUNDLE/Contents/Info.plist" <<'PY'
 from pathlib import Path
 import plistlib,sys

@@ -933,6 +933,8 @@ private struct SidebarSectionHeader: View {
                     .frame(width: 10)
             }
             .foregroundStyle(.secondary)
+            // The native section header starts at 14pt; match the download entry's 18pt inset.
+            .padding(.leading, 4)
             .padding(.trailing, 16)
             .contentShape(Rectangle())
         }

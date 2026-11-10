@@ -1,6 +1,13 @@
 # MarkX
 
-一个面向 Apple Silicon Mac 的原生 X 长文归档工具。当前版本为 `0.3.51`（Build 138），三栏资料库布局以 0.3.0 为基线。
+一个面向 Apple Silicon Mac 的原生 X 长文归档工具。当前版本为 `0.3.52`（Build 139），三栏资料库布局以 0.3.0 为基线。
+
+[官网与下载](https://markx.defou.ai) · [GitHub 源码](https://github.com/wangdefou-dev/x-article-archiver-macos) · [MIT 许可证](LICENSE)
+
+## 0.3.52 更新
+
+- “资料库”和“博主”分组标题的左侧留白增加至 18pt，与“开始下载文章”的文字左边缘对齐，展开与收起保持一致。
+- 项目采用 MIT 开源许可证，安装包内同时附带完整版权与许可声明。
 
 ## 0.3.51 更新
 
@@ -250,3 +257,7 @@ CODE_SIGN_IDENTITY="Developer ID Application: ..." ./scripts/build-app.sh
 ```
 
 产品基线见 [PRD-MarkX-macOS.md](PRD-MarkX-macOS.md)；开发、测试、DMG 发布和本机覆盖规范见 [MARKX-macOS-CLIENT-DEVELOPMENT-SPEC.md](MARKX-macOS-CLIENT-DEVELOPMENT-SPEC.md)。
+
+## 开源许可证
+
+MarkX 源码使用 [MIT License](LICENSE)。版权与许可声明也随应用安装包一同提供。
