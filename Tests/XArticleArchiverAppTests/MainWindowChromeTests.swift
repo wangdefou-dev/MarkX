@@ -56,14 +56,18 @@ final class MainWindowChromeTests: XCTestCase {
         window.contentView = content
         anchor.configureWindow()
         let accessory = try XCTUnwrap(window.titlebarAccessoryViewControllers.first)
+        let button = try XCTUnwrap(accessory.view.subviews.compactMap { $0 as? NSButton }.first)
         let title = try XCTUnwrap(accessory.view.subviews.compactMap { $0 as? NSTextField }
             .first { $0.stringValue == "全部文章" })
         let font = try XCTUnwrap(title.font)
         let expandedFrame = title.frame
+        let expandedButtonFrame = button.frame
+        XCTAssertEqual(button.convert(button.bounds, to: nil).maxX, 227, accuracy: 0.5)
 
         anchor.isSidebarVisible = false
         anchor.configureWindow()
         XCTAssertEqual(title.frame, expandedFrame, "Visibility updates must not jump ahead of the split view")
+        XCTAssertEqual(button.frame, expandedButtonFrame)
         XCTAssertFalse(title.isHidden)
 
         anchor.setFrameOrigin(.zero)
@@ -74,6 +78,7 @@ final class MainWindowChromeTests: XCTestCase {
         XCTAssertEqual(font.pointSize, 15)
         XCTAssertGreaterThanOrEqual(title.bounds.width, try XCTUnwrap(title.cell).cellSize.width)
         XCTAssertEqual(title.convert(title.bounds, to: nil).maxX, 414, accuracy: 0.5)
+        XCTAssertEqual(button.frame.minX, 72, accuracy: 0.5)
 
         anchor.isSidebarVisible = true
         anchor.configureWindow()
@@ -81,7 +86,33 @@ final class MainWindowChromeTests: XCTestCase {
         anchor.configureWindow()
         try await Task.sleep(for: .seconds(0.4))
         XCTAssertEqual(title.frame, expandedFrame)
+        XCTAssertEqual(button.frame, expandedButtonFrame)
         XCTAssertEqual(title.font, font)
         XCTAssertFalse(title.isHidden)
+    }
+
+    func testSidebarControlTracksResizedSidebarForCreatorHeadings() async throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 680),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 1080, height: 680))
+        let anchor = MainWindowChrome.WindowAnchor(frame: NSRect(x: 235, y: 0, width: 430, height: 680))
+        content.addSubview(anchor)
+        window.contentView = content
+        anchor.configureWindow()
+        let accessory = try XCTUnwrap(window.titlebarAccessoryViewControllers.first)
+        let button = try XCTUnwrap(accessory.view.subviews.compactMap { $0 as? NSButton }.first)
+
+        for sidebarWidth: CGFloat in [210, 235, 280] {
+            anchor.setFrameOrigin(NSPoint(x: sidebarWidth, y: 0))
+            anchor.configureWindow()
+            XCTAssertEqual(button.convert(button.bounds, to: nil).maxX, sidebarWidth - 8, accuracy: 0.5)
+            XCTAssertTrue(accessory.view.bounds.contains(button.frame), "The button must remain inside its clickable container")
+        }
+
+        let brand = try XCTUnwrap(accessory.view.subviews.compactMap { $0 as? NSTextField }
+            .first { $0.stringValue == "MarkX" })
+        accessory.view.layoutSubtreeIfNeeded()
+        XCTAssertLessThanOrEqual(brand.frame.maxX + 8, button.frame.minX)
     }
 }

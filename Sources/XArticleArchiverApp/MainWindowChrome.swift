@@ -2,8 +2,8 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-/// Keeps the product name and sidebar control beside the native window controls,
-/// independent of column visibility and toolbar overflow.
+/// Keeps the product name beside the native window controls and anchors the
+/// sidebar control to the expanded sidebar's trailing edge, outside overflow.
 struct MainWindowChrome: NSViewRepresentable {
     static let sidebarTransitionDuration = 0.28
 
@@ -84,8 +84,9 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
     private let sidebarButton = NSButton()
     private let listTitle = NSTextField(labelWithString: "")
     private var previousSidebarVisibility: Bool?
-    private var pendingTitleTransition = false
-    private var titleAnimationEndsAt: CFTimeInterval = 0
+    private var pendingSidebarTransition = false
+    private var chromeAnimationEndsAt: CFTimeInterval = 0
+    private var targetButtonFrame: NSRect?
     private var targetTitleFrame: NSRect?
     private var toggleSidebar: (() -> Void)?
 
@@ -106,7 +107,8 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
         sidebarButton.contentTintColor = .labelColor
         sidebarButton.target = self
         sidebarButton.action = #selector(toggleSidebarClicked)
-        sidebarButton.translatesAutoresizingMaskIntoConstraints = false
+        sidebarButton.frame = NSRect(x: 72, y: 2, width: 36, height: 32)
+        sidebarButton.wantsLayer = true
         // Match the native navigation title in both sidebar states.
         listTitle.font = .systemFont(ofSize: 15, weight: .semibold)
         listTitle.textColor = .labelColor
@@ -119,12 +121,7 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
         container.addSubview(listTitle)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: sidebarButton.leadingAnchor, constant: -8),
-            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            sidebarButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 72),
-            sidebarButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            sidebarButton.widthAnchor.constraint(equalToConstant: 36),
-            sidebarButton.heightAnchor.constraint(equalToConstant: 32)
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor)
         ])
         view = container
     }
@@ -137,53 +134,70 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
         sidebarButton.toolTip = actionTitle
         sidebarButton.setAccessibilityLabel(actionTitle)
 
-        if let previousSidebarVisibility, previousSidebarVisibility != isSidebarVisible,
-           !listTitle.isHidden {
-            pendingTitleTransition = true
+        if let previousSidebarVisibility, previousSidebarVisibility != isSidebarVisible {
+            pendingSidebarTransition = true
         }
         previousSidebarVisibility = isSidebarVisible
         listTitle.stringValue = libraryTitle ?? ""
         listTitle.isHidden = libraryTitle == nil
-        guard libraryTitle != nil else {
-            pendingTitleTransition = false
-            targetTitleFrame = nil
-            view.setFrameSize(NSSize(width: 116, height: view.frame.height))
-            return
-        }
-
         // SwiftUI updates visibility before the split view moves. Keep the same
-        // title at its current position until the column reports its new frame.
+        // controls in place until the column reports its new frame.
         let columnHasMoved = isSidebarVisible ? listFrame.minX > 0.5 : listFrame.minX <= 0.5
-        if pendingTitleTransition && !columnHasMoved { return }
+        if pendingSidebarTransition && !columnHasMoved { return }
 
         let accessoryX = view.convert(.zero, to: nil).x
-        let width = max(116, listFrame.maxX - accessoryX)
+        // Creator headings use the native toolbar, but their sidebar control
+        // still needs a container covering the expanded sidebar for hit testing.
+        let trailingX = libraryTitle != nil ? listFrame.maxX
+            : isSidebarVisible ? listFrame.minX : accessoryX + 116
+        let width = max(116, trailingX - accessoryX)
         if abs(view.frame.width - width) > 0.5 {
             view.setFrameSize(NSSize(width: width, height: view.frame.height))
         }
-        let size = listTitle.cell?.cellSize ?? listTitle.intrinsicContentSize
-        let titleWidth = min(ceil(size.width), max(0, width - 140))
-        let leadingX = max(124, listFrame.minX - accessoryX + 16)
-        let x = isSidebarVisible ? leadingX : width - 16 - titleWidth
-        let frame = NSRect(x: x, y: (view.bounds.height - size.height) / 2,
-                           width: titleWidth, height: size.height)
-        let now = CACurrentMediaTime()
-        if pendingTitleTransition {
-            titleAnimationEndsAt = now + MainWindowChrome.sidebarTransitionDuration
-            pendingTitleTransition = false
-        }
-        guard targetTitleFrame != frame else { return }
-        let shouldAnimate = targetTitleFrame != nil && now < titleAnimationEndsAt
-        targetTitleFrame = frame
-        if shouldAnimate {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = titleAnimationEndsAt - now
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                listTitle.animator().setFrameOrigin(frame.origin)
-                listTitle.animator().setFrameSize(frame.size)
-            }
+
+        let buttonX = isSidebarVisible ? max(72, listFrame.minX - accessoryX - 8 - 36) : 72
+        let buttonFrame = NSRect(x: buttonX, y: (view.bounds.height - 32) / 2,
+                                 width: 36, height: 32)
+        let titleFrame: NSRect?
+        if libraryTitle != nil {
+            let size = listTitle.cell?.cellSize ?? listTitle.intrinsicContentSize
+            let titleWidth = min(ceil(size.width), max(0, width - 140))
+            let leadingX = max(124, listFrame.minX - accessoryX + 16)
+            let x = isSidebarVisible ? leadingX : width - 16 - titleWidth
+            titleFrame = NSRect(x: x, y: (view.bounds.height - size.height) / 2,
+                                width: titleWidth, height: size.height)
         } else {
-            listTitle.frame = frame
+            titleFrame = nil
+        }
+        let now = CACurrentMediaTime()
+        if pendingSidebarTransition {
+            chromeAnimationEndsAt = now + MainWindowChrome.sidebarTransitionDuration
+            pendingSidebarTransition = false
+        }
+        let buttonChanged = targetButtonFrame != buttonFrame
+        let titleChanged = targetTitleFrame != titleFrame
+        let animateButton = targetButtonFrame != nil && now < chromeAnimationEndsAt
+        let animateTitle = targetTitleFrame != nil && now < chromeAnimationEndsAt
+        targetButtonFrame = buttonFrame
+        targetTitleFrame = titleFrame
+        guard buttonChanged || titleChanged else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = max(0, chromeAnimationEndsAt - now)
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            if buttonChanged {
+                if animateButton {
+                    sidebarButton.animator().frame = buttonFrame
+                } else {
+                    sidebarButton.frame = buttonFrame
+                }
+            }
+            if titleChanged, let titleFrame {
+                if animateTitle {
+                    listTitle.animator().frame = titleFrame
+                } else {
+                    listTitle.frame = titleFrame
+                }
+            }
         }
     }
 
