@@ -32,7 +32,6 @@ struct XArticleArchiverApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
-                .frame(width: 700, height: 620)
         }
     }
 

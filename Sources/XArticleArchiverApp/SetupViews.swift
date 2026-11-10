@@ -593,7 +593,7 @@ struct SettingsView: View {
         }
         .background(MarkXInterface.canvas)
         .font(MarkXTypography.body)
-        .frame(width: 700, height: 620)
+        .frame(width: 640, height: 520)
     }
 
     private func pane<Content: View>(title: String, subtitle: String, symbol: String, @ViewBuilder content: () -> Content) -> some View {

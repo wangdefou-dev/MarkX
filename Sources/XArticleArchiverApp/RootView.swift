@@ -277,11 +277,12 @@ struct RootView: View {
     private var sidebarDownloadEntry: some View {
         Button { model.presentDownloadSheet() } label: {
             HStack(spacing: 9) {
-                Image(systemName: "plus").font(MarkXTypography.system(size: 13, weight: .semibold))
-                Text("开始下载文章").font(MarkXTypography.system(size: 15, weight: .medium))
+                Text("开始下载文章")
                 Spacer(minLength: 4)
-                Image(systemName: "square.and.arrow.down").font(MarkXTypography.system(size: 12))
+                Image(systemName: "square.and.arrow.down")
+                    .accessibilityHidden(true)
             }
+            .font(MarkXTypography.system(size: 15, weight: .medium))
             .foregroundStyle(.orange)
             .padding(.horizontal, 18)
             .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
