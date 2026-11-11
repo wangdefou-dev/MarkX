@@ -822,10 +822,12 @@ struct RootView: View {
                 collectionMenuItems(for: article)
             } label: {
                 Image(systemName: model.collections.contains { $0.articleIDs.contains(article.id) }
-                      ? "bookmark.fill" : "bookmark")
+                      ? "star.fill" : "star")
                     .font(MarkXTypography.title2)
+                    .foregroundStyle(.orange)
             }
             .menuStyle(.borderlessButton)
+            .tint(.orange)
             .accessibilityLabel("收藏到…")
             .help("选择收藏夹，或取消已有收藏")
             .disabled(!model.canEditCollections)
@@ -865,7 +867,11 @@ struct RootView: View {
         Menu {
             collectionMenuItems(for: article)
         } label: {
-            Label("收藏到…", systemImage: "bookmark")
+            Label {
+                Text("收藏到…")
+            } icon: {
+                Image(systemName: "star").foregroundStyle(.orange)
+            }
         }
         .disabled(!model.canEditCollections)
         if let collection = selectedCollection {
@@ -1008,7 +1014,7 @@ struct RootView: View {
         case .commercial: "tag"
         case .pending: "clock.arrow.circlepath"
         case .failed: "exclamationmark.triangle"
-        case .collection: "bookmark"
+        case .collection: "star"
         case .creator: "person.crop.circle"
         default: "tray"
         }
@@ -1026,7 +1032,7 @@ struct RootView: View {
         case .failed:
             "没有失败或需要订阅后才能继续的文章。"
         case .collection:
-            "在阅读页点书签，或右键点击文章，选择这个收藏夹。"
+            "在阅读页点五角星，或右键点击文章，选择这个收藏夹。"
         case .creator:
             "可以从右键菜单重新拉取该博主的 X Article。"
         default:
