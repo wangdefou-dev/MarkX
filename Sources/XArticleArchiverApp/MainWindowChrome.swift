@@ -161,8 +161,8 @@ private final class ProductTitleAccessory: NSTitlebarAccessoryViewController {
         let titleFrame: NSRect?
         if libraryTitle != nil {
             let size = listTitle.cell?.cellSize ?? listTitle.intrinsicContentSize
-            let titleWidth = min(ceil(size.width), max(0, width - 140))
             let leadingX = max(124, listFrame.minX - accessoryX + 16)
+            let titleWidth = min(ceil(size.width), max(0, width - 16 - (isSidebarVisible ? leadingX : 124)))
             let x = isSidebarVisible ? leadingX : width - 16 - titleWidth
             titleFrame = NSRect(x: x, y: (view.bounds.height - size.height) / 2,
                                 width: titleWidth, height: size.height)

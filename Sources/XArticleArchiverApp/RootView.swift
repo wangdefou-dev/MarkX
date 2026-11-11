@@ -8,10 +8,46 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
+    @AppStorage("sidebarCollectionsExpanded") private var isCollectionsExpanded = true
     @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var showingNewCollection = false
+    @State private var newCollectionName = ""
+    @State private var newCollectionArticleID: UUID?
+    @State private var collectionPendingDeletion: ArticleCollection?
 
     var body: some View {
+        libraryDialogs
+            .alert("新建收藏夹", isPresented: $showingNewCollection) {
+                TextField("收藏夹名称", text: $newCollectionName)
+                Button("取消", role: .cancel) {}
+                Button("创建") {
+                    isCollectionsExpanded = true
+                    model.createCollection(name: newCollectionName, articleID: newCollectionArticleID)
+                }
+                .disabled(newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canEditCollections)
+            } message: {
+                if newCollectionArticleID != nil {
+                    Text("创建后，当前文章会加入这个收藏夹。")
+                }
+            }
+            .confirmationDialog(
+                "删除收藏夹？",
+                isPresented: Binding(
+                    get: { collectionPendingDeletion != nil },
+                    set: { if !$0 { collectionPendingDeletion = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: collectionPendingDeletion
+            ) { collection in
+                Button("删除收藏夹", role: .destructive) { model.deleteCollection(collection) }
+                Button("取消", role: .cancel) {}
+            } message: { collection in
+                Text("删除「\(collection.name)」及其中的收藏关系。文章和归档文件会保留。")
+            }
+    }
+
+    private var mainContent: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -61,6 +97,10 @@ struct RootView: View {
             ConnectionSetupView()
                 .environmentObject(model)
         }
+    }
+
+    private var libraryAlerts: some View {
+        mainContent
         .alert("需要处理", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -76,6 +116,10 @@ struct RootView: View {
         .sheet(item: $model.syncResultNotice) { notice in
             DownloadResultView(notice: notice)
         }
+    }
+
+    private var libraryDialogs: some View {
+        libraryAlerts
         .confirmationDialog(
             model.articlePendingDeletion.map { "删除《\($0.title)》？" } ?? "删除文章？",
             isPresented: Binding(
@@ -251,6 +295,7 @@ struct RootView: View {
             } header: {
                 SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
             }
+            collectionsSection
             Section {
                 if isCreatorsExpanded {
                     if !model.pinnedCreators.isEmpty {
@@ -272,6 +317,44 @@ struct RootView: View {
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 32)
+    }
+
+    private var collectionsSection: some View {
+        Section {
+            if isCollectionsExpanded {
+                ForEach(model.collections) { collection in
+                    SidebarCountRow(title: collection.name, systemImage: "folder",
+                                    count: collection.articleIDs.count)
+                        .lineLimit(1)
+                        .help(collection.name)
+                        .tag(AppViewModel.SidebarSelection.collection(collection.id))
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                collectionPendingDeletion = collection
+                            } label: {
+                                Label("删除收藏夹…", systemImage: "trash")
+                            }
+                            .disabled(!model.canEditCollections)
+                        }
+                }
+                Button { presentNewCollection() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .frame(width: SidebarMetricBadge.iconColumn, height: SidebarMetricBadge.iconColumn)
+                        Text("新建收藏夹…")
+                        Spacer(minLength: 0)
+                    }
+                    .font(MarkXTypography.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 27)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.canEditCollections)
+            }
+        } header: {
+            SidebarSectionHeader(title: "收藏夹", isExpanded: $isCollectionsExpanded)
+        }
     }
 
     private var sidebarDownloadEntry: some View {
@@ -474,6 +557,7 @@ struct RootView: View {
                             ArticleRow(article: article, index: index + 1, creator: creator)
                                 .tag(article.id)
                                 .contextMenu {
+                                    articleCollectionActions(for: article)
                                     if article.pipelineState == .subscriptionRequired {
                                         Button {
                                             model.openSubscriptionPage(for: article)
@@ -527,7 +611,7 @@ struct RootView: View {
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
-                } else if model.articles.isEmpty {
+                } else if model.articles.isEmpty, selectedCollection == nil {
                     ContentUnavailableView {
                         Label("还没有归档 X Article", systemImage: "tray")
                     } description: {
@@ -735,6 +819,18 @@ struct RootView: View {
             .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
 
             Menu {
+                collectionMenuItems(for: article)
+            } label: {
+                Image(systemName: model.collections.contains { $0.articleIDs.contains(article.id) }
+                      ? "bookmark.fill" : "bookmark")
+                    .font(MarkXTypography.title2)
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("收藏到…")
+            .help("选择收藏夹，或取消已有收藏")
+            .disabled(!model.canEditCollections)
+
+            Menu {
                 Button("打开 Markdown") { model.openSelectedArticle() }
                     .help("用默认的 Markdown 应用打开本地文件")
                 Button("在 Finder 中显示") { model.revealSelectedArticle() }
@@ -762,6 +858,47 @@ struct RootView: View {
             .help("更多文章操作：打开文件、定位、访问原文或重新采集")
         }
         .fixedSize()
+    }
+
+    @ViewBuilder
+    private func articleCollectionActions(for article: ArchivedArticle) -> some View {
+        Menu {
+            collectionMenuItems(for: article)
+        } label: {
+            Label("收藏到…", systemImage: "bookmark")
+        }
+        .disabled(!model.canEditCollections)
+        if let collection = selectedCollection {
+            Button {
+                model.setArticle(article.id, inCollection: collection.id, included: false)
+            } label: {
+                Label("移出当前收藏夹", systemImage: "minus.circle")
+            }
+            .disabled(!model.canEditCollections)
+        }
+        Divider()
+    }
+
+    @ViewBuilder
+    private func collectionMenuItems(for article: ArchivedArticle) -> some View {
+        ForEach(model.collections) { collection in
+            Toggle(collection.name, isOn: Binding(
+                get: { model.collections.first { $0.id == collection.id }?.articleIDs.contains(article.id) == true },
+                set: { model.setArticle(article.id, inCollection: collection.id, included: $0) }
+            ))
+        }
+        if !model.collections.isEmpty { Divider() }
+        Button {
+            presentNewCollection(articleID: article.id)
+        } label: {
+            Label("新建收藏夹…", systemImage: "folder.badge.plus")
+        }
+    }
+
+    private func presentNewCollection(articleID: UUID? = nil) {
+        newCollectionName = ""
+        newCollectionArticleID = articleID
+        showingNewCollection = true
     }
 
     private func articleDetailBody(_ article: ArchivedArticle) -> some View {
@@ -847,6 +984,7 @@ struct RootView: View {
         case .commercial: "商单内容"
         case .pending: "等待继续"
         case .failed: "需要处理"
+        case .collection: selectedCollection?.name ?? "收藏夹"
         case .creator(let id): model.creators.first(where: { $0.id == id })?.displayName ?? "博主"
         }
     }
@@ -858,6 +996,7 @@ struct RootView: View {
         case .commercial: "还没有商单内容"
         case .pending: "没有等待继续的文章"
         case .failed: "没有需要处理的文章"
+        case .collection: "这个收藏夹还是空的"
         case .creator: "这位博主还没有归档文章"
         default: "还没有归档 X Article"
         }
@@ -869,6 +1008,7 @@ struct RootView: View {
         case .commercial: "tag"
         case .pending: "clock.arrow.circlepath"
         case .failed: "exclamationmark.triangle"
+        case .collection: "bookmark"
         case .creator: "person.crop.circle"
         default: "tray"
         }
@@ -885,11 +1025,18 @@ struct RootView: View {
             "没有尚未完成的采集任务。"
         case .failed:
             "没有失败或需要订阅后才能继续的文章。"
+        case .collection:
+            "在阅读页点书签，或右键点击文章，选择这个收藏夹。"
         case .creator:
             "可以从右键菜单重新拉取该博主的 X Article。"
         default:
             "添加一个或多个 X 博主，程序只会保存官方 X Article。"
         }
+    }
+
+    private var selectedCollection: ArticleCollection? {
+        guard case .collection(let id) = model.sidebarSelection else { return nil }
+        return model.collections.first { $0.id == id }
     }
 
     private var selectedSidebarCreator: Creator? {

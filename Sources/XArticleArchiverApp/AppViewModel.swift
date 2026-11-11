@@ -43,6 +43,7 @@ final class AppViewModel: ObservableObject {
         case commercial
         case pending
         case failed
+        case collection(UUID)
         case creator(UUID)
     }
 
@@ -55,6 +56,10 @@ final class AppViewModel: ObservableObject {
     @Published var creators: [Creator] = []
     @Published private(set) var pinnedCreatorIDs: [UUID] = []
     @Published var articles: [ArchivedArticle] = []
+    @Published private(set) var collections: [ArticleCollection] = []
+    @Published private var isEditingCollections = false
+    @Published private var isSwitchingArchiveFolder = false
+    private var collectionRefreshRevision = 0
     @Published var searchText = "" {
         didSet { updateSearchResults() }
     }
@@ -168,7 +173,8 @@ final class AppViewModel: ObservableObject {
     init() {
         #if DEBUG
         if InterfacePreviewGallery.isEnabled {
-            archiveRoot = URL(fileURLWithPath: "/Users/you/Documents/MarkX 资料库")
+            let previewRoot = FileManager.default.temporaryDirectory.appending(path: "markx-preview-\(UUID())")
+            archiveRoot = previewRoot
             creators = [
                 Creator(xUserID: "preview-1", username: "wangdefou", displayName: "得否", knownArticleCount: 64),
                 Creator(xUserID: "preview-2", username: "ai_xiaomu", displayName: "黄小木", knownArticleCount: 56),
@@ -184,6 +190,18 @@ final class AppViewModel: ObservableObject {
                     imageCount: 3, pipelineState: index == 4 ? .failed : .committed))
             }
             selectedArticleID = articles.first?.id
+            Task {
+                do {
+                    let previewDatabase = try ArchiveDatabase(url: Self.databaseURL(for: previewRoot))
+                    for creator in creators { try await previewDatabase.upsertCreator(creator) }
+                    for article in articles { try await previewDatabase.upsertArticle(article) }
+                    database = previewDatabase
+                    try await refreshCollections(using: previewDatabase)
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                isBootstrapped = true
+            }
             return
         }
         #endif
@@ -254,6 +272,8 @@ final class AppViewModel: ObservableObject {
             articles.filter(ArchiveSidebarStatistics.isProcessing)
         case .failed:
             articles.filter(ArchiveSidebarStatistics.needsAttention)
+        case .collection(let id):
+            articlesInCollection(id)
         case .creator(let id):
             articles.filter { $0.creatorID == id }
         }
@@ -293,6 +313,63 @@ final class AppViewModel: ObservableObject {
 
     var sidebarStatistics: ArchiveSidebarStatistics {
         ArchiveSidebarStatistics(articles: articles)
+    }
+
+    private func articlesInCollection(_ id: UUID) -> [ArchivedArticle] {
+        guard let collection = collections.first(where: { $0.id == id }) else { return [] }
+        return articles.filter { collection.articleIDs.contains($0.id) }
+    }
+
+    var canEditCollections: Bool {
+        database != nil && !isEditingCollections && !isSwitchingArchiveFolder
+    }
+
+    func createCollection(name: String, articleID: UUID?) {
+        editCollections { database in
+            try await database.createCollection(name: name, articleID: articleID)
+        }
+    }
+
+    func setArticle(_ articleID: UUID, inCollection collectionID: UUID, included: Bool) {
+        editCollections { database in
+            try await database.setArticle(articleID, inCollection: collectionID, included: included)
+        }
+    }
+
+    func deleteCollection(_ collection: ArticleCollection) {
+        editCollections { database in
+            try await database.deleteCollection(id: collection.id)
+        }
+    }
+
+    private func editCollections(_ operation: @escaping (ArchiveDatabase) async throws -> Void) {
+        guard canEditCollections, let database else { return }
+        isEditingCollections = true
+        Task {
+            defer { isEditingCollections = false }
+            do {
+                try await operation(database)
+                try await refreshCollections(using: database)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshCollections(using database: ArchiveDatabase) async throws {
+        guard self.database === database else { return }
+        collectionRefreshRevision += 1
+        let revision = collectionRefreshRevision
+        let snapshot = try await database.loadCollections()
+        guard self.database === database, collectionRefreshRevision == revision else { return }
+        collections = snapshot
+        if case .collection(let id) = sidebarSelection {
+            if snapshot.contains(where: { $0.id == id }) {
+                synchronizeSelectedArticleWithSidebar()
+            } else {
+                sidebarSelection = .all
+            }
+        }
     }
 
     var todayArticleCount: Int {
@@ -845,7 +922,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func chooseArchiveFolder() {
-        guard !isRunning else { return }
+        guard !isRunning, !isEditingCollections else { return }
         let panel = NSOpenPanel()
         panel.title = archiveRoot == nil ? "选择 X 长文归档目录" : "同步并切换 X 长文归档目录"
         panel.message = archiveRoot == nil
@@ -856,7 +933,8 @@ final class AppViewModel: ObservableObject {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        guard panel.runModal() == .OK, !isRunning, !isEditingCollections,
+              let selectedURL = panel.url else { return }
         let destination = selectedURL.standardizedFileURL
         guard let currentRoot = archiveRoot?.standardizedFileURL else {
             archiveRoot = destination
@@ -902,12 +980,14 @@ final class AppViewModel: ObservableObject {
     }
 
     private func synchronizeAndSwitchArchiveFolder(from source: URL, to destination: URL) {
-        guard !isRunning else { return }
+        guard !isRunning, !isEditingCollections else { return }
+        isSwitchingArchiveFolder = true
+        isRunning = true
         runningTask = Task {
-            isRunning = true
             errorMessage = nil
             progress = SyncProgress(stage: "正在准备同步现有资料库")
             defer {
+                isSwitchingArchiveFolder = false
                 isRunning = false
                 runningTask = nil
             }
@@ -1002,12 +1082,15 @@ final class AppViewModel: ObservableObject {
 
         let sourceCreators = try await sourceDatabase.loadCreators()
         let sourceArticles = try await sourceDatabase.loadArticles()
+        let sourceCollections = try await sourceDatabase.loadCollections()
         let matches: Bool
         do {
             let destinationDatabase = try ArchiveDatabase(url: destinationDatabaseURL)
             let destinationCreators = try await destinationDatabase.loadCreators()
             let destinationArticles = try await destinationDatabase.loadArticles()
+            let destinationCollections = try await destinationDatabase.loadCollections()
             matches = Set(sourceCreators) == Set(destinationCreators)
+                && sourceCollections == destinationCollections
                 && Self.normalizedArticles(sourceArticles, source: source, destination: destination)
                     == Self.normalizedArticles(destinationArticles, source: source, destination: destination)
             try await destinationDatabase.closeAfterCheckpointForDirectorySync()
@@ -3002,6 +3085,7 @@ final class AppViewModel: ObservableObject {
         creators = try await database.loadCreators().filter(\.isEnabled)
         reconcilePinnedCreatorIDs()
         articles = try await database.loadLibraryArticles()
+        try await refreshCollections(using: database)
         if !searchText.isEmpty { updateSearchResults() }
         if case .creator(let creatorID) = sidebarSelection,
            !creators.contains(where: { $0.id == creatorID }) {

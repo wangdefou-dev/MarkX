@@ -425,6 +425,74 @@ public actor ArchiveDatabase {
         )
     }
 
+    public func loadCollections() throws -> [ArticleCollection] {
+        let statement = try prepare("""
+        SELECT collections.id, collections.name, collection_articles.article_id
+        FROM collections LEFT JOIN collection_articles ON collections.id = collection_articles.collection_id
+        ORDER BY collections.name COLLATE NOCASE, collections.id;
+        """)
+        defer { sqlite3_finalize(statement) }
+        var collections: [ArticleCollection] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            guard let id = text(statement, 0).flatMap(UUID.init(uuidString:)),
+                  let name = text(statement, 1) else {
+                throw ArchiveDatabaseError.execute("收藏夹记录无法读取")
+            }
+            if collections.last?.id != id {
+                collections.append(ArticleCollection(id: id, name: name, articleIDs: []))
+            }
+            if let articleID = text(statement, 2).flatMap(UUID.init(uuidString:)) {
+                collections[collections.count - 1].articleIDs.insert(articleID)
+            }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw ArchiveDatabaseError.execute(String(cString: sqlite3_errmsg(database)))
+        }
+        return collections
+    }
+
+    public func createCollection(name: String, articleID: UUID? = nil) throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("\0") else { throw ArticleCollectionError.invalidName }
+        let id = UUID()
+        try Self.execute(on: database, sql: "BEGIN IMMEDIATE;")
+        do {
+            let statement = try prepare("INSERT INTO collections (id, name) VALUES (?, ?) ON CONFLICT(name) DO NOTHING;")
+            defer { sqlite3_finalize(statement) }
+            bind(id.uuidString, to: 1, in: statement)
+            bind(name, to: 2, in: statement)
+            try step(statement)
+            guard sqlite3_changes(database) == 1 else { throw ArticleCollectionError.duplicateName }
+            if let articleID {
+                try setArticle(articleID, inCollection: id, included: true)
+            }
+            try Self.execute(on: database, sql: "COMMIT;")
+        } catch {
+            try? Self.execute(on: database, sql: "ROLLBACK;")
+            throw error
+        }
+    }
+
+    public func setArticle(_ articleID: UUID, inCollection collectionID: UUID, included: Bool) throws {
+        let sql = included
+            ? "INSERT INTO collection_articles (collection_id, article_id) VALUES (?, ?) ON CONFLICT(collection_id, article_id) DO NOTHING;"
+            : "DELETE FROM collection_articles WHERE collection_id = ? AND article_id = ?;"
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind(collectionID.uuidString, to: 1, in: statement)
+        bind(articleID.uuidString, to: 2, in: statement)
+        try step(statement)
+    }
+
+    public func deleteCollection(id: UUID) throws {
+        let statement = try prepare("DELETE FROM collections WHERE id = ?;")
+        defer { sqlite3_finalize(statement) }
+        bind(id.uuidString, to: 1, in: statement)
+        try step(statement)
+    }
+
     public func deleteArticle(id: UUID) throws {
         let search = try prepare("DELETE FROM article_search_v2 WHERE article_id = ?;")
         defer { sqlite3_finalize(search) }
@@ -503,7 +571,16 @@ public actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_creators_username ON creators(username COLLATE NOCASE);
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING fts5(title, author_handle, body, content='');
         CREATE VIRTUAL TABLE IF NOT EXISTS article_search_v2 USING fts5(article_id UNINDEXED, title, author_handle, body, tokenize='trigram');
-        PRAGMA user_version=7;
+        CREATE TABLE IF NOT EXISTS collections (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL COLLATE NOCASE UNIQUE
+        );
+        CREATE TABLE IF NOT EXISTS collection_articles (
+          collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+          article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+          PRIMARY KEY (collection_id, article_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_collection_articles_article ON collection_articles(article_id);
         """)
         if !columnExists(on: database, table: "articles", column: "video_count") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN video_count INTEGER NOT NULL DEFAULT 0;")
@@ -520,7 +597,7 @@ public actor ArchiveDatabase {
         if !columnExists(on: database, table: "articles", column: "paid_partnership_checked") {
             try execute(on: database, sql: "ALTER TABLE articles ADD COLUMN paid_partnership_checked INTEGER NOT NULL DEFAULT 0;")
         }
-        try execute(on: database, sql: "PRAGMA user_version=7;")
+        try execute(on: database, sql: "PRAGMA user_version=8;")
     }
 
     private static let articleSelectColumns = "id, stable_source_key, creator_id, title, author_handle, content_type, source_url, source_post_id, source_article_id, published_at, archived_at, last_synced_at, source_status, source_checksum, markdown_path, image_count, video_count, pipeline_state, warnings, last_error, processing_log, is_paid_partnership, paid_partnership_checked"
