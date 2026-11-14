@@ -62,6 +62,7 @@ npm run test:worker
 ```
 
 - 外部 X、Chrome、uPic 或真实视频联调默认不作为本地测试的必要条件；显式跳过项必须在结果中说明。
+- 如果命令行会话拒绝 WebKit 访问 macOS Launch Services，在 Xcode 中打开 `Package.swift`，选择 `MarkX-Package` 和 `My Mac`，按 ⌘U 运行完整测试，并在测试报告中核对两组 WebKit 用例的结果。
 - 构建和测试失败时保留产物与日志，修复失败原因后再继续发布，不得把部分成功报告为完整交付。
 
 ## 5. 版本与安装包

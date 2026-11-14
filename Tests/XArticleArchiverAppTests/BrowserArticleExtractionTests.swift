@@ -42,10 +42,10 @@ final class BrowserArticleExtractionTests: XCTestCase {
         </article>
         """
 
-        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let webView = makeFixtureWebView()
         let navigation = NavigationWaiter()
         webView.navigationDelegate = navigation
-        await navigation.load(
+        try await navigation.load(
             html,
             in: webView,
             baseURL: URL(string: "https://x.com/writer/status/\(postID)")!
@@ -236,10 +236,10 @@ final class BrowserArticleExtractionTests: XCTestCase {
         </article>
         """
 
-        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let webView = makeFixtureWebView()
         let navigation = NavigationWaiter()
         webView.navigationDelegate = navigation
-        await navigation.load(
+        try await navigation.load(
             html,
             in: webView,
             baseURL: URL(string: "https://x.com/writer/status/\(postID)")!
@@ -278,10 +278,10 @@ final class BrowserArticleExtractionTests: XCTestCase {
     }
 
     private func extractPayload(html: String, postID: String) async throws -> BrowserArticleCapturePayload {
-        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let webView = makeFixtureWebView()
         let navigation = NavigationWaiter()
         webView.navigationDelegate = navigation
-        await navigation.load(
+        try await navigation.load(
             html,
             in: webView,
             baseURL: URL(string: "https://x.com/writer/status/\(postID)")!
@@ -519,10 +519,10 @@ final class BlockedProfileArticleListGateTests: XCTestCase {
     }
 
     private func load(_ html: String, baseURL: URL) async throws -> WKWebView {
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1100, height: 800), configuration: WKWebViewConfiguration())
+        let webView = makeFixtureWebView(frame: CGRect(x: 0, y: 0, width: 1100, height: 800))
         let navigation = NavigationWaiter()
         webView.navigationDelegate = navigation
-        await navigation.load(html, in: webView, baseURL: baseURL)
+        try await navigation.load(html, in: webView, baseURL: baseURL)
         return webView
     }
 }
@@ -541,19 +541,48 @@ private struct CreatorArticleListProbe: Decodable {
 }
 
 @MainActor
-private final class NavigationWaiter: NSObject, WKNavigationDelegate {
-    private var continuation: CheckedContinuation<Void, Never>?
+private func makeFixtureWebView(frame: CGRect = .zero) -> WKWebView {
+    let configuration = WKWebViewConfiguration()
+    configuration.websiteDataStore = .nonPersistent()
+    return WKWebView(frame: frame, configuration: configuration)
+}
 
-    func load(_ html: String, in webView: WKWebView, baseURL: URL) async {
-        await withCheckedContinuation { continuation in
+@MainActor
+private final class NavigationWaiter: NSObject, WKNavigationDelegate {
+    private enum NavigationError: LocalizedError {
+        case couldNotStart
+        case webContentProcessTerminated
+        case timedOut
+
+        var errorDescription: String? {
+            switch self {
+            case .couldNotStart: "WebKit did not start loading the HTML fixture."
+            case .webContentProcessTerminated: "The WebKit content process terminated while loading the HTML fixture."
+            case .timedOut: "WebKit did not finish loading the HTML fixture within 10 seconds."
+            }
+        }
+    }
+
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    func load(_ html: String, in webView: WKWebView, baseURL: URL) async throws {
+        let timeout = Task { @MainActor in
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            finish(.failure(NavigationError.timedOut))
+            webView.stopLoading()
+        }
+        defer { timeout.cancel() }
+
+        try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            webView.loadHTMLString(html, baseURL: baseURL)
+            if webView.loadHTMLString(html, baseURL: baseURL) == nil {
+                finish(.failure(NavigationError.couldNotStart))
+            }
         }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        continuation?.resume()
-        continuation = nil
+        finish(.success(()))
     }
 
     func webView(
@@ -561,7 +590,20 @@ private final class NavigationWaiter: NSObject, WKNavigationDelegate {
         didFail navigation: WKNavigation!,
         withError error: Error
     ) {
-        continuation?.resume()
+        finish(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        finish(.failure(NavigationError.webContentProcessTerminated))
+    }
+
+    private func finish(_ result: Result<Void, Error>) {
+        let pending = continuation
         continuation = nil
+        pending?.resume(with: result)
     }
 }

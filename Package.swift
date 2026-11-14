@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "XArticleArchiver",
+    name: "MarkX",
     defaultLocalization: "zh-Hans",
     platforms: [
         .macOS(.v14)
