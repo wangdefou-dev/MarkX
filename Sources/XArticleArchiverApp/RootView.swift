@@ -15,9 +15,26 @@ struct RootView: View {
     @State private var newCollectionName = ""
     @State private var newCollectionArticleID: UUID?
     @State private var collectionPendingDeletion: ArticleCollection?
+    @State private var collectionDrag = CollectionDragController()
+    @State private var targetedCollectionID: UUID?
 
     var body: some View {
         libraryDialogs
+            .onAppear {
+                let highlightedCollection = $targetedCollectionID
+                collectionDrag.start { target in
+                    highlightedCollection.wrappedValue = target
+                } onDrop: { [weak model] articleID, collectionID in
+                    guard let model, model.canEditCollections,
+                          model.collections.contains(where: { $0.id == collectionID }),
+                          model.articles.contains(where: { $0.id == articleID }) else { return }
+                    model.setArticle(articleID, inCollection: collectionID, included: true)
+                }
+            }
+            .onDisappear {
+                collectionDrag.stop()
+                targetedCollectionID = nil
+            }
             .alert("新建收藏夹", isPresented: $showingNewCollection) {
                 TextField("收藏夹名称", text: $newCollectionName)
                 Button("取消", role: .cancel) {}
@@ -323,9 +340,17 @@ struct RootView: View {
         Section {
             if isCollectionsExpanded {
                 ForEach(model.collections) { collection in
-                    SidebarCountRow(title: collection.name, systemImage: "folder",
+                    let isTargeted = targetedCollectionID == collection.id && model.canEditCollections
+                    SidebarCountRow(title: collection.name, systemImage: isTargeted ? "folder.badge.plus" : "folder",
                                     count: collection.articleIDs.count)
                         .lineLimit(1)
+                        .background {
+                            CollectionDragRegion(controller: collectionDrag, item: .collection(collection.id))
+                            if isTargeted {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color.accentColor.opacity(0.16))
+                            }
+                        }
                         .help(collection.name)
                         .tag(AppViewModel.SidebarSelection.collection(collection.id))
                         .contextMenu {
@@ -555,6 +580,9 @@ struct RootView: View {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
                             let creator = model.creators.first(where: { $0.id == article.creatorID })
                             ArticleRow(article: article, index: index + 1, creator: creator)
+                                .background {
+                                    CollectionDragRegion(controller: collectionDrag, item: .article(article.id))
+                                }
                                 .tag(article.id)
                                 .contextMenu {
                                     articleCollectionActions(for: article)
