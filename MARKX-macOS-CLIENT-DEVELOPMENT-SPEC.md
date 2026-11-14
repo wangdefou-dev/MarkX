@@ -87,17 +87,27 @@ npm run test:worker
 1. 运行相关测试并修复失败项。
 2. 更新应用版本、Build 号、README 和必要的产品文档。
 3. 构建并验证新的 DMG；生成 `SHA256SUMS.txt`。
-4. 将 DMG 和校验文件上传到 R2 的不可变版本目录：
+4. 将应用版本提交推送到 `main`，在 Mac 上运行 `bash scripts/publish-release.sh [DMG 路径]`。脚本校验 DMG 后创建对应 GitHub 预发行版，触发 [Publish MarkX website](https://github.com/wangdefou-dev/MarkX/actions/workflows/publish-website.yml)。
+5. CI 上传 DMG 和校验文件到 R2 的不可变版本目录，并通过生产下载地址逐字节核对两个文件。
 
 ```text
 downloads/markx/<version>/MarkX-<version>.dmg
 downloads/markx/<version>/SHA256SUMS.txt
 ```
 
-5. 执行官网线上下载校验，确认下载包校验和、DMG 挂载和包内版本一致。
-6. 应用源码仓库和 `website/` 官网仓库分别提交、分别推送；官网仓库不得作为应用仓库的嵌套 Git 内容提交。
-7. 官网改动完成后执行 `vercel --prod --yes`，并检查生产域名已经包含当前版本和更新文案。
-8. 发布失败时保留已完成产物，明确指出失败环节；不能只提交代码或只触发部署就报告完成。
+6. CI 从 `Config/Info.plist` 和 `CHANGELOG.md` 取版本、Build 和更新说明，构建并推送独立官网仓库，等待 Vercel 发布，并核对生产站点 `release.json` 中的版本和校验值。
+7. 发布失败时，保留版本产物，从 GitHub Actions 重跑该发布任务。同一版本只允许重用完全相同的 R2 文件。
+
+首次启用在应用仓库的 **Settings → Secrets and variables → Actions** 配置以下凭据：
+
+| 名称 | 类型 | 值 |
+| --- | --- | --- |
+| `R2_ENDPOINT` | Variable | Cloudflare R2 显示的 S3 API 端点 |
+| `R2_ACCESS_KEY_ID` | Secret | `defou-ai` 桶的 Object Read & Write Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | Secret | 同一 R2 凭据的 Secret Access Key |
+| `MARKX_WEBSITE_DEPLOY_KEY` | Secret | `markx-product-website` 仓库写入 Deploy Key 的 SSH 私钥 |
+
+在 Actions 手动运行此工作流时，填写当前线上 DMG 的 SHA-256 可检查现有下载和官网构建。此模式只读校验，适用于首次接入。
 
 ## 7. 本机强制覆盖
 

@@ -1,0 +1,100 @@
+name: Publish MarkX website
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      sha256:
+        description: SHA-256 of the already-published DMG for a read-only verification
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: markx-production-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'wangdefou-dev/MarkX'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Read version and collect release assets
+        id: release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          VERIFY_SHA: ${{ inputs.sha256 }}
+        run: |
+          version=$(python3 -c 'import plistlib; print(plistlib.load(open("Config/Info.plist", "rb"))["CFBundleShortVersionString"])')
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          dmg="MarkX-$version.dmg"
+          mkdir release-assets
+          if [[ "$GITHUB_EVENT_NAME" == release ]]; then
+            test "$TAG" = "v$version"
+            gh release download "$TAG" --dir release-assets --pattern "$dmg" --pattern SHA256SUMS.txt
+          else
+            [[ "$VERIFY_SHA" =~ ^[0-9a-f]{64}$ ]]
+            curl -fsSL --retry 5 "https://download.markx.defou.ai/$version/$dmg?source=verify" -o "release-assets/$dmg"
+            printf '%s  %s\n' "$VERIFY_SHA" "$dmg" > release-assets/SHA256SUMS.txt
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable assets and verify public downloads
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          MARKX_VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: bash scripts/upload-release-assets.sh "$VERSION" release-assets
+
+      - uses: actions/checkout@v6
+        with:
+          repository: wangdefou-dev/markx-product-website
+          ref: main
+          path: website
+          ssh-key: ${{ secrets.MARKX_WEBSITE_DEPLOY_KEY }}
+          persist-credentials: ${{ github.event_name == 'release' }}
+
+      - name: Update and build the website
+        run: |
+          python3 scripts/update-release-website.py website release-assets
+          cd website
+          npm ci
+          npm run build
+
+      - name: Push the website and verify Vercel production
+        if: github.event_name == 'release'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        working-directory: website
+        run: |
+          git add src/App.tsx README.md public/release.json
+          if ! git diff --cached --quiet; then
+            git -c user.name=WangDefou -c user.email=109204284+wangdefou-dev@users.noreply.github.com \
+              commit -m "Release MarkX $VERSION on the website"
+            git push origin HEAD:main
+          fi
+          for attempt in {1..36}; do
+            if curl -fsSL --connect-timeout 8 --max-time 12 \
+              "https://markx.defou.ai/release.json?v=$VERSION" -o "$RUNNER_TEMP/markx-release.json" && \
+              cmp -s public/release.json "$RUNNER_TEMP/markx-release.json"; then
+              printf 'Production is serving MarkX %s.\n' "$VERSION"
+              exit 0
+            fi
+            sleep 10
+          done
+          printf 'Vercel has not deployed the expected release. Check the production deployment.\n' >&2
+          exit 1
