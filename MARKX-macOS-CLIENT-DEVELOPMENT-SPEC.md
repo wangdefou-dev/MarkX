@@ -107,7 +107,7 @@ downloads/markx/<version>/SHA256SUMS.txt
 | `R2_SECRET_ACCESS_KEY` | Secret | 同一 R2 凭据的 Secret Access Key |
 | `MARKX_WEBSITE_DEPLOY_KEY` | Secret | `markx-product-website` 仓库写入 Deploy Key 的 SSH 私钥 |
 
-在 Actions 手动运行此工作流时，填写当前线上 DMG 的 SHA-256 可检查现有下载和官网构建。此模式只读校验，适用于首次接入。
+在 Actions 手动运行此工作流时，填写当前线上 DMG 的 SHA-256 可检查现有下载和官网构建。勾选 `publish` 时会同时执行上传和生产部署，可用于首次接入或恢复官网发布。
 
 ## 7. 本机强制覆盖
 

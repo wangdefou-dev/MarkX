@@ -6,12 +6,20 @@ on:
   workflow_dispatch:
     inputs:
       sha256:
-        description: SHA-256 of the already-published DMG for a read-only verification
+        description: SHA-256 of the already-published DMG
         required: true
         type: string
+      publish:
+        description: Upload and deploy the existing release after verification
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: markx-production-release
@@ -19,7 +27,7 @@ concurrency:
 
 jobs:
   publish:
-    if: github.repository == 'wangdefou-dev/MarkX'
+    if: github.repository == 'wangdefou-dev/MarkX' && (github.event_name == 'release' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -52,7 +60,7 @@ jobs:
       - name: Upload immutable assets and verify public downloads
         env:
           VERSION: ${{ steps.release.outputs.version }}
-          MARKX_VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+          MARKX_VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && '1' || '0' }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -66,7 +74,7 @@ jobs:
           ref: main
           path: website
           ssh-key: ${{ secrets.MARKX_WEBSITE_DEPLOY_KEY }}
-          persist-credentials: ${{ github.event_name == 'release' }}
+          persist-credentials: ${{ github.event_name == 'release' || inputs.publish }}
 
       - name: Update and build the website
         run: |
@@ -76,7 +84,7 @@ jobs:
           npm run build
 
       - name: Push the website and verify Vercel production
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.publish
         env:
           VERSION: ${{ steps.release.outputs.version }}
         working-directory: website
