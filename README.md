@@ -24,7 +24,7 @@ MarkX 是面向 Apple Silicon Mac 的原生 X Article 归档工具。输入博�
 4. 保持默认的本地存储，点击“开始下载文章”，粘贴博主主页、用户名或 X Article 链接。
 5. 选择最近文章范围或全部文章。任务会在后台进行，完成后可在资料库中阅读，也可直接打开保存的 Markdown。
 
-当前版本：**0.3.57（Build 146）**。安装包采用 ad-hoc 签名，尚未完成 Developer ID 公证。
+当前版本：**0.3.58（Build 147）**。安装包采用 ad-hoc 签名，尚未完成 Developer ID 公证。
 
 ## 内容保留范围
 

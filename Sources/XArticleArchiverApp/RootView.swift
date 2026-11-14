@@ -608,7 +608,7 @@ struct RootView: View {
                                         .disabled(model.isRunning || model.hasActiveDownloadProgress)
                                         .help("重新打开 X Article 页面并严格校验完整排版")
                                     }
-                                    if ExactCaptureQueuePolicy.needsCapture(article) {
+                                    if !isViewingCollection, ExactCaptureQueuePolicy.needsCapture(article) {
                                         Button(role: .destructive) {
                                             model.requestDeleteExactCaptureTask(article)
                                         } label: {
@@ -624,14 +624,16 @@ struct RootView: View {
                                         }
                                         .help("跳转到 @\(creator.username) 的文章分组")
                                     }
-                                    Divider()
-                                    Button(role: .destructive) {
-                                        model.requestDeleteArticle(article)
-                                    } label: {
-                                        Label("删除文章…", systemImage: "trash")
+                                    if !isViewingCollection {
+                                        Divider()
+                                        Button(role: .destructive) {
+                                            model.requestDeleteArticle(article)
+                                        } label: {
+                                            Label("删除文章…", systemImage: "trash")
+                                        }
+                                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                                        .help("删除这篇文章的本地归档；远程图片和视频不删除")
                                     }
-                                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                                    .help("删除这篇文章的本地归档；远程图片和视频不删除")
                                 }
                         }
                     }
@@ -909,6 +911,7 @@ struct RootView: View {
                 Label("移出当前收藏夹", systemImage: "minus.circle")
             }
             .disabled(!model.canEditCollections)
+            .help("仅移出当前收藏夹，保留本地文件和其他收藏")
         }
         Divider()
     }
@@ -1071,6 +1074,11 @@ struct RootView: View {
     private var selectedCollection: ArticleCollection? {
         guard case .collection(let id) = model.sidebarSelection else { return nil }
         return model.collections.first { $0.id == id }
+    }
+
+    private var isViewingCollection: Bool {
+        if case .collection = model.sidebarSelection { return true }
+        return false
     }
 
     private var selectedSidebarCreator: Creator? {
