@@ -135,6 +135,7 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - [ ] R2 版本目录中的 DMG 与 `SHA256SUMS.txt` 可访问且校验一致。
 - [ ] 应用仓库和官网仓库已分别推送，生产官网已部署。
 - [ ] `/Applications/MarkX.app` 已由最终 DMG 覆盖并启动，版本和运行路径已核对。
+- [ ] 已关闭本次验收打开的测试页面和窗口，并退出为验收启动的临时程序。用户原先使用的页面和程序及正式版 MarkX 保持可用。
 - [ ] 旧版 App 已移入废纸篓，失败环节和残留产物已如实记录。
 
 
