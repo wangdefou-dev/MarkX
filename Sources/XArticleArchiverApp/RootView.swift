@@ -6,6 +6,7 @@ import XArticleArchiverCore
 struct RootView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
     @AppStorage("sidebarCollectionsExpanded") private var isCollectionsExpanded = true
@@ -15,25 +16,30 @@ struct RootView: View {
     @State private var newCollectionName = ""
     @State private var newCollectionArticleID: UUID?
     @State private var collectionPendingDeletion: ArticleCollection?
-    @State private var collectionDrag = CollectionDragController()
     @State private var targetedCollectionID: UUID?
+    @State private var collectionDropNotice: CollectionDropNotice?
+
+    private struct CollectionDropNotice: Equatable {
+        let id = UUID()
+        let collectionID: UUID
+        let collectionName: String
+        let alreadyIncluded: Bool
+
+        var title: String { alreadyIncluded ? "已在「\(collectionName)」中" : "已加入「\(collectionName)」" }
+    }
 
     var body: some View {
         libraryDialogs
-            .onAppear {
-                let highlightedCollection = $targetedCollectionID
-                collectionDrag.start { target in
-                    highlightedCollection.wrappedValue = target
-                } onDrop: { [weak model] articleID, collectionID in
-                    guard let model, model.canEditCollections,
-                          model.collections.contains(where: { $0.id == collectionID }),
-                          model.articles.contains(where: { $0.id == articleID }) else { return }
-                    model.setArticle(articleID, inCollection: collectionID, included: true)
-                }
-            }
             .onDisappear {
-                collectionDrag.stop()
                 targetedCollectionID = nil
+                collectionDropNotice = nil
+            }
+            .task(id: collectionDropNotice?.id) {
+                guard collectionDropNotice != nil else { return }
+                do {
+                    try await Task.sleep(for: .seconds(3))
+                    withAnimation(collectionDropAnimation) { collectionDropNotice = nil }
+                } catch { }
             }
             .alert("新建收藏夹", isPresented: $showingNewCollection) {
                 TextField("收藏夹名称", text: $newCollectionName)
@@ -62,6 +68,40 @@ struct RootView: View {
             } message: { collection in
                 Text("删除「\(collection.name)」及其中的收藏关系。文章和归档文件会保留。")
             }
+    }
+
+    private var collectionDropAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.18) }
+
+    private func dropArticle(_ articleID: UUID, onto collectionID: UUID) {
+        guard model.canEditCollections,
+              let collection = model.collections.first(where: { $0.id == collectionID }),
+              model.articles.contains(where: { $0.id == articleID }) else { return }
+        let alreadyIncluded = collection.articleIDs.contains(articleID)
+        let notice = CollectionDropNotice(collectionID: collectionID, collectionName: collection.name,
+                                          alreadyIncluded: alreadyIncluded)
+        let showNotice = {
+            withAnimation(collectionDropAnimation) { collectionDropNotice = notice }
+            AccessibilityNotification.Announcement(notice.title).post()
+        }
+        if alreadyIncluded {
+            showNotice()
+        } else {
+            model.setArticle(articleID, inCollection: collectionID, included: true, onSaved: showNotice)
+        }
+    }
+
+    private func collectionDropTarget(_ id: UUID) -> Binding<Bool> {
+        Binding {
+            targetedCollectionID == id
+        } set: { isTargeted in
+            withAnimation(collectionDropAnimation) {
+                if isTargeted {
+                    targetedCollectionID = id
+                } else if targetedCollectionID == id {
+                    targetedCollectionID = nil
+                }
+            }
+        }
     }
 
     private var mainContent: some View {
@@ -216,6 +256,21 @@ struct RootView: View {
             }
         }
         .background(.bar)
+        .overlay(alignment: .bottom) {
+            if let notice = collectionDropNotice {
+                Label(notice.title, systemImage: "checkmark.circle.fill")
+                    .font(MarkXTypography.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .padding(9)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.green.opacity(0.7)) }
+                    .shadow(color: .black.opacity(0.15), radius: 5, y: 2)
+                    .padding(10)
+                    .allowsHitTesting(false)
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            }
+        }
     }
 
     private var sidebarLibrary: some View {
@@ -341,14 +396,25 @@ struct RootView: View {
             if isCollectionsExpanded {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id && model.canEditCollections
-                    SidebarCountRow(title: collection.name, systemImage: isTargeted ? "folder.badge.plus" : "folder",
+                    let isConfirmed = collectionDropNotice?.collectionID == collection.id
+                    let highlight: Color = isTargeted ? .orange : .green
+                    let icon = isTargeted ? "folder.badge.plus" : isConfirmed ? "checkmark.circle.fill" : "folder"
+                    SidebarCountRow(title: collection.name, systemImage: icon,
                                     count: collection.articleIDs.count)
                         .lineLimit(1)
-                        .background {
-                            CollectionDragRegion(controller: collectionDrag, item: .collection(collection.id))
-                            if isTargeted {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.accentColor.opacity(0.16))
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(highlight.opacity(0.18))
+                                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(highlight, lineWidth: 1.5) }
+                                .opacity(isTargeted || isConfirmed ? 1 : 0)
+                                .allowsHitTesting(false)
+                        }
+                        .onDrop(of: [CollectionArticleDrag.type], isTargeted: collectionDropTarget(collection.id)) { providers in
+                            guard model.canEditCollections else { return false }
+                            return CollectionArticleDrag.receive(providers) { articleID in
+                                dropArticle(articleID, onto: collection.id)
                             }
                         }
                         .help(collection.name)
@@ -580,8 +646,10 @@ struct RootView: View {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
                             let creator = model.creators.first(where: { $0.id == article.creatorID })
                             ArticleRow(article: article, index: index + 1, creator: creator)
-                                .background {
-                                    CollectionDragRegion(controller: collectionDrag, item: .article(article.id))
+                                .onDrag {
+                                    model.canEditCollections ? CollectionArticleDrag.provider(for: article.id) : NSItemProvider()
+                                } preview: {
+                                    CollectionArticleDragPreview(title: article.title)
                                 }
                                 .tag(article.id)
                                 .contextMenu {

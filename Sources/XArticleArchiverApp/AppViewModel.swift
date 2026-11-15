@@ -330,8 +330,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func setArticle(_ articleID: UUID, inCollection collectionID: UUID, included: Bool) {
-        editCollections { database in
+    func setArticle(_ articleID: UUID, inCollection collectionID: UUID, included: Bool, onSaved: (() -> Void)? = nil) {
+        editCollections(onSaved: {
+            if self.collections.first(where: { $0.id == collectionID })?.articleIDs.contains(articleID) == included {
+                onSaved?()
+            }
+        }) { database in
             try await database.setArticle(articleID, inCollection: collectionID, included: included)
         }
     }
@@ -342,7 +346,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func editCollections(_ operation: @escaping (ArchiveDatabase) async throws -> Void) {
+    private func editCollections(onSaved: (() -> Void)? = nil, _ operation: @escaping (ArchiveDatabase) async throws -> Void) {
         guard canEditCollections, let database else { return }
         isEditingCollections = true
         Task {
@@ -350,6 +354,7 @@ final class AppViewModel: ObservableObject {
             do {
                 try await operation(database)
                 try await refreshCollections(using: database)
+                if self.database === database { onSaved?() }
             } catch {
                 errorMessage = error.localizedDescription
             }
