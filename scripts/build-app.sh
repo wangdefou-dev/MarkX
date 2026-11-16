@@ -30,12 +30,13 @@ cd "$PROJECT_DIR"
 "$PROJECT_DIR/scripts/make-dmg-background.sh"
 swift test
 swift build -c release --arch arm64
+BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
 
 rm -rf "$DIST_DIR/$APP_NAME.app"
 rm -f "$DMG_PATH"
 mkdir -p "$DIST_DIR" "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" "$STAGING_DIR"
 
-cp "$PROJECT_DIR/.build/arm64-apple-macosx/release/XArticleArchiverApp" "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
+cp "$BIN_DIR/XArticleArchiverApp" "$APP_BUNDLE/Contents/MacOS/XArticleArchiverApp"
 cp "$PROJECT_DIR/Config/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 cp "$PROJECT_DIR/Config/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 cp "$PROJECT_DIR/LICENSE" "$APP_BUNDLE/Contents/Resources/LICENSE"

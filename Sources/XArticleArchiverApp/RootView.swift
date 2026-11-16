@@ -400,17 +400,22 @@ struct RootView: View {
                                     count: collection.articleIDs.count)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
+                        .frame(minHeight: 35)
                         .contentShape(Rectangle())
-                        .background(CollectionDropRegion(collectionID: collection.id, controller: collectionDrag))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(highlight.opacity(0.22))
-                                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(highlight, lineWidth: 2) }
-                                .opacity(isTargeted || isConfirmed ? 1 : 0)
-                                .allowsHitTesting(false)
-                                .animation(collectionAnimation, value: isTargeted)
-                                .animation(collectionAnimation, value: isConfirmed)
+                        .background {
+                            ZStack {
+                                CollectionDropRegion(collectionID: collection.id, controller: collectionDrag)
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(highlight.opacity(0.22))
+                                    .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(highlight, lineWidth: 2) }
+                                    .opacity(isTargeted || isConfirmed ? 1 : 0)
+                                    .allowsHitTesting(false)
+                                    .animation(collectionAnimation, value: isConfirmed)
+                            }
+                            // Extend past the label margins to the sidebar's selection edges.
+                            .padding(.horizontal, -6)
                         }
+                        .listRowInsets(EdgeInsets())
                         .help(collection.name)
                         .tag(AppViewModel.SidebarSelection.collection(collection.id))
                         .contextMenu {
