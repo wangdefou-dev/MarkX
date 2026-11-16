@@ -17,15 +17,9 @@ struct RootView: View {
     @State private var newCollectionName = ""
     @State private var newCollectionArticleID: UUID?
     @State private var collectionPendingDeletion: ArticleCollection?
-    @GestureState private var articleDrag: ArticleDrag?
-    @State private var collectionFrames: [UUID: CGRect] = [:]
-    @State private var sidebarListFrame = CGRect.null
+    @State private var collectionDrag = CollectionArticleDrag()
+    @State private var targetedCollectionID: UUID?
     @State private var collectionNotice: CollectionNotice?
-
-    private struct ArticleDrag {
-        let title: String
-        let location: CGPoint
-    }
 
     private struct CollectionNotice {
         let id = UUID()
@@ -39,6 +33,7 @@ struct RootView: View {
     var body: some View {
         libraryDialogs
             .onDisappear {
+                collectionDrag.cancel()
                 collectionNotice = nil
             }
             .task(id: collectionNotice?.id) {
@@ -96,23 +91,6 @@ struct RootView: View {
         }
     }
 
-    private func collectionDropTarget(at location: CGPoint) -> UUID? {
-        guard isSidebarVisible, isCollectionsExpanded, model.canEditCollections else { return nil }
-        return CollectionArticleDrag.target(at: location, sidebar: sidebarListFrame, collections: collectionFrames)
-    }
-
-    private func collectionDragGesture(for article: ArchivedArticle) -> some Gesture {
-        DragGesture(minimumDistance: 8, coordinateSpace: .global)
-            .updating($articleDrag) { value, drag, _ in
-                guard model.canEditCollections else { return }
-                drag = ArticleDrag(title: article.title, location: value.location)
-            }
-            .onEnded { value in
-                guard let collectionID = collectionDropTarget(at: value.location) else { return }
-                addArticle(article.id, to: collectionID)
-            }
-    }
-
     private var collectionFeedback: some View {
         ZStack {
             if let notice = collectionNotice {
@@ -161,17 +139,6 @@ struct RootView: View {
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
-        .overlay {
-            if let drag = articleDrag {
-                GeometryReader { proxy in
-                    let origin = proxy.frame(in: .global).origin
-                    CollectionArticleDragPreview(title: drag.title)
-                        .position(x: drag.location.x - origin.x + 122, y: drag.location.y - origin.y + 22)
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
         .toolbar(removing: .sidebarToggle)
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
@@ -180,6 +147,7 @@ struct RootView: View {
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshBrowserStatus() }
+            else { collectionDrag.cancel() }
         }
         .onOpenURL { model.handleOpenURL($0) }
         .handlesExternalEvents(
@@ -418,14 +386,10 @@ struct RootView: View {
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 32)
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .global)
-        } action: { sidebarListFrame = $0 }
     }
 
     private var collectionsSection: some View {
-        let targetedCollectionID = articleDrag.flatMap { collectionDropTarget(at: $0.location) }
-        return Section {
+        Section {
             if isCollectionsExpanded {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
@@ -437,6 +401,7 @@ struct RootView: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
+                        .background(CollectionDropRegion(collectionID: collection.id, controller: collectionDrag))
                         .overlay {
                             RoundedRectangle(cornerRadius: 6)
                                 .fill(highlight.opacity(0.22))
@@ -446,10 +411,6 @@ struct RootView: View {
                                 .animation(collectionAnimation, value: isTargeted)
                                 .animation(collectionAnimation, value: isConfirmed)
                         }
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .global)
-                        } action: { collectionFrames[collection.id] = $0 }
-                        .onDisappear { collectionFrames.removeValue(forKey: collection.id) }
                         .help(collection.name)
                         .tag(AppViewModel.SidebarSelection.collection(collection.id))
                         .contextMenu {
@@ -680,11 +641,20 @@ struct RootView: View {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
                             let creator = model.creators.first(where: { $0.id == article.creatorID })
                             ArticleRow(article: article, index: index + 1, creator: creator)
-                                .simultaneousGesture(collectionDragGesture(for: article))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    model.selectedArticleID = article.id
-                                    isArticleListFocused = true
-                                })
+                                .overlay {
+                                    CollectionDragSource(
+                                        controller: collectionDrag,
+                                        title: article.title,
+                                        onSelect: {
+                                            model.selectedArticleID = article.id
+                                            isArticleListFocused = true
+                                        },
+                                        canDrag: { model.canEditCollections && isSidebarVisible && isCollectionsExpanded },
+                                        onTarget: { targetedCollectionID = $0 },
+                                        onDrop: { addArticle(article.id, to: $0) }
+                                    )
+                                    .accessibilityHidden(true)
+                                }
                                 .tag(article.id)
                                 .contextMenu {
                                     articleCollectionActions(for: article)
