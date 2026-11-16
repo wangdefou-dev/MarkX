@@ -195,6 +195,8 @@ final class AppViewModel: ObservableObject {
                     let previewDatabase = try ArchiveDatabase(url: Self.databaseURL(for: previewRoot))
                     for creator in creators { try await previewDatabase.upsertCreator(creator) }
                     for article in articles { try await previewDatabase.upsertArticle(article) }
+                    try await previewDatabase.createCollection(name: "稍后阅读", articleID: articles.first?.id)
+                    try await previewDatabase.createCollection(name: "参考资料", articleID: nil)
                     database = previewDatabase
                     try await refreshCollections(using: previewDatabase)
                 } catch {
@@ -322,6 +324,11 @@ final class AppViewModel: ObservableObject {
 
     var canEditCollections: Bool {
         database != nil && !isEditingCollections && !isSwitchingArchiveFolder
+    }
+
+    var selectedCollectionID: UUID? {
+        guard case .collection(let id) = sidebarSelection else { return nil }
+        return id
     }
 
     func createCollection(name: String, articleID: UUID?) {
@@ -2272,16 +2279,16 @@ final class AppViewModel: ObservableObject {
     }
 
     func requestDeleteArticle(_ article: ArchivedArticle) {
-        guard !isRunning else { return }
+        guard selectedCollectionID == nil, !isRunning else { return }
         articlePendingDeletion = article
     }
 
     func deletePendingArticle() {
-        guard !isRunning,
-              let article = articlePendingDeletion,
+        guard let article = articlePendingDeletion else { return }
+        articlePendingDeletion = nil
+        guard selectedCollectionID == nil, !isRunning,
               let archiveRoot,
               let database else { return }
-        articlePendingDeletion = nil
 
         Task {
             do {
