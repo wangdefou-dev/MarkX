@@ -273,7 +273,8 @@ struct RootView: View {
     private var sidebarLibrary: some View {
         let statistics = model.sidebarStatistics
         return List(selection: $model.sidebarSelection) {
-            Section {
+            Group {
+                SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
                 if isLibraryExpanded {
                 SidebarCountRow(
                     title: "全部文章",
@@ -361,11 +362,10 @@ struct RootView: View {
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
                 }
-            } header: {
-                SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
             }
             collectionsSection
-            Section {
+            Group {
+                creatorHeadingRow
                 if isCreatorsExpanded {
                     if !model.pinnedCreators.isEmpty {
                         ForEach(model.pinnedCreators) { creator in
@@ -379,8 +379,6 @@ struct RootView: View {
                         creatorSidebarRow(creator, statistics: statistics)
                     }
                 }
-            } header: {
-                creatorHeadingRow
             }
         }
         .listStyle(.sidebar)
@@ -389,7 +387,8 @@ struct RootView: View {
     }
 
     private var collectionsSection: some View {
-        Section {
+        Group {
+            SidebarSectionHeader(title: "收藏夹", topSpacing: 13, isExpanded: $isCollectionsExpanded)
             if isCollectionsExpanded {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
@@ -442,8 +441,6 @@ struct RootView: View {
                 .buttonStyle(.plain)
                 .disabled(!model.canEditCollections)
             }
-        } header: {
-            SidebarSectionHeader(title: "收藏夹", isExpanded: $isCollectionsExpanded)
         }
     }
 
@@ -476,7 +473,8 @@ struct RootView: View {
     }
 
     private var creatorHeadingRow: some View {
-        SidebarSectionHeader(title: "博主", count: model.enabledCreatorCount, countUnit: "位博主", isExpanded: $isCreatorsExpanded)
+        SidebarSectionHeader(title: "博主", count: model.enabledCreatorCount, countUnit: "位博主",
+                             topSpacing: 13, isExpanded: $isCreatorsExpanded)
     }
 
     private func creatorArticleCountHelp(
@@ -1187,6 +1185,7 @@ private struct SidebarSectionHeader: View {
     let title: String
     var count: Int? = nil
     var countUnit = "篇文章"
+    var topSpacing: CGFloat = 0
     @Binding var isExpanded: Bool
 
     var body: some View {
@@ -1203,16 +1202,20 @@ private struct SidebarSectionHeader: View {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(MarkXTypography.system(size: 9, weight: .semibold))
                     .frame(width: 10)
+                    .accessibilityHidden(true)
             }
             .foregroundStyle(.secondary)
-            // The native section header starts at 14pt; match the download entry's 18pt inset.
-            .padding(.leading, 4)
-            .padding(.trailing, 16)
+            .padding(.horizontal, 2)
+            .frame(minHeight: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .textCase(nil)
-        .padding(.top, 8).padding(.bottom, 5)
+        .padding(.top, topSpacing)
+        .listRowInsets(EdgeInsets())
+        .selectionDisabled(true)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityValue(isExpanded ? "已展开" : "已收起")
         .help(isExpanded ? "折叠\(title)" : "展开\(title)")
     }
 }
