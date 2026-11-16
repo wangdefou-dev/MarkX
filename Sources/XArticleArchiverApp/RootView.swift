@@ -7,6 +7,7 @@ struct RootView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isArticleListFocused: Bool
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
     @AppStorage("sidebarCollectionsExpanded") private var isCollectionsExpanded = true
@@ -651,6 +652,10 @@ struct RootView: View {
                                 } preview: {
                                     CollectionArticleDragPreview(title: article.title)
                                 }
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    model.selectedArticleID = article.id
+                                    isArticleListFocused = true
+                                })
                                 .tag(article.id)
                                 .contextMenu {
                                     articleCollectionActions(for: article)
@@ -706,6 +711,7 @@ struct RootView: View {
                         }
                     }
                     .listStyle(.inset)
+                    .focused($isArticleListFocused)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
                     setupCard
