@@ -32,8 +32,7 @@ struct AddCreatorsView: View {
     var body: some View {
         VStack(spacing: 0) {
             MarkXPaneHeader(title: model.downloadSheetPrefill.isEmpty ? "开始下载文章" : "重新拉取文章",
-                subtitle: "选择来源与下载范围，完整文章会保存在你的 Mac。", symbol: "square.and.arrow.down")
-            Divider()
+                subtitle: "选择来源与下载范围，完整文章会保存在你的 Mac。")
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
                     Picker("添加方式", selection: $entryMode) {
@@ -57,7 +56,7 @@ struct AddCreatorsView: View {
             }
         }
         .background(MarkXInterface.canvas)
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .frame(width: 640, height: MarkXInterface.sheetHeight(610))
         .onAppear {
             input = model.downloadSheetPrefill
@@ -77,7 +76,10 @@ struct AddCreatorsView: View {
             MarkXSection(title: "博主主页", detail: "输入用户名或 X 主页链接。") {
                 StrictSingleLineTextField(text: Binding(get: { input }, set: { input = SingleCreatorInputPolicy.sanitize($0) }),
                     placeholder: "@username 或 https://x.com/username")
+                    .frame(height: 20)
+                    .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
                     .frame(height: 32)
+                    .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
                     .help("只接受一行；粘贴多行时保留第一条非空内容")
                 if let handle = parsedHandles.first {
                     MarkXInfoLine(symbol: "person.crop.circle.badge.checkmark", text: "已识别 @\(handle)")
@@ -87,20 +89,20 @@ struct AddCreatorsView: View {
             MarkXSection(title: "博主列表", detail: "每行一位，支持 @用户名或主页链接。") {
                 multilineInput(placeholder: "@username\nhttps://x.com/another_creator")
                 Text("已识别 \(parsedHandles.count) 位博主")
-                    .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).monospacedDigit()
             }
         case .articleLinks:
             MarkXSection(title: "X Article 链接", detail: "每行一条，最多 500 条；重复链接会自动合并。") {
                 multilineInput(placeholder: "https://x.com/username/status/…")
                 Text("已识别 \(parsedArticleLinks.count) 条链接")
-                    .font(MarkXTypography.system(size: 11)).monospacedDigit()
-                    .foregroundStyle(parsedArticleLinks.count > 500 ? Color.red : .secondary)
-                Divider()
+                    .font(MarkXFont.meta).monospacedDigit()
+                    .foregroundStyle(parsedArticleLinks.count > 500 ? Color.red : MarkXInterface.text2)
+                Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
                 Toggle("重新获取已归档文章", isOn: $refreshExistingLinks)
-                    .font(MarkXTypography.system(size: 12)).help("重新打开原页并校验完整排版，手工修改的 Markdown 受到保护")
+                    .font(MarkXFont.detail).help("重新打开原页并校验完整排版，手工修改的 Markdown 受到保护")
                 if refreshExistingLinks {
                     Text("校验成功后更新本地归档，手工修改的正文不会被直接覆盖。")
-                        .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                        .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                 }
             }
         }
@@ -108,17 +110,16 @@ struct AddCreatorsView: View {
 
     private func multilineInput(placeholder: String) -> some View {
         TextEditor(text: $input)
-            .font(MarkXTypography.system(size: 12, design: .monospaced))
+            .font(MarkXFont.detail.monospaced())
             .scrollContentBackground(.hidden)
-            .frame(height: 120).padding(10)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .frame(height: 120).padding(MarkXSpace.m)
+            .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
             .overlay(alignment: .topLeading) {
                 if input.isEmpty {
-                    Text(placeholder).font(MarkXTypography.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary)
-                        .padding(14).allowsHitTesting(false).accessibilityHidden(true)
+                    Text(placeholder).font(MarkXFont.detail.monospaced()).foregroundStyle(MarkXInterface.text3)
+                        .padding(MarkXSpace.l).allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator.opacity(0.5), lineWidth: 0.5))
             .accessibilityLabel(entryMode == .batch ? "博主列表" : "文章链接")
     }
 
@@ -130,7 +131,7 @@ struct AddCreatorsView: View {
             .labelsHidden().pickerStyle(.segmented).help("选择最近文章或全部可见文章")
             if mode == .recentWindow {
                 HStack {
-                    Text("每位博主").font(MarkXTypography.system(size: 12))
+                    Text("每位博主").font(MarkXFont.detail)
                     Spacer()
                     Menu("预设") {
                         ForEach([5, 10, 20, 50, 100], id: \.self) { value in
@@ -145,9 +146,9 @@ struct AddCreatorsView: View {
                 }
                 Divider()
                 Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
-                    .font(MarkXTypography.system(size: 12)).help("扫描完整列表来更新总数，下载范围仍为最近指定数量")
+                    .font(MarkXFont.detail).help("扫描完整列表来更新总数，下载范围仍为最近指定数量")
                 Text(resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数也可稍后单独刷新。")
-                    .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
             } else {
                 MarkXInfoLine(symbol: "text.page", text: "扫描到列表底部，下载全部可见文章，不受 100 篇限制。")
             }
@@ -180,11 +181,11 @@ private struct StrictSingleLineTextField: NSViewRepresentable {
         field.delegate = context.coordinator
         field.placeholderString = placeholder
         field.font = .systemFont(ofSize: MarkXTypography.pointSize(13))
-        field.controlSize = .large
-        field.bezelStyle = .roundedBezel
-        field.isBezeled = true
-        field.drawsBackground = true
-        field.focusRingType = .default
+        // Fog's filled field: the wash and corners come from SwiftUI.
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
         field.lineBreakMode = .byTruncatingTail
         field.maximumNumberOfLines = 1
         field.cell?.usesSingleLineMode = true
@@ -315,8 +316,7 @@ struct ConnectionSetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: "连接与存储", subtitle: "管理浏览器会话、归档位置，以及图片和视频的保存方式。", symbol: "externaldrive")
-            Divider()
+            MarkXPaneHeader(title: "连接与存储", subtitle: "管理浏览器会话、归档位置，以及图片和视频的保存方式。")
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
@@ -350,7 +350,7 @@ struct ConnectionSetupView: View {
             }
         }
         .background(MarkXInterface.canvas)
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .frame(width: 680, height: MarkXInterface.sheetHeight(660))
         .onExitCommand { dismiss() }
     }
@@ -362,28 +362,28 @@ private struct BrowserConnectionConfiguration: View {
     @State private var isChecking = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: MarkXSpace.l) {
             Picker("使用浏览器", selection: $model.preferredBrowserID) {
                 Text("自动查找已登录的配置").tag("automatic")
                 ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
             }
-            .font(MarkXTypography.system(size: 12))
             .disabled(isChecking)
             MarkXInfoLine(symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
                 text: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
                 color: model.hasBrowserSessionData ? .green : .orange)
             if let browser = model.browserNameNeedingAccess {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: MarkXSpace.m) {
                     Text("macOS 默认不允许其他应用读取 \(browser) 的数据。点下面的按钮，在弹出的窗口里直接点「允许读取」即可，只需授权一次。")
-                        .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                        .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
+                        .lineSpacing(MarkXSpace.xxs)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("授权读取 \(browser)…") { model.chooseBrowserDataDirectory() }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.markxCompactProminent)
                         .disabled(isChecking)
                 }
             }
-            HStack(spacing: 12) {
-                Button(isChecking ? "正在验证…" : "验证会话读取") {
+            MarkXFlowLayout(spacing: MarkXSpace.m) {
+                Button(isChecking ? "正在验证…" : "验证会话读取", systemImage: "checkmark.shield") {
                     isChecking = true
                     Task { await model.verifyBrowserSession(); isChecking = false }
                 }
@@ -392,28 +392,29 @@ private struct BrowserConnectionConfiguration: View {
                 Button("刷新状态", systemImage: "arrow.clockwise") { model.refreshBrowserStatus() }
                     .disabled(model.isRefreshingBrowserStatus || isChecking)
                     .help("重新检查全部受支持的浏览器与配置")
-            }
-            HStack(spacing: 12) {
-                Button("选择其他数据目录…") { model.chooseBrowserDataDirectory() }
+                Button("选择其他数据目录…", systemImage: "folder") { model.chooseBrowserDataDirectory() }
                     .disabled(isChecking)
                     .help("为自定义目录或 macOS 读取受限的目录保存访问授权")
-                Button("在浏览器打开 X", systemImage: "arrow.up.right.square") { model.openBrowserXLogin() }
+                Button("在浏览器打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
             }
+            .buttonStyle(.markxCompact)
             if let message = model.browserSessionCheckMessage {
-                Text(message).font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(message).font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).textSelection(.enabled)
             }
             if !model.browserSessionProbe.profiles.isEmpty {
                 DisclosureGroup("检测到的配置（\(model.browserSessionProbe.profiles.count)）") {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: MarkXSpace.s) {
                         ForEach(model.browserSessionProbe.profiles) { profile in
                             Text(profile.description + (profile.hasLoginCookies ? " · 有 X 登录数据" : " · 未检测到 X 登录数据"))
-                                .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                                .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                         }
-                    }.padding(.top, 8)
-                }.font(MarkXTypography.system(size: 11))
+                    }.padding(.top, MarkXSpace.m)
+                }.font(MarkXFont.detail)
             }
             Text("兼容 Chrome、Edge、Brave、Arc、Vivaldi、Opera、Chromium、夸克、豆包及 Firefox。仅读取 X 会话，不保存密码或 Cookie。Safari 暂不支持自动导入。")
-                .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text3)
+                .lineSpacing(MarkXSpace.xxs)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
@@ -425,17 +426,18 @@ private struct BrowserConnectionConfiguration: View {
 private struct ArchiveFolderRow: View {
     @EnvironmentObject private var model: AppViewModel
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "folder").font(MarkXTypography.system(size: 20)).foregroundStyle(.secondary).frame(width: 28)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择归档目录").font(MarkXTypography.system(size: 13, weight: .medium))
+        HStack(alignment: .center, spacing: MarkXSpace.l) {
+            MarkXIconTile(systemImage: "folder")
+            VStack(alignment: .leading, spacing: MarkXSpace.xxs) {
+                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择归档目录").font(MarkXFont.headline)
                 Text(model.archiveRoot?.path ?? "选择一个你方便管理和备份的文件夹")
-                    .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                     .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .help(model.archiveRoot?.path ?? "尚未选择")
             Button(model.archiveRoot == nil ? "选择目录…" : "更换…") { model.chooseArchiveFolder() }
+                .buttonStyle(.markxCompact)
                 .disabled(model.isRunning || model.hasActiveDownloadProgress)
                 .help("同步现有资料后切换归档位置，旧目录保留")
         }
@@ -453,7 +455,7 @@ struct MediaStorageConfiguration: View {
     private var isTesting: Bool { isTestingUPic || isTestingS3 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MarkXSpace.xl) {
             Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { model.selectImageHost($0) })) {
                 Text("本地存储").tag(AppViewModel.ImageHostChoice.local)
                 Text("本地 + uPic").tag(AppViewModel.ImageHostChoice.uPic)
@@ -466,31 +468,32 @@ struct MediaStorageConfiguration: View {
                 case .local:
                     MarkXInfoLine(symbol: "internaldrive", text: "无需额外配置。原图和视频保存在归档目录内，整个目录可以一起移动或备份。")
                 case .uPic:
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: MarkXSpace.l) {
                         Text("使用 uPic 当前选择的默认图床，原图和视频仍保留本地备份。")
-                            .font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
+                            .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                         MarkXInfoLine(symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
                             text: model.upicCapability.detail, color: model.upicCapability.isAvailable ? .green : .orange)
                         Button(isTestingUPic ? "正在验证…" : "验证 uPic 连接") {
                             isTestingUPic = true
                             Task { _ = await model.testUPic(); isTestingUPic = false }
                         }
+                        .buttonStyle(.markxCompact)
                         .disabled(!model.upicCapability.isAvailable || isTesting)
                         .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
                         Text("验证会上传一张无隐私测试图片；本应用不读取 uPic 密钥。")
-                            .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                            .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                     }
                 case .s3: s3Fields
                 }
             }
-            Divider()
-            HStack(spacing: 7) {
-                if isTesting { ProgressView().controlSize(.small) }
+            Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
+            HStack(spacing: MarkXSpace.m) {
+                if isTesting { ProgressView().controlSize(.mini) }
                 else {
-                    Circle().fill(model.imageHostVerified ? Color.green : Color.orange).frame(width: 5, height: 5)
+                    StatusDot(color: model.imageHostVerified ? .green : .orange)
                 }
                 Text(isTesting ? "正在检查媒体上传与公开访问…" : model.imageHostDetail)
-                    .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -503,32 +506,32 @@ struct MediaStorageConfiguration: View {
     }
 
     private var s3Fields: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: MarkXSpace.l) {
             field("Endpoint", placeholder: "https://<account>.r2.cloudflarestorage.com", text: $model.s3Endpoint)
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: MarkXSpace.l) {
                 field("存储桶 · Bucket", placeholder: "my-bucket", text: $model.s3Bucket)
                 field("公开访问地址", placeholder: "https://img.example.com", text: $model.s3PublicBaseURL)
             }
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Access Key").font(MarkXTypography.system(size: 11, weight: .medium))
+            HStack(alignment: .top, spacing: MarkXSpace.l) {
+                VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                    Text("Access Key").font(MarkXFont.metaStrong).foregroundStyle(MarkXInterface.text2)
                     SecureField(model.hasS3Credentials ? "留空使用已保存值" : "输入 Access Key", text: $accessKey)
-                        .textFieldStyle(.roundedBorder).accessibilityLabel("Access Key")
+                        .markxField().accessibilityLabel("Access Key")
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Secret Key").font(MarkXTypography.system(size: 11, weight: .medium))
+                VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                    Text("Secret Key").font(MarkXFont.metaStrong).foregroundStyle(MarkXInterface.text2)
                     SecureField(model.hasS3Credentials ? "留空使用已保存值" : "输入 Secret Key", text: $secretKey)
-                        .textFieldStyle(.roundedBorder).accessibilityLabel("Secret Key")
+                        .markxField().accessibilityLabel("Secret Key")
                 }
             }
             DisclosureGroup("高级选项", isExpanded: $showsAdvanced) {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: MarkXSpace.l) {
                     field("Region", placeholder: "R2 使用 auto", text: $model.s3Region)
                     field("对象路径前缀", placeholder: "x-archive", text: $model.s3KeyPrefix)
-                }.padding(.top, 10)
+                }.padding(.top, MarkXSpace.m)
             }
-            .font(MarkXTypography.system(size: 12)).help("查看区域和对象路径前缀")
-            HStack(spacing: 12) {
+            .font(MarkXFont.detail).help("查看区域和对象路径前缀")
+            HStack(spacing: MarkXSpace.m) {
                 Button(isTestingS3 ? "正在验证…" : "保存并验证连接") {
                     isTestingS3 = true
                     Task {
@@ -537,10 +540,12 @@ struct MediaStorageConfiguration: View {
                     }
                 }
                 .disabled(isTesting || model.s3Endpoint.isEmpty || model.s3PublicBaseURL.isEmpty)
+                .buttonStyle(.markxCompactProminent)
                 .help("将凭证保存到钥匙串，并上传测试图片验证公开访问")
                 Spacer()
                 if model.hasS3Credentials {
                     Button("移除密钥…", role: .destructive) { confirmsRemovingKeys = true }
+                        .buttonStyle(.markxText)
                         .disabled(isTesting).help("移除本机保存的 S3 / R2 凭证")
                 }
             }
@@ -549,9 +554,9 @@ struct MediaStorageConfiguration: View {
     }
 
     private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(MarkXTypography.system(size: 11, weight: .medium))
-            TextField(placeholder, text: text).textFieldStyle(.roundedBorder).accessibilityLabel(title)
+        VStack(alignment: .leading, spacing: MarkXSpace.s) {
+            Text(title).font(MarkXFont.metaStrong).foregroundStyle(MarkXInterface.text2)
+            TextField(placeholder, text: text).markxField().accessibilityLabel(title)
                 .onChange(of: text.wrappedValue) { _, _ in model.invalidateImageHostVerification() }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -573,6 +578,7 @@ struct SettingsView: View {
                     Text("本地资料库")
                 } footer: {
                     Text("Markdown、原图、视频与资料库数据库都保存在这个文件夹。")
+                        .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 SoftwareUpdateSettingsSection()
@@ -587,6 +593,7 @@ struct SettingsView: View {
                     Text("浏览器与 X 登录")
                 } footer: {
                     Text("下载在后台进行，文章只保存在你选择的位置。")
+                        .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -598,6 +605,7 @@ struct SettingsView: View {
                 Section {
                     LabeledContent {
                         Button("整理…") { model.cleanVerifiedMediaCache() }
+                            .buttonStyle(.markxCompact)
                             .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
                             .help("核对内容后移除已有完整备份的重复缓存")
                     } label: {
@@ -625,7 +633,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .tabItem { Label("隐私与关于", systemImage: "hand.raised") }.tag(3)
         }
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .frame(width: 640, height: 520)
     }
 

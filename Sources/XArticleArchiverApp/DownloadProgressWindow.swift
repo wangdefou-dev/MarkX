@@ -32,7 +32,7 @@ struct DownloadProgressRootView: View {
                     Text("保存正文").tag(Stage.capture)
                 }
                 .labelsHidden().pickerStyle(.segmented)
-                .padding(.horizontal, 20).padding(.vertical, 12)
+                .padding(.horizontal, MarkXSpace.xxl).padding(.vertical, MarkXSpace.l)
                 .help("切换查看进度，两个阶段仍在后台同时运行")
                 Divider()
             }
@@ -57,7 +57,7 @@ struct DownloadProgressRootView: View {
         }
         .frame(minWidth: 760, minHeight: 590)
         .background(MarkXInterface.canvas)
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .onAppear { stage = model.showingBrowserCapture ? .capture : .discovery }
         .onChange(of: model.showingBrowserCapture) { _, value in if value { stage = .capture } }
     }

@@ -25,8 +25,7 @@ struct SyncAllCreatorsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: "同步博主文章", subtitle: "为所有已跟踪博主检查更新，已有完整归档自动跳过。", symbol: SyncVisualStyle.symbolName)
-            Divider()
+            MarkXPaneHeader(title: "同步博主文章", subtitle: "为所有已跟踪博主检查更新，已有完整归档自动跳过。")
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
                     Picker("同步方式", selection: $mode) {
@@ -58,7 +57,7 @@ struct SyncAllCreatorsView: View {
             }
         }
         .background(MarkXInterface.canvas)
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .frame(width: 640, height: MarkXInterface.sheetHeight(620))
         .onAppear(perform: loadScheduleOnce)
         .interactiveDismissDisabled(isSavingSchedule)
@@ -78,9 +77,9 @@ struct SyncAllCreatorsView: View {
                     limitRow($articleLimit)
                     Divider()
                     Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
-                        .font(MarkXTypography.system(size: 12)).help("完整扫描列表来刷新总数，下载范围仍为最近指定数量")
+                        .font(MarkXFont.detail).help("完整扫描列表来刷新总数，下载范围仍为最近指定数量")
                     Text(resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数可以稍后单独刷新。")
-                        .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                        .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                 }
             }
             MarkXSection(title: "执行方式") {
@@ -94,9 +93,9 @@ struct SyncAllCreatorsView: View {
         Group {
             MarkXSection(title: "每日同步") {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("自动同步").font(MarkXTypography.system(size: 13, weight: .medium))
-                        Text("每天为所有已跟踪博主检查更新").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: MarkXSpace.xs) {
+                        Text("自动同步").font(MarkXFont.headline)
+                        Text("每天为所有已跟踪博主检查更新").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                     }
                     Spacer()
                     Toggle("自动同步", isOn: $scheduleEnabled)
@@ -109,11 +108,11 @@ struct SyncAllCreatorsView: View {
                     DatePicker("执行时间", selection: $scheduleTime, displayedComponents: .hourAndMinute)
                         .labelsHidden().fixedSize().help("设置每天执行同步的本地时间")
                 }
-                .font(MarkXTypography.system(size: 12)).disabled(!scheduleEnabled)
+                .font(MarkXFont.detail).disabled(!scheduleEnabled)
                 limitRow($scheduleArticleLimit).disabled(!scheduleEnabled)
             }
             MarkXSection(title: "最近执行") {
-                Text(lastScheduledRunDescription).font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
+                Text(lastScheduledRunDescription).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 Divider()
                 MarkXInfoLine(symbol: "moon", text: "睡眠期间错过的任务会在唤醒后补执行；关机时无法运行。")
@@ -123,7 +122,7 @@ struct SyncAllCreatorsView: View {
 
     private func limitRow(_ limit: Binding<Int>) -> some View {
         HStack {
-            Text("每位博主").font(MarkXTypography.system(size: 12))
+            Text("每位博主").font(MarkXFont.detail)
             Spacer()
             Menu("预设") {
                 ForEach([5, 10, 20, 50, 100], id: \.self) { value in

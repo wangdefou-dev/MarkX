@@ -99,14 +99,14 @@ struct RootView: View {
                 } icon: {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 }
-                    .font(MarkXTypography.callout.weight(.semibold))
+                    .font(MarkXFont.detailStrong)
                     .foregroundStyle(.primary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, MarkXSpace.xl)
+                    .padding(.vertical, MarkXSpace.m)
                     .background(.regularMaterial, in: Capsule())
                     .overlay { Capsule().strokeBorder(.green.opacity(0.65)) }
                     .shadow(color: .black.opacity(0.16), radius: 7, y: 3)
-                    .padding(.bottom, 22)
+                    .padding(.bottom, MarkXSpace.x3)
                     .id(notice.id)
                     .transition(.offset(y: 14).combined(with: .opacity))
             }
@@ -125,7 +125,7 @@ struct RootView: View {
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
         .toolbar { toolbar }
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: isWelcomeLayout) { _, _ in
             if !isSidebarVisible { columnVisibility = hiddenSidebarVisibility }
@@ -314,14 +314,14 @@ struct RootView: View {
         VStack(spacing: 0) {
             sidebarLibrary
             if model.isRunning {
-                HStack(spacing: 7) {
+                HStack(spacing: MarkXSpace.m) {
                     ProgressView().controlSize(.mini)
-                    Text(model.progress.stage).font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(model.progress.stage).font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
+                .padding(.horizontal, MarkXSpace.xl)
+                .padding(.top, MarkXSpace.l)
+                .padding(.bottom, MarkXSpace.l)
             }
         }
         .background(.bar)
@@ -362,7 +362,7 @@ struct RootView: View {
 
                 SidebarCountRow(
                     title: "商单内容",
-                    systemImage: "tag.fill",
+                    systemImage: "tag",
                     count: statistics.commercialArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.commercial)
@@ -456,9 +456,9 @@ struct RootView: View {
                         .background {
                             ZStack {
                                 CollectionDropRegion(collectionID: collection.id, controller: collectionDrag)
-                                RoundedRectangle(cornerRadius: 6)
+                                RoundedRectangle(cornerRadius: MarkXRadius.control)
                                     .fill(highlight.opacity(0.22))
-                                    .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(highlight, lineWidth: 2) }
+                                    .overlay { RoundedRectangle(cornerRadius: MarkXRadius.control).strokeBorder(highlight, lineWidth: 2) }
                                     .opacity(isTargeted || isConfirmed ? 1 : 0)
                                     .allowsHitTesting(false)
                                     .animation(collectionAnimation, value: isConfirmed)
@@ -479,15 +479,13 @@ struct RootView: View {
                         }
                 }
                 Button { presentNewCollection() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .frame(width: SidebarMetricBadge.iconColumn, height: SidebarMetricBadge.iconColumn)
+                    HStack(spacing: MarkXSpace.m) {
+                        SidebarIcon(systemImage: "plus", color: MarkXInterface.text3)
                         Text("新建收藏夹…")
                         Spacer(minLength: 0)
                     }
-                    .font(MarkXTypography.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(minHeight: 27)
+                    .foregroundStyle(MarkXInterface.text2)
+                    .frame(minHeight: 28)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -506,12 +504,12 @@ struct RootView: View {
     }
 
     private var creatorHeadingRow: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: MarkXSpace.xs) {
             Text("博主")
             if model.enabledCreatorCount > 0 {
                 Text(model.enabledCreatorCount, format: .number.grouping(.never))
                     .monospacedDigit()
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(MarkXInterface.text3)
                     .accessibilityLabel("\(model.enabledCreatorCount) 位博主")
             }
         }
@@ -542,20 +540,19 @@ struct RootView: View {
         let localArticleCount = statistics.articleCount(for: creator.id)
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
         return sidebarMetricRow {
-            Image(systemName: model.isCreatorPinned(creator)
-                  ? "pin.fill"
-                  : creator.isProtected ? "lock" : "person")
-                .font(MarkXTypography.system(size: model.isCreatorPinned(creator) ? 11 : 13, weight: .regular))
-                .foregroundStyle(model.isCreatorPinned(creator) ? Color.orange : Color.secondary)
+            SidebarIcon(systemImage: model.isCreatorPinned(creator)
+                        ? "pin"
+                        : creator.isProtected ? "lock" : "person")
         } title: {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: MarkXSpace.xxs) {
                 Text(creator.displayName)
+                    .font(MarkXFont.body)
                     .lineLimit(1).help(creator.displayName + " · @" + creator.username)
                 Text("@\(creator.username)")
-                    .font(MarkXTypography.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    .font(MarkXFont.meta)
+                    .foregroundStyle(MarkXInterface.text3)
+                    .lineLimit(1)
             }
-            .font(MarkXTypography.system(size: 12, weight: .medium))
         } value: {
             let verifiedEmpty = creator.completeness == .fullArchiveVerified
                 && downloadedArticleCount == 0
@@ -581,8 +578,7 @@ struct RootView: View {
                 localArticleCount: localArticleCount
             ))
         }
-        .frame(minHeight: 38)
-        .padding(.vertical, 2)
+        .frame(minHeight: 40)
         .tag(AppViewModel.SidebarSelection.creator(creator.id))
         .contextMenu {
             if model.isCreatorPinned(creator) {
@@ -653,7 +649,7 @@ struct RootView: View {
         VStack(spacing: 0) {
             if model.isPreparingSearch {
                 Text("正在整理历史文章，搜索结果会逐步补齐…")
-                    .font(MarkXTypography.caption).foregroundStyle(.secondary).padding(8)
+                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).padding(MarkXSpace.m)
                 Divider()
             }
             Group {
@@ -747,7 +743,7 @@ struct RootView: View {
                         Text("选择本地归档目录并确认媒体存储后，才能下载和查看文章。")
                     } actions: {
                         Button("开始配置") { model.showingConnectionSetup = true }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.markxPillProminent)
                     }
                 } else if model.articles.isEmpty, selectedCollection == nil {
                     ContentUnavailableView {
@@ -756,9 +752,10 @@ struct RootView: View {
                         Text("添加一个或多个 X 博主，程序只会保存官方 X Article，不会再把普通帖子或线程当成文章。")
                     } actions: {
                         Button("开始下载文章") { model.presentDownloadSheet() }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.markxPillProminent)
                             .help("输入博主主页或 X Article 链接开始下载")
                         Button("生成体验样例") { model.installDemo() }
+                            .buttonStyle(.markxPill)
                             .help("在本地归档目录生成一篇可预览的演示文章")
                     }
                 } else {
@@ -798,7 +795,7 @@ struct RootView: View {
                     articleDetailBody(article)
                 }
                 .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
-                .padding(.horizontal, 52)
+                .padding(.horizontal, MarkXSpace.pageSide)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
             .id(article.id)
@@ -812,39 +809,45 @@ struct RootView: View {
     }
 
     private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: MarkXSpace.xl) {
                 Text(article.title)
-                    .font(MarkXTypography.system(size: 25, weight: .semibold))
-                    .lineSpacing(5)
+                    .font(ArticleTypography(previewTextScale).titleFont)
+                    .lineSpacing(ArticleTypography(previewTextScale).titleLineSpacing)
                     .lineLimit(3)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                     .textSelection(.enabled)
             }
-            MarkXFlowLayout(spacing: 8) {
+            MarkXFlowLayout(spacing: MarkXSpace.m) {
                 Button {
                     model.openCreatorProfile(handle: article.authorHandle)
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: MarkXSpace.xs) {
                         Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
+                            .font(MarkXFont.detailStrong)
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                         Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
                             .lineLimit(1)
                         Image(systemName: "arrow.up.right")
-                            .font(MarkXTypography.caption2.weight(.semibold))
+                            .font(MarkXFont.badge)
+                            .foregroundStyle(MarkXInterface.text3)
                     }
                 }
                 .buttonStyle(.plain)
                 .help("查看 @\(article.authorHandle) 的 X 主页")
                 Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
+                    .foregroundStyle(MarkXInterface.text3)
+                    .monospacedDigit()
                     .lineLimit(1)
             }
-            .font(MarkXTypography.subheadline)
-            .foregroundStyle(.secondary)
+            .font(MarkXFont.detail)
+            .foregroundStyle(MarkXInterface.text2)
             .lineLimit(1)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            MarkXFlowLayout(spacing: 8) {
+            .padding(.top, MarkXSpace.l)
+            MarkXFlowLayout(spacing: MarkXSpace.s) {
                 StatusPill(
                     article.pipelineState.displayName,
                     color: article.pipelineState == .committed
@@ -852,7 +855,7 @@ struct RootView: View {
                         : article.pipelineState == .subscriptionRequired ? .purple : .orange
                 )
                 if article.isPaidPartnership {
-                    StatusPill("商单内容", color: .orange)
+                    StatusPill("商单", color: .orange)
                         .help("X 官方 Paid partnership 商单内容标记")
                         .accessibilityLabel("商单内容，X 官方付费合作标记")
                 }
@@ -872,9 +875,10 @@ struct RootView: View {
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .padding(.top, MarkXSpace.xl)
         }
-        .padding(.top, 56)
-        .padding(.bottom, 28)
+        .padding(.top, MarkXSpace.pageTop)
+        .padding(.bottom, MarkXSpace.x4)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
     }
 
@@ -973,15 +977,15 @@ struct RootView: View {
     }
 
     private var listHeading: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(listTitle).font(.system(size: 15, weight: .semibold))
+        HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.s) {
+            Text(listTitle).font(MarkXFont.columnTitle)
             if !listSubtitle.isEmpty {
-                Text(listSubtitle).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+                Text(listSubtitle).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text3).monospacedDigit()
             }
         }
         .lineLimit(1)
         .fixedSize()
-        .padding(.horizontal, 4)
+        .padding(.horizontal, MarkXSpace.xs)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
     }
@@ -1048,7 +1052,7 @@ struct RootView: View {
                 Menu {
                     articleMoreItems(for: article)
                 } label: {
-                    Label("更多", systemImage: "ellipsis.circle")
+                    Label("更多", systemImage: "ellipsis")
                 }
                 .help("打开 Markdown、在 Finder 中显示、重新处理或删除")
             }
@@ -1172,16 +1176,15 @@ struct DownloadResultView: View {
         VStack(spacing: 0) {
             MarkXPaneHeader(title: notice.title, subtitle: subtitle,
                 symbol: hasDanger || hasWarning ? "exclamationmark.circle" : "checkmark.circle", symbolColor: statusColor)
-            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
                     if !notice.metrics.isEmpty {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: MarkXSpace.m), count: 3), spacing: MarkXSpace.m) {
                             ForEach(notice.metrics, id: \.id) { DownloadResultMetricText(metric: $0) }
                         }
                     }
                     MarkXSection(title: "结果说明") {
-                        Text(notice.message).font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
+                        Text(notice.message).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                             .lineSpacing(4).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -1195,7 +1198,7 @@ struct DownloadResultView: View {
             }
         }
         .background(MarkXInterface.canvas)
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .frame(width: 620, height: MarkXInterface.sheetHeight(600))
         .onExitCommand { dismiss() }
     }
@@ -1205,25 +1208,25 @@ private struct DownloadResultMetricText: View {
     let metric: DownloadResultMetric
     private var color: Color {
         switch metric.tone {
-        case .accent: .secondary
+        case .accent: MarkXInterface.text3
         case .positive: .green
-        case .neutral: .secondary
+        case .neutral: MarkXInterface.text3
         case .warning: .orange
         case .danger: .red
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 6) {
-                Image(systemName: metric.systemImage).foregroundStyle(color).frame(width: 13)
-                Text(metric.label).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: MarkXSpace.m) {
+            HStack(spacing: MarkXSpace.s) {
+                StatusDot(color: color)
+                Text(metric.label).foregroundStyle(MarkXInterface.text2)
             }
-            .font(MarkXTypography.system(size: 11)).lineLimit(1)
-            Text(metric.value).font(MarkXTypography.system(size: 24, weight: .semibold)).monospacedDigit()
+            .font(MarkXFont.meta).lineLimit(1)
+            Text(metric.value).font(MarkXFont.metric).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-        .padding(14).markxSurface()
+        .padding(MarkXSpace.l).markxSurface()
         .accessibilityElement(children: .combine)
     }
 }
@@ -1233,19 +1236,19 @@ private struct CreatorProfileToolbarHeader: View {
     let openProfile: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: MarkXSpace.m) {
             Text(creator.displayName)
-                .font(MarkXTypography.title2.weight(.semibold))
+                .font(MarkXFont.title)
                 .lineLimit(1)
 
             Button(action: openProfile) {
-                HStack(alignment: .center, spacing: 4) {
+                HStack(alignment: .center, spacing: MarkXSpace.xs) {
                     Text("查看主页")
                     Image(systemName: "arrow.up.right")
-                        .font(MarkXTypography.caption.weight(.semibold))
+                        .font(MarkXFont.metaStrong)
                 }
-                .font(MarkXTypography.body)
-                .foregroundStyle(.secondary)
+                .font(MarkXFont.body)
+                .foregroundStyle(MarkXInterface.text2)
                 .fixedSize(horizontal: true, vertical: false)
                 .contentShape(Rectangle())
             }
@@ -1255,30 +1258,51 @@ private struct CreatorProfileToolbarHeader: View {
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
         .frame(height: 36, alignment: .center)
-        .padding(.leading, 12)
+        .padding(.leading, MarkXSpace.l)
     }
 }
 
-private struct ArticleTypography {
+/// Reading typography, after Fog's prose rules (Web/thread/body.css):
+/// paragraphs 1.25em apart, line height ~1.6 for CJK, headings in medium
+/// weight only slightly larger than the text with 1.25em above and 0.75em
+/// below, list items 0.5em apart with grey bullets, quotes as a 2pt grey rule
+/// beside grey text. Every value scales with the reader's zoom.
+struct ArticleTypography {
     let scale: CGFloat
 
     init(_ scale: Double) {
         self.scale = CGFloat(scale)
     }
 
+    /// 15pt text at 100% (MarkX reading text is interface + 2pt).
     var bodySize: CGFloat { MarkXTypography.readingPointSize(13, scale: scale) }
-    var bodyLineSpacing: CGFloat { 6.5 * scale }
-    var paragraphSpacing: CGFloat { 16 * scale }
-    var headingTopSpacing: CGFloat { 20 * scale }
-    var headingBottomSpacing: CGFloat { 10 * scale }
-    var listItemSpacing: CGFloat { 6 * scale }
-    var listGroupSpacing: CGFloat { 16 * scale }
-    var listIndent: CGFloat { 26 * scale }
-    var listMarkerGap: CGFloat { 10 * scale }
-    var listMarkerWidth: CGFloat { 28 * scale }
-    var quoteSpacing: CGFloat { 16 * scale }
-    var blockSpacing: CGFloat { 18 * scale }
-    var explicitBlankLineHeight: CGFloat { 12 * scale }
+    var em: CGFloat { bodySize }
+
+    var titleFont: Font { MarkXTypography.reading(size: 22, scale: scale, weight: .medium) }
+    var titleLineSpacing: CGFloat { 0.25 * MarkXTypography.readingPointSize(22, scale: scale) }
+
+    func headingSize(level: Int) -> CGFloat {
+        switch level {
+        case 0...1: bodySize * 1.4
+        case 2: bodySize * 1.22
+        default: bodySize * 1.1
+        }
+    }
+
+    var bodyLineSpacing: CGFloat { 0.5 * em }
+    var headingLineSpacing: CGFloat { 0.2 * em }
+    var paragraphSpacing: CGFloat { 1.15 * em }
+    var headingTopSpacing: CGFloat { 1.6 * em }
+    var headingBottomSpacing: CGFloat { 0.8 * em }
+    var listItemSpacing: CGFloat { 0.5 * em }
+    var listGroupSpacing: CGFloat { 1.15 * em }
+    var listIndent: CGFloat { 1.25 * em }
+    var listMarkerGap: CGFloat { 0.5 * em }
+    var listMarkerWidth: CGFloat { 1.25 * em }
+    var quoteSpacing: CGFloat { 1.15 * em }
+    var blockSpacing: CGFloat { 1.25 * em }
+    var explicitBlankLineHeight: CGFloat { 0.75 * em }
+    var smallSize: CGFloat { 0.857 * em }
 }
 
 private struct ArticleDocumentPreview: View {
@@ -1310,19 +1334,19 @@ private struct ArticleDocumentPreview: View {
             }
 
             if !document.warnings.isEmpty {
-                VStack(alignment: .leading, spacing: 6 * typography.scale) {
+                VStack(alignment: .leading, spacing: 0.4 * typography.em) {
                     Label("原始排版说明", systemImage: "info.circle")
-                        .font(MarkXTypography.reading(size: 12.5, scale: CGFloat(textScale), weight: .semibold))
+                        .font(.system(size: typography.smallSize, weight: .medium))
                     ForEach(document.warnings, id: \.self) { warning in
                         Text("• \(warning)")
                     }
                 }
-                .font(MarkXTypography.reading(size: 11, scale: CGFloat(textScale)))
-                .foregroundStyle(.secondary)
-                .padding(12 * typography.scale)
+                .font(.system(size: typography.smallSize))
+                .foregroundStyle(MarkXInterface.text2)
+                .padding(0.8 * typography.em)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                .padding(.top, 8 * typography.scale)
+                .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.card))
+                .padding(.top, 0.5 * typography.em)
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -1383,7 +1407,7 @@ private struct ArticleBlockView: View {
         case .heading:
             inlineText
                 .font(headingFont)
-                .lineSpacing(3 * typography.scale)
+                .lineSpacing(typography.headingLineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         case .unorderedListItem:
@@ -1391,32 +1415,32 @@ private struct ArticleBlockView: View {
         case .orderedListItem:
             listRow(marker: resolvedOrderedMarker ?? "1.")
         case .quote:
-            HStack(alignment: .top, spacing: 12 * typography.scale) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.accentColor.opacity(0.7))
-                    .frame(width: max(3, 4 * typography.scale))
+            HStack(alignment: .top, spacing: 0.8 * typography.em) {
+                Rectangle()
+                    .fill(MarkXInterface.washStrong)
+                    .frame(width: 2)
                 inlineText
                     .font(bodyFont)
-                    .italic()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(MarkXInterface.text2)
                     .lineSpacing(typography.bodyLineSpacing)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.vertical, 4 * typography.scale)
+            .padding(.vertical, 0.15 * typography.em)
         case .code:
             ScrollView(.horizontal) {
                 Text(block.text)
-                    .font(MarkXTypography.reading(size: 13, scale: CGFloat(textScale), design: .monospaced))
-                    .lineSpacing(4 * typography.scale)
-                    .padding(14 * typography.scale)
+                    .font(.system(size: typography.smallSize, design: .monospaced))
+                    .lineSpacing(0.6 * typography.smallSize)
+                    .padding(.vertical, 0.75 * typography.em)
+                    .padding(.horizontal, typography.em)
                     .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.secondary.opacity(0.16)))
+            .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
         case .divider:
-            Divider().padding(.vertical, 8)
+            Rectangle().fill(MarkXInterface.washStrong).frame(height: 1)
+                .padding(.vertical, 0.75 * typography.em)
         case .table:
             if let rows = block.tableRows, !rows.isEmpty {
                 ScrollView(.horizontal) {
@@ -1425,17 +1449,17 @@ private struct ArticleBlockView: View {
                             GridRow {
                                 ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                                     tableCellText(cell)
-                                        .font(MarkXTypography.reading(size: 12.5, scale: CGFloat(textScale), weight: cell.isHeader ? .semibold : .regular))
-                                        .lineSpacing(4.5 * typography.scale)
-                                        .padding(.horizontal, 12 * typography.scale)
-                                        .padding(.vertical, 9 * typography.scale)
+                                        .font(.system(size: typography.smallSize, weight: cell.isHeader ? .medium : .regular))
+                                        .lineSpacing(0.4 * typography.smallSize)
+                                        .padding(.horizontal, 0.8 * typography.em)
+                                        .padding(.vertical, 0.55 * typography.em)
                                         .frame(
                                             minWidth: CGFloat(140 * max(1, cell.columnSpan)),
                                             maxWidth: CGFloat(340 * max(1, cell.columnSpan)),
                                             alignment: .leading
                                         )
-                                        .background(cell.isHeader ? Color.secondary.opacity(0.12) : Color.clear)
-                                        .overlay(Rectangle().stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
+                                        .background(cell.isHeader ? MarkXInterface.wash : Color.clear)
+                                        .overlay(Rectangle().stroke(MarkXInterface.hairline, lineWidth: 0.5))
                                 }
                             }
                         }
@@ -1443,17 +1467,17 @@ private struct ArticleBlockView: View {
                     .padding(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: MarkXRadius.control).stroke(MarkXInterface.hairline))
+                .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.control))
             } else {
                 ScrollView(.horizontal) {
                     Text(block.text)
-                        .font(MarkXTypography.reading(size: 12.5, scale: CGFloat(textScale), design: .monospaced))
-                        .lineSpacing(4 * typography.scale)
-                        .padding(12 * typography.scale)
+                        .font(.system(size: typography.smallSize, design: .monospaced))
+                        .lineSpacing(0.6 * typography.smallSize)
+                        .padding(0.8 * typography.em)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
             }
         case .image:
             articleImage
@@ -1484,14 +1508,14 @@ private struct ArticleBlockView: View {
                 }
             }
             .font(bodyFont)
-            .padding(14 * typography.scale)
+            .padding(typography.em)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+            .markxSurface()
         case .unsupported:
             if !block.text.isEmpty {
                 inlineText
                     .font(bodyFont)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(MarkXInterface.text2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
@@ -1499,11 +1523,7 @@ private struct ArticleBlockView: View {
     }
 
     private var headingFont: Font {
-        switch block.level {
-        case 0...1: MarkXTypography.reading(size: 22, scale: CGFloat(textScale), weight: .bold)
-        case 2: MarkXTypography.reading(size: 18, scale: CGFloat(textScale), weight: .bold)
-        default: MarkXTypography.reading(size: 14, scale: CGFloat(textScale), weight: .semibold)
-        }
+        .system(size: typography.headingSize(level: block.level), weight: .medium)
     }
 
     private var bodyFont: Font {
@@ -1513,7 +1533,7 @@ private struct ArticleBlockView: View {
     private func listRow(marker: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: typography.listMarkerGap) {
             Text(marker)
-                .fontWeight(.semibold)
+                .foregroundStyle(block.kind == .unorderedListItem ? MarkXInterface.text3 : Color.primary)
                 .monospacedDigit()
                 .frame(
                     width: max(typography.listMarkerWidth, CGFloat(marker.count) * typography.bodySize * 0.72),
@@ -1562,7 +1582,7 @@ private struct ArticleBlockView: View {
     @ViewBuilder
     private var articleImage: some View {
         if let media, let url = media.remoteURL ?? Optional(media.sourceURL) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 0.5 * typography.em) {
                 Group {
                     if let localPath = media.localCachePath {
                         LocalArticleImage(path: localPath, fallbackURL: url)
@@ -1582,7 +1602,7 @@ private struct ArticleBlockView: View {
                                     .frame(maxWidth: .infinity)
                             case .failure:
                                 Label("图片暂时无法加载", systemImage: "photo.badge.exclamationmark")
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(MarkXInterface.text2)
                                     .frame(maxWidth: .infinity, minHeight: 150)
                             @unknown default:
                                 EmptyView()
@@ -1590,14 +1610,14 @@ private struct ArticleBlockView: View {
                         }
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15)))
+                .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
+                .overlay(RoundedRectangle(cornerRadius: MarkXRadius.card).stroke(MarkXInterface.hairline))
 
                 if let altText = media.altText, !altText.isEmpty {
                     Text(altText)
-                        .font(MarkXTypography.reading(size: 11, scale: CGFloat(textScale)))
-                        .lineSpacing(3 * typography.scale)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: typography.smallSize))
+                        .lineSpacing(0.3 * typography.smallSize)
+                        .foregroundStyle(MarkXInterface.text2)
                 }
             }
             .padding(.vertical, 3 * typography.scale)
@@ -1612,17 +1632,17 @@ private struct ArchivedVideoPlayer: View {
     let url: URL
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: MarkXSpace.m) {
             ArchivedAVPlayerView(url: url)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .background(Color.black)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15)))
+                .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
+                .overlay(RoundedRectangle(cornerRadius: MarkXRadius.card).stroke(MarkXInterface.hairline))
             Link(destination: url) {
                 Label("在默认播放器中打开视频", systemImage: "arrow.up.right.square")
             }
-            .font(MarkXTypography.caption)
+            .font(MarkXFont.meta)
         }
     }
 }
@@ -1671,50 +1691,53 @@ struct ArticleRow: View {
     let creator: Creator?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
             Text(index, format: .number.grouping(.never))
-                .font(MarkXTypography.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .font(MarkXFont.meta.monospacedDigit())
+                .foregroundStyle(MarkXInterface.text3)
                 .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(minWidth: 44, alignment: .trailing)
-                .layoutPriority(1)
+                .frame(minWidth: 24, alignment: .trailing)
+                .fixedSize()
                 .accessibilityLabel("第 \(index) 篇")
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: MarkXSpace.xs) {
                 Text(article.title)
-                    .font(MarkXTypography.system(size: 13, weight: .medium))
+                    .font(MarkXFont.headline)
                     .foregroundStyle(.primary)
-                    .lineSpacing(2)
+                    .lineSpacing(MarkXSpace.xxs)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 6) {
+                HStack(spacing: MarkXSpace.s) {
                     if article.isPaidPartnership {
                         CommercialContentBadge()
                     }
                     Text(creator?.displayName ?? "@\(article.authorHandle)")
-                    Text("·")
+                        .foregroundStyle(MarkXInterface.text2)
                     Text("@\(creator?.username ?? article.authorHandle)")
-                    Spacer()
+                        .foregroundStyle(MarkXInterface.text3)
+                    Spacer(minLength: MarkXSpace.m)
                     Text(article.publishedAt, style: .date)
+                        .foregroundStyle(MarkXInterface.text3)
+                        .monospacedDigit()
                 }
-                .font(MarkXTypography.caption)
-                .foregroundStyle(.secondary)
+                .font(MarkXFont.meta)
                 .lineLimit(1)
-                HStack(spacing: 6) {
-                    Image(systemName: statusIcon)
-                        .foregroundStyle(statusColor)
+                HStack(spacing: MarkXSpace.s) {
+                    StatusDot(color: statusColor)
                     Text(statusTitle)
                     if article.imageCount > 0 { Text("· \(article.imageCount) 张图") }
                     if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
                 }
-                .font(MarkXTypography.caption)
-                .foregroundStyle(.secondary)
+                .font(MarkXFont.meta)
+                .foregroundStyle(MarkXInterface.text2)
+                .lineLimit(1)
+                .accessibilityElement(children: .combine)
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, MarkXSpace.m + MarkXSpace.xxs)
+        .padding(.trailing, MarkXSpace.xs)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
         .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
@@ -1732,13 +1755,6 @@ struct ArticleRow: View {
         return article.pipelineState.displayName
     }
 
-    private var statusIcon: String {
-        if article.pipelineState == .subscriptionRequired { return "lock.fill" }
-        return article.pipelineState == .committed && !hasLayoutLimit
-            ? "checkmark.circle.fill"
-            : "exclamationmark.circle.fill"
-    }
-
     private var statusColor: Color {
         if article.pipelineState == .subscriptionRequired { return .purple }
         return article.pipelineState == .committed && !hasLayoutLimit ? .green : .orange
@@ -1750,9 +1766,27 @@ private struct SidebarCountRow: View {
     let systemImage: String
     let count: Int
     var body: some View {
-        // Native sidebar label and badge; macOS hides a zero badge.
-        Label(title, systemImage: systemImage)
-            .badge(count)
+        // Native sidebar row and badge (macOS hides a zero badge). Icons are
+        // one monochrome outline set in secondary grey, as in Fog's sidebar.
+        Label {
+            Text(title)
+        } icon: {
+            SidebarIcon(systemImage: systemImage)
+        }
+        .badge(count)
+    }
+}
+
+/// The one sidebar icon treatment: monochrome, secondary grey, fixed column.
+private struct SidebarIcon: View {
+    let systemImage: String
+    var color: Color = MarkXInterface.text2
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(color)
+            .frame(width: SidebarMetricBadge.iconColumn)
     }
 }
 
@@ -1772,7 +1806,7 @@ private struct SidebarMetricRow<Icon: View, Title: View, Value: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: MarkXSpace.m) {
             icon
                 .frame(width: SidebarMetricBadge.iconColumn, height: SidebarMetricBadge.iconColumn)
             title
@@ -1795,8 +1829,8 @@ private struct SidebarMetricBadge: View {
 
     var body: some View {
         Text(text)
-            .font(MarkXTypography.system(size: 10)).monospacedDigit()
-            .foregroundStyle(.secondary)
+            .font(MarkXFont.badge).monospacedDigit()
+            .foregroundStyle(MarkXInterface.text2)
             .lineLimit(1)
             .minimumScaleFactor(0.85)
             .frame(width: Self.columnWidth, alignment: .trailing)
@@ -1811,12 +1845,10 @@ private struct FixedReprocessButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text("重新处理")
+            Label("重新处理", systemImage: "arrow.clockwise")
                 .lineLimit(1)
-                .frame(width: 64)
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
+        .buttonStyle(.markxCompactProminent)
         .fixedSize(horizontal: true, vertical: false)
         .layoutPriority(10)
         .disabled(isDisabled)
@@ -1863,47 +1895,34 @@ private struct ArticleProcessingPanel: View {
         requiresSubscription ? .purple : article.pipelineState == .failed || article.lastError != nil ? .red : .orange
     }
 
-    private var icon: String {
-        requiresSubscription
-            ? "lock.fill"
-            : article.pipelineState == .failed || article.lastError != nil
-            ? "xmark.octagon.fill"
-            : article.pipelineState == .cancelled ? "stop.circle.fill" : "clock.arrow.circlepath"
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: icon)
-                        .font(MarkXTypography.title3)
-                        .foregroundStyle(color)
+        VStack(alignment: .leading, spacing: MarkXSpace.l) {
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
+                    StatusDot(color: color, size: 8)
                     Text(title)
-                        .font(MarkXTypography.headline)
+                        .font(MarkXFont.headline)
                         .lineLimit(2)
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     Spacer(minLength: 0)
                 }
                 Text(detail)
-                    .font(MarkXTypography.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(MarkXFont.meta)
+                    .foregroundStyle(MarkXInterface.text2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: MarkXSpace.m) {
                 Spacer(minLength: 0)
                 if isActive {
-                    Button("停止处理", role: .cancel, action: stop)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    Button("停止处理", systemImage: "stop", role: .cancel, action: stop)
+                        .buttonStyle(.markxCompact)
                 } else if requiresSubscription {
-                    Button("在浏览器订阅", action: openSubscription)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    Button("在浏览器订阅", systemImage: "arrow.up.right", action: openSubscription)
+                        .buttonStyle(.markxCompact)
                     Button("订阅后重新处理", action: restart)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .buttonStyle(.markxCompactProminent)
                         .disabled(isActionDisabled)
                 } else {
                     FixedReprocessButton(
@@ -1916,24 +1935,24 @@ private struct ArticleProcessingPanel: View {
             }
 
             if let lastError = article.lastError, !lastError.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: MarkXSpace.xs) {
                     Text(requiresSubscription ? "访问说明" : "错误原因")
-                        .font(MarkXTypography.caption.weight(.semibold))
+                        .font(MarkXFont.metaStrong)
                         .foregroundStyle(color)
                     Text(lastError)
-                        .font(MarkXTypography.callout)
+                        .font(MarkXFont.detail)
                         .textSelection(.enabled)
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(10)
+                .padding(MarkXSpace.l)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: MarkXRadius.card))
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("处理日志").font(MarkXTypography.caption.weight(.semibold))
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                Text("处理日志").font(MarkXFont.metaStrong).foregroundStyle(MarkXInterface.text2)
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: MarkXSpace.xs) {
                         if article.processingLog.isEmpty {
                             Text("尚无详细日志；当前状态：\(article.pipelineState.displayName)")
                         } else {
@@ -1945,15 +1964,15 @@ private struct ArticleProcessingPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 120)
-                .font(MarkXTypography.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .font(MarkXFont.meta.monospaced())
+                .foregroundStyle(MarkXInterface.text2)
                 .textSelection(.enabled)
             }
-            .padding(10)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+            .padding(MarkXSpace.l)
+            .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.card))
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .padding(.horizontal, MarkXSpace.x3)
+        .padding(.vertical, MarkXSpace.xl)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.035))
         .contextMenu {
@@ -1970,16 +1989,31 @@ private struct ArticleProcessingPanel: View {
     }
 }
 
+/// Fog chip: 6pt corners, hairline border, a small coloured square marker.
 private struct CommercialContentBadge: View {
     var body: some View {
-        Text("商单内容")
-            .font(MarkXTypography.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.orange.opacity(0.13), in: Capsule())
-            .foregroundStyle(.orange)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("商单内容，X 官方付费合作标记")
+        HStack(spacing: MarkXSpace.xs) {
+            StatusDot(color: .orange)
+            Text("商单")
+        }
+        .font(MarkXFont.badge)
+        .foregroundStyle(MarkXInterface.text2)
+        .padding(.horizontal, MarkXSpace.s)
+        .frame(height: 18)
+        .overlay(RoundedRectangle(cornerRadius: MarkXRadius.control - 2).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
+        .fixedSize()
+        .accessibilityLabel("商单内容，X 官方付费合作标记")
+    }
+}
+
+/// Status marker shared by rows and chips (Fog `.chip .dot`: 2pt-rounded square).
+struct StatusDot: View {
+    let color: Color
+    var size: CGFloat = 7
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2).fill(color).frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 
@@ -1993,16 +2027,16 @@ private struct StatusPill: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 7, height: 7)
+        HStack(spacing: MarkXSpace.s) {
+            StatusDot(color: color)
             Text(title)
         }
-        .font(MarkXTypography.system(size: 11, weight: .medium))
+        .font(MarkXFont.metaStrong)
         .foregroundStyle(.primary)
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
+        .padding(.horizontal, MarkXSpace.m)
+        .frame(height: 24)
+        .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
+        .overlay(RoundedRectangle(cornerRadius: MarkXRadius.control).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
     }
 }
 
@@ -2011,13 +2045,13 @@ private struct TaskProgressBar: View {
     let isRunning: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: MarkXSpace.m) {
             HStack {
                 if isRunning { ProgressView().controlSize(.small) }
-                Text(progress.stage).font(MarkXTypography.caption.weight(.medium))
+                Text(progress.stage).font(MarkXFont.metaStrong)
                 Spacer()
             }
-            HStack(spacing: 12) {
+            HStack(spacing: MarkXSpace.l) {
                 Label("X API 0", systemImage: "checkmark.shield")
                     .foregroundStyle(.green)
                 Text("发现 \(progress.discoveredArticles)")
@@ -2027,10 +2061,10 @@ private struct TaskProgressBar: View {
                 Text("视频 \(progress.uploadedVideos)")
                 if progress.failedArticles > 0 { Text("失败 \(progress.failedArticles)").foregroundStyle(.red) }
             }
-            .font(MarkXTypography.caption2)
-            .foregroundStyle(.secondary)
+            .font(MarkXFont.badge)
+            .foregroundStyle(MarkXInterface.text2)
         }
-        .padding(12)
+        .padding(MarkXSpace.l)
         .background(.bar)
     }
 }
@@ -2067,17 +2101,17 @@ private struct ArticlePreviewContent: View {
                     description: Text("当前状态、错误原因和处理日志已显示在上方。"))
                     .frame(maxWidth: .infinity, minHeight: 240)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: MarkXSpace.l) {
                     if article.pipelineState == .committed {
                         Label("文章预览不可用", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        Text("完整来源快照不可用，下面显示本地 Markdown。").foregroundStyle(.secondary)
+                        Text("完整来源快照不可用，下面显示本地 Markdown。").foregroundStyle(MarkXInterface.text2)
                         FixedReprocessButton(isDisabled: isBusy, help: "重新打开原文并恢复完整预览", action: reprocess)
                     }
                     Text(preview?.markdown ?? "无法读取本地 Markdown。")
                         .font(MarkXTypography.reading(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-                .padding(.top, 8).padding(.bottom, 24)
+                .padding(.top, MarkXSpace.m).padding(.bottom, MarkXSpace.x3)
             }
         }
         .task(id: key) {

@@ -239,29 +239,29 @@ struct SoftwareUpdateView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: MarkXSpace.xl) {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 56, height: 56)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(MarkXTypography.system(size: 17, weight: .semibold))
+                VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                    Text(title).font(MarkXFont.title)
                     Text(subtitle)
-                        .font(MarkXTypography.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .font(MarkXFont.detail)
+                        .foregroundStyle(MarkXInterface.text2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 36)
-            .padding(.bottom, 20)
+            .padding(.horizontal, MarkXSpace.x4)
+            .padding(.top, MarkXSpace.x5)
+            .padding(.bottom, MarkXSpace.xxl)
 
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, 28)
-                .padding(.bottom, 20)
+                .padding(.horizontal, MarkXSpace.x4)
+                .padding(.bottom, MarkXSpace.xxl)
 
             MarkXFooter(note: footerNote) { actions }
         }
@@ -303,34 +303,34 @@ struct SoftwareUpdateView: View {
         case .checking, .idle:
             ProgressView().controlSize(.small)
         case .downloading(_, let progress):
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: MarkXSpace.m) {
                 ProgressView(value: progress)
-                Text("\(Int(progress * 100))%").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                Text("\(Int(progress * 100))%").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                     .monospacedDigit()
             }
-            .padding(.top, 8)
+            .padding(.top, MarkXSpace.m)
         default:
             if let notes = manifest?.notes, !notes.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("更新内容").font(MarkXTypography.system(size: 12, weight: .semibold))
+                VStack(alignment: .leading, spacing: MarkXSpace.m) {
+                    Text("更新内容").font(MarkXFont.detailStrong)
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: MarkXSpace.m) {
                             ForEach(notes, id: \.self) { note in
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
                                     Circle().fill(.tint).frame(width: 5, height: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] + 1 }
-                                    Text(note).font(MarkXTypography.system(size: 12)).lineSpacing(3)
+                                    Text(note).font(MarkXFont.detail).lineSpacing(3)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                         }
-                        .padding(14)
+                        .padding(MarkXSpace.l)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
+                    .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXRadius.panel))
+                    .overlay(RoundedRectangle(cornerRadius: MarkXRadius.panel).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
                 }
             } else if manifest != nil {
-                Text("更新内容可在官网查看。").font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
+                Text("更新内容可在官网查看。").font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
             }
         }
     }
@@ -382,6 +382,7 @@ struct SoftwareUpdateSettingsSection: View {
             Toggle("自动检查更新", isOn: $automaticChecks)
             LabeledContent {
                 Button("立即检查") { updater.check(userInitiated: true) }
+                    .buttonStyle(.markxCompact)
                     .disabled(!updater.isSupported)
             } label: {
                 Text("当前版本 \(updater.currentVersion)（\(updater.currentBuild)）")
@@ -393,6 +394,7 @@ struct SoftwareUpdateSettingsSection: View {
             Text("软件更新")
         } footer: {
             Text("开启后 MarkX 会定期查看官网是否有新版本，发现后提醒你在应用内一键安装。")
+                .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

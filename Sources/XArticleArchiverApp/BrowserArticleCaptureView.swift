@@ -1085,10 +1085,10 @@ struct BrowserArticleCaptureView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header.padding(20)
+            header.padding(MarkXSpace.xxl)
             Divider()
-            summaryCard.padding(.horizontal, 20).padding(.vertical, 16)
-            downloadQueue.padding(.horizontal, 20).padding(.bottom, 16)
+            summaryCard.padding(.horizontal, MarkXSpace.xxl).padding(.vertical, MarkXSpace.xl)
+            downloadQueue.padding(.horizontal, MarkXSpace.xxl).padding(.bottom, MarkXSpace.xl)
             footer
         }
         .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
@@ -1140,62 +1140,58 @@ struct BrowserArticleCaptureView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "square.and.arrow.down").font(MarkXTypography.system(size: 20)).foregroundStyle(.secondary)
-                .frame(width: 34, height: 34).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.isSyncingTrackedCreators ? "正在同步文章" : "正在保存文章").font(MarkXTypography.system(size: 17, weight: .semibold)).lineLimit(2)
-                Text("完整保存正文、图片和视频，保留原文顺序。").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+        HStack(spacing: MarkXSpace.l) {
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                Text(model.isSyncingTrackedCreators ? "正在同步文章" : "正在保存文章").font(MarkXFont.title).lineLimit(2)
+                Text("完整保存正文、图片和视频，保留原文顺序。").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).lineLimit(2)
             }
-            Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 5) {
-                Text("\(currentDownloadNumber) / \(downloadCount)").font(MarkXTypography.system(size: 12, weight: .medium)).monospacedDigit()
-                Text("X API · 0").font(MarkXTypography.system(size: 10)).foregroundStyle(.secondary)
+            Spacer(minLength: MarkXSpace.l)
+            VStack(alignment: .trailing, spacing: MarkXSpace.s) {
+                Text("\(currentDownloadNumber) / \(downloadCount)").font(MarkXFont.detailStrong).monospacedDigit()
+                Text("X API · 0").font(MarkXFont.badge).foregroundStyle(MarkXInterface.text3)
             }
         }
     }
 
     private var summaryCard: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: MarkXSpace.l) {
             ProgressView().controlSize(.small)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(progressHeadline).font(MarkXTypography.system(size: 12, weight: .medium)).lineLimit(2)
-                Text(captureSummaryText).font(MarkXTypography.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                Text(progressHeadline).font(MarkXFont.detailStrong).lineLimit(2)
+                Text(captureSummaryText).font(MarkXFont.meta).monospacedDigit().foregroundStyle(MarkXInterface.text2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(14).markxSurface()
+        .padding(MarkXSpace.l).markxSurface()
     }
 
     private var downloadQueue: some View {
         List {
             ForEach(model.visibleBrowserCaptureRequests) { item in
                 let state = model.browserCaptureState(for: item)
-                HStack(alignment: .top, spacing: 11) {
-                    Image(systemName: state.systemImage)
-                        .font(MarkXTypography.body.weight(.semibold))
-                        .foregroundStyle(color(for: state))
-                        .frame(width: 24, height: 24)
-                    VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.l) {
+                    VStack(alignment: .leading, spacing: MarkXSpace.xs) {
                         Text(item.displayTitle)
-                            .font(MarkXTypography.callout.weight(.semibold))
+                            .font(MarkXFont.detailStrong)
                             .lineLimit(2)
                         Text(XArticleNavigationURL.captureURL(for: item.link).absoluteString)
-                            .font(MarkXTypography.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                            .font(MarkXFont.meta)
+                            .foregroundStyle(MarkXInterface.text3)
                             .lineLimit(1)
+                            .truncationMode(.middle)
                             .textSelection(.enabled)
                     }
-                    Spacer(minLength: 8)
-                    Text(state.title)
-                        .font(MarkXTypography.caption.weight(.medium))
-                        .foregroundStyle(color(for: state))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(color(for: state).opacity(0.1), in: Capsule())
+                    Spacer(minLength: MarkXSpace.m)
+                    HStack(spacing: MarkXSpace.s) {
+                        StatusDot(color: color(for: state))
+                        Text(state.title)
+                    }
+                    .font(MarkXFont.metaStrong)
+                    .foregroundStyle(MarkXInterface.text2)
+                    .fixedSize()
                 }
-                .padding(.vertical, 7)
+                .padding(.vertical, MarkXSpace.m)
                 .contextMenu {
                     if state != .saved, state != .checked, model.isPendingExactCaptureRequest(item) {
                         Button(role: .destructive) {
@@ -1212,10 +1208,10 @@ struct BrowserArticleCaptureView: View {
         .scrollContentBackground(.hidden)
         .frame(minHeight: 200, maxHeight: .infinity)
         .background(MarkXInterface.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: MarkXRadius.card)
+                .strokeBorder(MarkXInterface.hairline, lineWidth: 1)
         }
         .overlay {
             if model.visibleBrowserCaptureRequests.isEmpty {
@@ -1230,7 +1226,7 @@ struct BrowserArticleCaptureView: View {
             if model.pendingExactCaptureCount > 0 {
                 Menu {
                     Button("清空待处理任务…", role: .destructive) { model.requestDeleteAllExactCaptureTasks() }
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).fixedSize().help("更多队列操作")
             }
             Button("停止") { model.closeBrowserCapture() }

@@ -15,13 +15,13 @@ struct WelcomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     hero
-                    setupSteps.padding(.top, 36)
-                    actions.padding(.top, 28)
-                    highlights.padding(.top, 44)
+                    setupSteps.padding(.top, MarkXSpace.x5)
+                    actions.padding(.top, MarkXSpace.x4)
+                    highlights.padding(.top, MarkXSpace.x6)
                 }
                 .frame(maxWidth: Self.columnWidth, alignment: .leading)
-                .padding(.horizontal, 48)
-                .padding(.vertical, 56)
+                .padding(.horizontal, MarkXSpace.x6)
+                .padding(.vertical, MarkXSpace.pageTop)
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
         }
@@ -33,25 +33,25 @@ struct WelcomeView: View {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 72, height: 72)
-                .shadow(color: .black.opacity(0.25), radius: 16, y: 8)
+                .frame(width: 64, height: 64)
+                .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
                 .accessibilityHidden(true)
             Text(isConfigured ? "资料库已就绪" : "欢迎使用 MarkX")
-                .font(MarkXTypography.system(size: 13, weight: .semibold))
-                .foregroundStyle(.tint)
-                .padding(.top, 26)
+                .font(MarkXFont.detailStrong)
+                .foregroundStyle(MarkXInterface.text2)
+                .padding(.top, MarkXSpace.x3)
             Text("把 X Article 全文收进自己的 Mac")
-                .font(MarkXTypography.system(size: 30, weight: .semibold))
+                .font(MarkXFont.display)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 8)
+                .padding(.top, MarkXSpace.m)
             Text(isConfigured
                  ? "粘贴博主主页、用户名或文章链接，MarkX 会在后台保存正文、原图和视频，并导出可迁移的 Markdown。"
                  : "按博主读取 X Articles 列表，逐篇保存标题、段落、表格、代码、图片和视频顺序。全程不调用 X API，文章只保存在你选择的文件夹里。")
-                .font(MarkXTypography.system(size: 14))
-                .foregroundStyle(.secondary)
-                .lineSpacing(5)
+                .font(MarkXFont.lead)
+                .foregroundStyle(MarkXInterface.text2)
+                .lineSpacing(MarkXSpace.s)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 14)
+                .padding(.top, MarkXSpace.l)
         }
     }
 
@@ -63,7 +63,7 @@ struct WelcomeView: View {
                 detail: model.archiveRoot?.path ?? "选择一个文件夹，用来保存文章、图片和 Markdown",
                 isReady: model.archiveRoot != nil
             )
-            Divider().overlay(MarkXInterface.hairline).padding(.leading, 64)
+            Rectangle().fill(MarkXInterface.hairline).frame(height: 1).padding(.leading, MarkXSpace.xl + MarkXIcon.tile + MarkXSpace.l)
             WelcomeStepRow(
                 symbol: "person.badge.key",
                 title: "浏览器 X 登录",
@@ -71,11 +71,11 @@ struct WelcomeView: View {
                 isReady: model.hasBrowserSessionData
             ) {
                 if let browser = model.browserNameNeedingAccess {
-                    Button("授权读取 \(browser)…") { model.chooseBrowserDataDirectory() }
+                    Button("授权读取 \(browser)…") { model.chooseBrowserDataDirectory() }.buttonStyle(.markxCompactProminent)
                         .help("macOS 需要你确认一次，MarkX 才能读取 \(browser) 里的 X 登录记录")
                 }
             }
-            Divider().overlay(MarkXInterface.hairline).padding(.leading, 64)
+            Rectangle().fill(MarkXInterface.hairline).frame(height: 1).padding(.leading, MarkXSpace.xl + MarkXIcon.tile + MarkXSpace.l)
             WelcomeStepRow(
                 symbol: "photo.on.rectangle",
                 title: "媒体存储",
@@ -83,14 +83,14 @@ struct WelcomeView: View {
                 isReady: model.imageHostVerified
             )
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
-        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: MarkXRadius.hero))
+        .overlay(RoundedRectangle(cornerRadius: MarkXRadius.hero).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.12), radius: 24, y: 12)
     }
 
     @ViewBuilder
     private var actions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: MarkXSpace.l) {
             if isConfigured {
                 Button { model.presentDownloadSheet() } label: {
                     Label("开始下载文章", systemImage: "square.and.arrow.down")
@@ -113,7 +113,7 @@ struct WelcomeView: View {
     }
 
     private var highlights: some View {
-        HStack(alignment: .top, spacing: 28) {
+        HStack(alignment: .top, spacing: MarkXSpace.x4) {
             WelcomeHighlight(symbol: "text.alignleft", title: "完整排版",
                              detail: "标题、列表、引用、代码和表格按原文保留")
             WelcomeHighlight(symbol: "photo.stack", title: "原图与视频",
@@ -141,33 +141,29 @@ private struct WelcomeStepRow<Accessory: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: symbol)
-                .font(MarkXTypography.system(size: 15, weight: .medium))
-                .foregroundStyle(isReady ? Color.green : Color.secondary)
-                .frame(width: 32, height: 32)
-                .background((isReady ? Color.green : Color.primary).opacity(isReady ? 0.14 : 0.06),
-                            in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(MarkXTypography.system(size: 13, weight: .semibold))
+        HStack(alignment: .center, spacing: MarkXSpace.l) {
+            MarkXIconTile(systemImage: symbol)
+            VStack(alignment: .leading, spacing: MarkXSpace.xs) {
+                Text(title).font(MarkXFont.headline)
                 Text(detail)
-                    .font(MarkXTypography.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(MarkXFont.meta)
+                    .foregroundStyle(MarkXInterface.text2)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(detail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             accessory
-            Label(isReady ? "已就绪" : "待设置",
-                  systemImage: isReady ? "checkmark.circle.fill" : "circle.dashed")
-                .font(MarkXTypography.system(size: 11, weight: .medium))
-                .foregroundStyle(isReady ? Color.green : Color.secondary)
-                .fixedSize()
+            HStack(spacing: MarkXSpace.s) {
+                StatusDot(color: isReady ? .green : MarkXInterface.text3)
+                Text(isReady ? "已就绪" : "待设置")
+            }
+            .font(MarkXFont.metaStrong)
+            .foregroundStyle(isReady ? AnyShapeStyle(.primary) : AnyShapeStyle(MarkXInterface.text2))
+            .fixedSize()
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 15)
+        .padding(.horizontal, MarkXSpace.xl)
+        .padding(.vertical, MarkXSpace.xl)
         .accessibilityElement(children: .contain)
     }
 }
@@ -178,17 +174,17 @@ private struct WelcomeHighlight: View {
     let detail: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: MarkXSpace.s) {
             Image(systemName: symbol)
-                .font(MarkXTypography.system(size: 15))
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22, alignment: .leading)
+                .font(MarkXFont.headline)
+                .foregroundStyle(MarkXInterface.text3)
+                .frame(height: MarkXIcon.rowWidth, alignment: .leading)
                 .accessibilityHidden(true)
-            Text(title).font(MarkXTypography.system(size: 12, weight: .semibold))
+            Text(title).font(MarkXFont.detailStrong)
             Text(detail)
-                .font(MarkXTypography.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineSpacing(2)
+                .font(MarkXFont.meta)
+                .foregroundStyle(MarkXInterface.text2)
+                .lineSpacing(MarkXSpace.xxs)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

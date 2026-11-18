@@ -40,7 +40,7 @@ struct InterfacePreviewGallery: View {
         }
         .frame(minWidth: 1120, minHeight: 790)
         .background(MarkXInterface.canvas)
-        .font(MarkXTypography.body)
+        .font(MarkXFont.body)
         .preferredColorScheme(dark ? .dark : .light)
         .onChange(of: page) { _, value in
             model.showingCreatorArticleDiscovery = value == .progress
@@ -52,7 +52,7 @@ struct InterfacePreviewGallery: View {
         HStack(alignment: .top, spacing: 30) {
             ForEach([360, 430], id: \.self) { width in
                 VStack(spacing: 12) {
-                    Text("\(width)pt 文章列表").font(MarkXTypography.headline)
+                    Text("\(width)pt 文章列表").font(MarkXFont.headline)
                     List {
                         if let article = model.articles.first {
                             ForEach([1, 999, 9999, 10000, 99999], id: \.self) { index in

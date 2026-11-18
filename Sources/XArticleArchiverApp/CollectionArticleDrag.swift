@@ -177,15 +177,15 @@ struct CollectionArticleDragPreview: View {
         Label {
             Text(title).lineLimit(1)
         } icon: {
-            Image(systemName: "doc.text.fill").foregroundStyle(Color.orange)
+            Image(systemName: "doc.text").foregroundStyle(MarkXInterface.text2)
         }
-        .font(.system(size: 12, weight: .semibold))
+        .font(MarkXFont.detailStrong)
         .frame(width: 204, height: 32, alignment: .leading)
-        .padding(.horizontal, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.orange.opacity(0.75)) }
+        .padding(.horizontal, MarkXSpace.m)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: MarkXRadius.card))
+        .overlay { RoundedRectangle(cornerRadius: MarkXRadius.card).strokeBorder(MarkXInterface.hairline) }
         .shadow(color: .black.opacity(0.2), radius: 5, y: 2)
-        .padding(5)
+        .padding(MarkXSpace.s)
         .accessibilityHidden(true)
     }
 }

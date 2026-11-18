@@ -635,10 +635,10 @@ struct BrowserCreatorArticleDiscoveryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header.padding(20)
+            header.padding(MarkXSpace.xxl)
             Divider()
-            statusCard.padding(.horizontal, 20).padding(.vertical, 16)
-            discoveredArticleList.padding(.horizontal, 20).padding(.bottom, 16)
+            statusCard.padding(.horizontal, MarkXSpace.xxl).padding(.vertical, MarkXSpace.xl)
+            discoveredArticleList.padding(.horizontal, MarkXSpace.xxl).padding(.bottom, MarkXSpace.xl)
             footer
         }
         .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
@@ -678,32 +678,30 @@ struct BrowserCreatorArticleDiscoveryView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "doc.text.magnifyingglass").font(MarkXTypography.system(size: 20)).foregroundStyle(.secondary)
-                .frame(width: 34, height: 34).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(request.map { "正在检查 @\($0.username)" } ?? "正在查找博主文章").font(MarkXTypography.system(size: 17, weight: .semibold)).lineLimit(2)
-                Text(model.isRefreshingCreatorCounts ? "完整扫描列表，更新线上文章总数。" : "新发现的文章会自动进入保存队列。").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+        HStack(spacing: MarkXSpace.l) {
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                Text(request.map { "正在检查 @\($0.username)" } ?? "正在查找博主文章").font(MarkXFont.title).lineLimit(2)
+                Text(model.isRefreshingCreatorCounts ? "完整扫描列表，更新线上文章总数。" : "新发现的文章会自动进入保存队列。").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).lineLimit(2)
             }
-            Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 5) {
-                Text("博主 \(currentCreatorNumber) / \(creatorCount)").font(MarkXTypography.system(size: 12, weight: .medium)).monospacedDigit()
-                Text("X API · 0").font(MarkXTypography.system(size: 10)).foregroundStyle(.secondary)
+            Spacer(minLength: MarkXSpace.l)
+            VStack(alignment: .trailing, spacing: MarkXSpace.s) {
+                Text("博主 \(currentCreatorNumber) / \(creatorCount)").font(MarkXFont.detailStrong).monospacedDigit()
+                Text("X API · 0").font(MarkXFont.badge).foregroundStyle(MarkXInterface.text3)
             }
         }
     }
 
     private var statusCard: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: MarkXSpace.l) {
             ProgressView().controlSize(.small)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(controller.pageStatus).font(MarkXTypography.system(size: 12, weight: .medium)).lineLimit(2)
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                Text(controller.pageStatus).font(MarkXFont.detailStrong).lineLimit(2)
                 Text("已识别 \(controller.discoveredCount) 篇文章")
-                    .font(MarkXTypography.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    .font(MarkXFont.meta).monospacedDigit().foregroundStyle(MarkXInterface.text2)
             }
             Spacer(minLength: 0)
         }
-        .padding(14).markxSurface()
+        .padding(MarkXSpace.l).markxSurface()
     }
 
     private var discoveredArticleList: some View {
@@ -725,31 +723,26 @@ struct BrowserCreatorArticleDiscoveryView: View {
             } else {
                 List {
                     ForEach(Array(controller.discoveredItems.enumerated()), id: \.element.id) { index, item in
-                        HStack(alignment: .top, spacing: 11) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.green.opacity(0.12))
-                                    .frame(width: 28, height: 28)
-                                Image(systemName: "checkmark")
-                                    .font(MarkXTypography.caption.bold())
-                                    .foregroundStyle(.green)
-                            }
-                            VStack(alignment: .leading, spacing: 5) {
+                        HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
+                            Text("\(index + 1)")
+                                .font(MarkXFont.meta.monospacedDigit())
+                                .foregroundStyle(MarkXInterface.text3)
+                                .frame(minWidth: 24, alignment: .trailing)
+                            VStack(alignment: .leading, spacing: MarkXSpace.xs) {
                                 Text(item.title)
-                                    .font(MarkXTypography.callout.weight(.semibold))
+                                    .font(MarkXFont.detailStrong)
                                     .lineLimit(2)
                                 Text(item.sourceURLText)
-                                    .font(MarkXTypography.caption.monospaced())
-                                    .foregroundStyle(.secondary)
+                                    .font(MarkXFont.meta)
+                                    .foregroundStyle(MarkXInterface.text3)
                                     .lineLimit(1)
+                                    .truncationMode(.middle)
                                     .textSelection(.enabled)
                             }
-                            Spacer(minLength: 8)
-                            Text("\(index + 1)")
-                                .font(MarkXTypography.caption2.monospacedDigit())
-                                .foregroundStyle(.tertiary)
+                            Spacer(minLength: MarkXSpace.m)
+                            StatusDot(color: .green)
                         }
-                        .padding(.vertical, 6)
+                        .padding(.vertical, MarkXSpace.s)
                     }
                 }
                 .listStyle(.inset)
@@ -758,10 +751,10 @@ struct BrowserCreatorArticleDiscoveryView: View {
         }
         .frame(minHeight: 200, maxHeight: .infinity)
         .background(MarkXInterface.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: MarkXRadius.card)
+                .strokeBorder(MarkXInterface.hairline, lineWidth: 1)
         }
     }
 
