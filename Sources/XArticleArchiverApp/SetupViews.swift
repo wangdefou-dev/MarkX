@@ -575,6 +575,7 @@ struct SettingsView: View {
                     Text("Markdown、原图、视频与资料库数据库都保存在这个文件夹。")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                SoftwareUpdateSettingsSection()
             }
             .formStyle(.grouped)
             .tabItem { Label("通用", systemImage: "gearshape") }.tag(0)

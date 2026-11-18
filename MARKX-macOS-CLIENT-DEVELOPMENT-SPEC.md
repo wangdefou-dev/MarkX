@@ -114,6 +114,13 @@ downloads/markx/<version>/SHA256SUMS.txt
 
 在 Actions 手动运行此工作流时，填写当前线上 DMG 的 SHA-256 可检查现有下载和官网构建。勾选 `publish` 时会同时执行上传和生产部署，可用于首次接入或恢复官网发布。
 
+### 6.1 应用内自动更新（0.3.66）
+
+- 更新源为生产站点 `https://markx.defou.ai/release.json`，由 `scripts/update-release-website.py` 生成，字段：`version`、`build`、`sha256`、`url`（`download.markx.defou.ai` 下的不可变 DMG 地址）、`notes`（取自 `CHANGELOG.md` 对应版本）。缺少 `url` 时按固定路径推导；只接受 `download.markx.defou.ai` 与 `1want.link` 的 HTTPS 地址。
+- `AppUpdater` 在启动 5 秒后及之后每小时检查一次（距上次检查不足 6 小时则跳过），可在设置“通用 → 软件更新”关闭；“跳过此版本”只抑制自动提醒，菜单“检查更新…”始终显示结果。
+- 安装流程（`AppUpdateInstaller`）：下载 DMG → 核对 SHA-256 → 只读挂载并复制 App → 核对 Bundle ID、版本与 `codesign --verify --deep --strict` → 旧版移入废纸篓、新版放回原路径 → 进程退出后由 `/bin/sh` 辅助进程重新打开。任一步失败都不改动已安装的应用；有下载任务时禁止重启安装。
+- 调试：设置环境变量 `MARKX_UPDATE_MANIFEST_URL` 可指向本地更新源（此时允许任意下载地址，Debug 构建也会自动检查）。端到端验证用独立 Bundle ID 的旧版本 + 本地 HTTP 服务；macOS 27 上 `hdiutil create -srcfolder` 可能生成损坏镜像，测试包用 `diskutil image create from` 制作。
+
 ## 7. 本机强制覆盖
 
 每次有新的应用安装包时，都必须覆盖用户当前使用的 `/Applications/MarkX.app`：

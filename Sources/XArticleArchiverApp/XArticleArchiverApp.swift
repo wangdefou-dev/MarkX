@@ -22,6 +22,9 @@ struct XArticleArchiverApp: App {
         .defaultSize(width: 1_360, height: 860)
         .handlesExternalEvents(matching: MarkXWindowPolicy.externalEventKeys)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("检查更新…") { AppUpdater.shared.check(userInitiated: true) }
+            }
             // HIG: every toolbar and context action is also reachable from the
             // menu bar, with standard shortcuts.
             CommandGroup(replacing: .newItem) {
@@ -90,6 +93,13 @@ struct XArticleArchiverApp: App {
         RootView()
             .environmentObject(model)
             .frame(minWidth: 1_080, minHeight: 680)
-            .onAppear { MarkXWindowPolicy.enforceSingleMainWindow() }
+            .onAppear {
+                MarkXWindowPolicy.enforceSingleMainWindow()
+                AppUpdater.shared.isBusy = { [weak model] in
+                    guard let model else { return false }
+                    return model.isRunning || model.hasActiveDownloadProgress
+                }
+                AppUpdater.shared.startAutomaticChecks()
+            }
     }
 }

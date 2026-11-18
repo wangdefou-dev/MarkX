@@ -56,6 +56,13 @@ if current_version[1] != version:
     readme_path.write_text(readme, encoding="utf-8")
 
 checksum = (Path(sys.argv[2]) / "SHA256SUMS.txt").read_text(encoding="utf-8").split()[0]
-receipt = json.dumps({"version": version, "build": build, "sha256": checksum}) + "\n"
+# The app's updater reads this receipt: keep url and notes alongside the checksum.
+receipt = json.dumps({
+    "version": version,
+    "build": build,
+    "sha256": checksum,
+    "url": f"https://download.markx.defou.ai/{version}/MarkX-{version}.dmg",
+    "notes": notes,
+}, ensure_ascii=False) + "\n"
 source_path.write_text(source, encoding="utf-8")
 (website / "public/release.json").write_text(receipt, encoding="utf-8")
