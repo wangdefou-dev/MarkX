@@ -11,8 +11,9 @@ struct InterfacePreviewGallery: View {
         case sync = "同步", settings = "设置", result = "结果", progress = "进度"
     }
     @EnvironmentObject private var model: AppViewModel
-    @State private var page: Page = .sidebar
-    @State private var dark = false
+    // MARKX_PREVIEW_PAGE / MARKX_PREVIEW_DARK pick the page for scripted screenshots.
+    @State private var page: Page = Page(rawValue: ProcessInfo.processInfo.environment["MARKX_PREVIEW_PAGE"] ?? "") ?? .sidebar
+    @State private var dark = ProcessInfo.processInfo.environment["MARKX_PREVIEW_DARK"] == "1"
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 20) {

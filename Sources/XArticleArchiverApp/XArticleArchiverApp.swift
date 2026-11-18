@@ -4,6 +4,7 @@ import SwiftUI
 struct XArticleArchiverApp: App {
     @NSApplicationDelegateAdaptor(MarkXAppDelegate.self) private var appDelegate
     @StateObject private var model = AppViewModel()
+    @AppStorage("articlePreviewTextScale") private var articleTextScale = 1.0
 
     var body: some Scene {
         Window("MarkX", id: "main") {
@@ -18,14 +19,57 @@ struct XArticleArchiverApp: App {
             #endif
         }
         .windowStyle(.titleBar)
-        .defaultSize(width: 1_280, height: 780)
+        .defaultSize(width: 1_360, height: 860)
         .handlesExternalEvents(matching: MarkXWindowPolicy.externalEventKeys)
         .commands {
-            CommandGroup(replacing: .newItem) {}
-            CommandMenu("资料库") {
-                Button("整理重复媒体缓存…") { model.cleanVerifiedMediaCache() }
-                    .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
-                    .help("核对并移除已有完整备份的重复隐藏缓存")
+            // HIG: every toolbar and context action is also reachable from the
+            // menu bar, with standard shortcuts.
+            CommandGroup(replacing: .newItem) {
+                Button("下载文章…") { model.presentDownloadSheet() }
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(isBusy)
+                Button("同步所有博主…") { model.requestSyncAll() }
+                    .keyboardShortcut("r", modifiers: .command)
+                    .disabled(isBusy || model.enabledCreatorCount == 0)
+                Divider()
+                Button("显示下载进度") { model.showDownloadProgressWindow() }
+                    .disabled(!model.hasActiveDownloadProgress)
+                Button("停止当前任务") { model.cancelCurrentTask() }
+                    .keyboardShortcut(".", modifiers: .command)
+                    .disabled(!isBusy)
+            }
+            SidebarCommands()
+            ToolbarCommands()
+            CommandGroup(after: .toolbar) {
+                Divider()
+                Button("放大正文") { setArticleTextScale(articleTextScale + 0.1) }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(articleTextScale >= 1.6)
+                Button("缩小正文") { setArticleTextScale(articleTextScale - 0.1) }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(articleTextScale <= 0.8)
+                Button("正文实际大小") { articleTextScale = 1.0 }
+                    .keyboardShortcut("0", modifiers: .command)
+                    .disabled(articleTextScale == 1.0)
+            }
+            CommandMenu("文章") {
+                let article = model.selectedArticle
+                Button("在浏览器中打开原文") { model.openSource() }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .disabled(article == nil)
+                Button("打开 Markdown") { model.openSelectedArticle() }
+                    .keyboardShortcut("o", modifiers: .command)
+                    .disabled(article == nil)
+                Button("在 Finder 中显示") { model.revealSelectedArticle() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                    .disabled(article == nil)
+                Divider()
+                Button("重新处理") { if let article { model.restartProcessing(article) } }
+                    .disabled(article == nil || isBusy)
+                Divider()
+                Button("删除文章…") { if let article { model.requestDeleteArticle(article) } }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(article == nil || isBusy || model.selectedCollectionID != nil)
             }
         }
 
@@ -33,6 +77,13 @@ struct XArticleArchiverApp: App {
             SettingsView()
                 .environmentObject(model)
         }
+    }
+
+    private var isBusy: Bool { model.isRunning || model.hasActiveDownloadProgress }
+
+    /// Same 80–160% range and 10% steps as the reading view's A−/A+ controls.
+    private func setArticleTextScale(_ value: Double) {
+        articleTextScale = min(max((value * 10).rounded(), 8), 16) / 10
     }
 
     private var libraryWindow: some View {

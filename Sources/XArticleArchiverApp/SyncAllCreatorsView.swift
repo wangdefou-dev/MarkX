@@ -48,11 +48,11 @@ struct SyncAllCreatorsView: View {
                         model.startSyncAll(articleLimit: downloadAllArticles ? nil : articleLimit,
                             resolveTotalCount: downloadAllArticles || resolveTotalCount)
                     }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                     .disabled(!canStartNow).help(canStartNow ? "开始同步所有已跟踪博主" : readinessWarning)
                 } else {
                     Button(isSavingSchedule ? "正在保存…" : "保存设置", action: saveSchedule)
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                         .disabled(!canSaveSchedule).help("保存每日同步时间与文章数量")
                 }
             }

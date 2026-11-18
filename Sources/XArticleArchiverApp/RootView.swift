@@ -116,35 +116,20 @@ struct RootView: View {
     }
 
     private var mainContent: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .navigationSplitViewColumnWidth(min: 210, ideal: 235, max: 280)
-                .toolbar(removing: .sidebarToggle)
-        } content: {
-            articleList
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .background(MainWindowChrome(
-                    isSidebarVisible: isSidebarVisible,
-                    libraryTitle: selectedSidebarCreator == nil ? listTitle : nil
-                ) {
-                    withAnimation(.easeInOut(duration: MainWindowChrome.sidebarTransitionDuration)) {
-                        columnVisibility = isSidebarVisible ? .doubleColumn : .all
-                    }
-                })
-                .navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 500)
-                .toolbar(removing: .sidebarToggle)
-        } detail: {
-            detail
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-        }
+        splitLayout
         .navigationSplitViewStyle(.balanced)
-        .toolbar(removing: .sidebarToggle)
+        .modifier(SeamlessToolbar())
+        // The visible heading is the list title item; the window title stays
+        // "MarkX" (set on each column) because MarkXWindowPolicy matches it.
+        .modifier(HiddenWindowTitle())
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
         .toolbar { toolbar }
         .font(MarkXTypography.body)
         .onAppear { model.refreshBrowserStatus() }
+        .onChange(of: isWelcomeLayout) { _, _ in
+            if !isSidebarVisible { columnVisibility = hiddenSidebarVisibility }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshBrowserStatus() }
             else { collectionDrag.cancel() }
@@ -248,13 +233,85 @@ struct RootView: View {
         }
     }
 
+    /// First run and an empty library have nothing to list or read, so the
+    /// welcome page spans the whole content area instead of a narrow list column.
+    private var isWelcomeLayout: Bool {
+        guard model.filteredArticles.isEmpty, selectedSidebarCreator == nil, selectedCollection == nil else {
+            return false
+        }
+        if model.archiveRoot == nil || !model.imageHostVerified { return true }
+        return model.isBootstrapped && model.articles.isEmpty
+    }
+
+    @ViewBuilder
+    private var splitLayout: some View {
+        if isWelcomeLayout {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebarColumn
+            } detail: {
+                WelcomeView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
+                    .toolbar {
+                        if #available(macOS 26.0, *) {
+                            ToolbarSpacer(.flexible)
+                        }
+                        libraryActions(placement: .automatic)
+                    }
+                    .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar]))
+                    .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 900)
+            }
+        } else {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebarColumn
+            } content: {
+                articleList
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
+                    .toolbar {
+                        listTitleToolbar
+                        libraryActions(placement: .primaryAction)
+                    }
+                    .navigationSplitViewColumnWidth(
+                        min: SplitColumnLayout.list.min,
+                        ideal: SplitColumnLayout.list.ideal,
+                        max: SplitColumnLayout.list.max
+                    )
+            } detail: {
+                detail
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
+                    .toolbar { articleToolbar }
+                    .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar, SplitColumnLayout.list]))
+                    .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 640)
+            }
+            // Nothing to search on the welcome page, so only the library has it.
+            .searchable(text: $model.searchText, placement: .toolbar, prompt: "搜索标题、博主或正文")
+        }
+    }
+
+    private var sidebarColumn: some View {
+        sidebar
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
+            .navigationSplitViewColumnWidth(
+                min: SplitColumnLayout.sidebar.min,
+                ideal: SplitColumnLayout.sidebar.ideal,
+                max: SplitColumnLayout.sidebar.max
+            )
+    }
+
+    /// Two-column and three-column split views hide the sidebar differently.
+    private var hiddenSidebarVisibility: NavigationSplitViewVisibility {
+        isWelcomeLayout ? .detailOnly : .doubleColumn
+    }
+
     private var isSidebarVisible: Bool {
         columnVisibility != .doubleColumn && columnVisibility != .detailOnly
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            sidebarDownloadEntry
             sidebarLibrary
             if model.isRunning {
                 HStack(spacing: 7) {
@@ -273,9 +330,7 @@ struct RootView: View {
     private var sidebarLibrary: some View {
         let statistics = model.sidebarStatistics
         return List(selection: $model.sidebarSelection) {
-            Group {
-                SidebarSectionHeader(title: "资料库", isExpanded: $isLibraryExpanded)
-                if isLibraryExpanded {
+            Section(isExpanded: $isLibraryExpanded) {
                 SidebarCountRow(
                     title: "全部文章",
                     systemImage: "doc.text",
@@ -361,12 +416,11 @@ struct RootView: View {
                     }
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
-                }
+            } header: {
+                Text("资料库")
             }
             collectionsSection
-            Group {
-                creatorHeadingRow
-                if isCreatorsExpanded {
+            Section(isExpanded: $isCreatorsExpanded) {
                     if !model.pinnedCreators.isEmpty {
                         ForEach(model.pinnedCreators) { creator in
                             creatorSidebarRow(creator, statistics: statistics)
@@ -378,7 +432,8 @@ struct RootView: View {
                     ForEach(model.unpinnedCreators) { creator in
                         creatorSidebarRow(creator, statistics: statistics)
                     }
-                }
+            } header: {
+                creatorHeadingRow
             }
         }
         .listStyle(.sidebar)
@@ -387,9 +442,7 @@ struct RootView: View {
     }
 
     private var collectionsSection: some View {
-        Group {
-            SidebarSectionHeader(title: "收藏夹", topSpacing: 13, isExpanded: $isCollectionsExpanded)
-            if isCollectionsExpanded {
+        Section(isExpanded: $isCollectionsExpanded) {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
                     let isConfirmed = collectionNotice?.collectionID == collection.id
@@ -398,8 +451,7 @@ struct RootView: View {
                     SidebarCountRow(title: collection.name, systemImage: icon,
                                     count: collection.articleIDs.count)
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 35)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .background {
                             ZStack {
@@ -440,28 +492,9 @@ struct RootView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.canEditCollections)
-            }
+        } header: {
+            Text("收藏夹")
         }
-    }
-
-    private var sidebarDownloadEntry: some View {
-        Button { model.presentDownloadSheet() } label: {
-            HStack(spacing: 9) {
-                Text("开始下载文章")
-                Spacer(minLength: 4)
-                Image(systemName: "square.and.arrow.down")
-                    .accessibilityHidden(true)
-            }
-            .font(MarkXTypography.system(size: 15, weight: .medium))
-            .foregroundStyle(.orange)
-            .padding(.horizontal, 18)
-            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
-            .background(Color.orange.opacity(0.1), ignoresSafeAreaEdges: [])
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(model.isRunning || model.hasActiveDownloadProgress)
-        .help("输入博主主页或 X Article 链接开始下载")
     }
 
     private func sidebarMetricRow<Icon: View, Title: View, Value: View>(
@@ -473,8 +506,15 @@ struct RootView: View {
     }
 
     private var creatorHeadingRow: some View {
-        SidebarSectionHeader(title: "博主", count: model.enabledCreatorCount, countUnit: "位博主",
-                             topSpacing: 13, isExpanded: $isCreatorsExpanded)
+        HStack(spacing: 5) {
+            Text("博主")
+            if model.enabledCreatorCount > 0 {
+                Text(model.enabledCreatorCount, format: .number.grouping(.never))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel("\(model.enabledCreatorCount) 位博主")
+            }
+        }
     }
 
     private func creatorArticleCountHelp(
@@ -609,27 +649,6 @@ struct RootView: View {
         }
     }
 
-    private var librarySearchField: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索标题、博主或正文", text: $model.searchText)
-                .textFieldStyle(.plain)
-                .help("在当前分类内搜索，支持中文正文")
-                .accessibilityLabel("搜索标题、博主或正文")
-                .accessibilityIdentifier("librarySearchField")
-            if model.isSearching { ProgressView().controlSize(.small) }
-            if !model.searchText.isEmpty {
-                Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("清空搜索")
-            }
-        }
-        .font(MarkXTypography.system(size: 12))
-        .padding(.horizontal, 10)
-        .frame(width: 260, height: 30)
-    }
-
     private var articleList: some View {
         VStack(spacing: 0) {
             if model.isPreparingSearch {
@@ -659,6 +678,7 @@ struct RootView: View {
                                     .accessibilityHidden(true)
                                 }
                                 .tag(article.id)
+                                .listRowSeparator(.hidden)
                                 .contextMenu {
                                     articleCollectionActions(for: article)
                                     if article.pipelineState == .subscriptionRequired {
@@ -716,10 +736,19 @@ struct RootView: View {
                     // Recreate the native row menus when switching collection scope.
                     .id(collectionID)
                     .listStyle(.inset)
+                    .scrollContentBackground(.hidden)
+                    .background(MarkXInterface.canvas)
                     .focused($isArticleListFocused)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
-                    setupCard
+                    ContentUnavailableView {
+                        Label("尚未完成配置", systemImage: "gearshape")
+                    } description: {
+                        Text("选择本地归档目录并确认媒体存储后，才能下载和查看文章。")
+                    } actions: {
+                        Button("开始配置") { model.showingConnectionSetup = true }
+                            .buttonStyle(.borderedProminent)
+                    }
                 } else if model.articles.isEmpty, selectedCollection == nil {
                     ContentUnavailableView {
                         Label("还没有归档 X Article", systemImage: "tray")
@@ -743,44 +772,10 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .overlay(alignment: .bottom) { collectionFeedback }
-        .navigationTitle("")
         .safeAreaInset(edge: .bottom) {
             if model.isRunning || model.progress.scannedPosts > 0 {
                 TaskProgressBar(progress: model.progress, isRunning: model.isRunning)
             }
-        }
-    }
-
-    private var setupCard: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: "square.and.arrow.down.on.square")
-                    .font(MarkXTypography.system(size: 42, weight: .medium))
-                    .foregroundStyle(.tint)
-                Text("把 X Article 全文收进自己的 Mac")
-                    .font(MarkXTypography.largeTitle.bold())
-                Text("按博主下载时直接读取其 X Articles 专属列表，再逐篇打开真实页面，保留标题、段落、列表、表格、代码、图片和视频顺序。整个下载流程不调用 X API。")
-                    .font(MarkXTypography.title3)
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 12) {
-                    SetupStatusRow(title: "本地归档目录", isReady: model.archiveRoot != nil, detail: model.archiveRoot?.path ?? "尚未选择")
-                    SetupStatusRow(title: "浏览器 X 登录状态", isReady: model.hasBrowserSessionData, detail: model.browserSessionProbe.summary)
-                    SetupStatusRow(title: "媒体存储", isReady: model.imageHostVerified, detail: model.imageHostDetail)
-                }
-                HStack {
-                    Button("开始配置") { model.showingConnectionSetup = true }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .help("设置本地归档目录和图片、视频存储方式")
-                    if model.archiveRoot != nil {
-                        Button("先生成本地体验样例") { model.installDemo() }
-                            .controlSize(.large)
-                            .help("在已选目录生成一篇不需要网络的演示文章")
-                    }
-                }
-            }
-            .padding(40)
-            .frame(maxWidth: 620, alignment: .leading)
         }
     }
 
@@ -803,28 +798,29 @@ struct RootView: View {
                     articleDetailBody(article)
                 }
                 .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
-                .padding(.horizontal, 30)
+                .padding(.horizontal, 52)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
             .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(MarkXInterface.reading)
         } else {
             ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .background(MarkXInterface.reading)
         }
     }
 
     private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 16) {
                 Text(article.title)
-                    .font(MarkXTypography.title2.bold())
-                    .lineLimit(2)
+                    .font(MarkXTypography.system(size: 25, weight: .semibold))
+                    .lineSpacing(5)
+                    .lineLimit(3)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                     .textSelection(.enabled)
-                articleReadingControls(article)
             }
             MarkXFlowLayout(spacing: 8) {
                 Button {
@@ -860,18 +856,12 @@ struct RootView: View {
                         .help("X 官方 Paid partnership 商单内容标记")
                         .accessibilityLabel("商单内容，X 官方付费合作标记")
                 }
-                StatusPill("\(article.imageCount) 张图片", color: .blue)
+                if article.imageCount > 0 {
+                    StatusPill("\(article.imageCount) 张图片", color: .blue)
+                }
                 if article.videoCount > 0 {
                     StatusPill("\(article.videoCount) 个视频", color: .purple)
                 }
-                Button {
-                    model.openSource()
-                } label: {
-                    Label("查看文章原文", systemImage: "arrow.up.right.square")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("在默认浏览器打开当前 X Article 原页")
                 if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
                     FixedReprocessButton(
                         isDisabled: model.isRunning || model.hasActiveDownloadProgress,
@@ -883,93 +873,9 @@ struct RootView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.top, 22)
-        .padding(.bottom, 16)
+        .padding(.top, 56)
+        .padding(.bottom, 28)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-    }
-
-    private func articleReadingControls(_ article: ArchivedArticle) -> some View {
-        HStack(spacing: 9) {
-            HStack(spacing: 3) {
-                Button {
-                    adjustArticleTextScale(by: -0.1)
-                } label: {
-                    Text("A−")
-                        .font(MarkXTypography.callout.weight(.semibold))
-                        .frame(minWidth: 25)
-                }
-                .buttonStyle(.borderless)
-                .help("缩小文章文字")
-                .disabled(previewTextScale <= 0.8)
-
-                Button {
-                    articlePreviewTextScale = 1.0
-                } label: {
-                    Text("\(Int((previewTextScale * 100).rounded()))%")
-                        .font(MarkXTypography.caption.monospacedDigit())
-                        .frame(minWidth: 38)
-                }
-                .buttonStyle(.borderless)
-                .help("恢复 100% 字号")
-                .disabled(previewTextScale == 1.0)
-
-                Button {
-                    adjustArticleTextScale(by: 0.1)
-                } label: {
-                    Text("A+")
-                        .font(MarkXTypography.callout.weight(.semibold))
-                        .frame(minWidth: 25)
-                }
-                .buttonStyle(.borderless)
-                .help("放大文章文字")
-                .disabled(previewTextScale >= 1.6)
-            }
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
-
-            Menu {
-                collectionMenuItems(for: article)
-            } label: {
-                Image(systemName: model.collections.contains { $0.articleIDs.contains(article.id) }
-                      ? "star.fill" : "star")
-                    .font(MarkXTypography.title2)
-                    .foregroundStyle(.orange)
-            }
-            .menuStyle(.borderlessButton)
-            .tint(.orange)
-            .accessibilityLabel("收藏到…")
-            .help("选择收藏夹，或取消已有收藏")
-            .disabled(!model.canEditCollections)
-
-            Menu {
-                Button("打开 Markdown") { model.openSelectedArticle() }
-                    .help("用默认的 Markdown 应用打开本地文件")
-                Button("在 Finder 中显示") { model.revealSelectedArticle() }
-                    .help("在 Finder 中定位当前文章的 Markdown 文件")
-                Divider()
-                Button("访问原文") { model.openSource() }
-                    .help("在默认浏览器打开当前 X Article 原页")
-                if article.pipelineState == .subscriptionRequired {
-                    Button("在浏览器订阅 @\(article.authorHandle)") {
-                        model.openSubscriptionPage(for: article)
-                    }
-                    .help("使用设置中选定的同一个浏览器账号完成订阅")
-                }
-                if model.isArticleActivelyProcessing(article) {
-                    Button("停止处理", role: .cancel) { model.stopProcessing(article) }
-                } else {
-                    Button("重新处理") { model.restartProcessing(article) }
-                        .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                        .help("重新打开原页并严格校验完整排版")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle").font(MarkXTypography.title2)
-            }
-            .menuStyle(.borderlessButton)
-            .help("更多文章操作：打开文件、定位、访问原文或重新采集")
-        }
-        .fixedSize()
     }
 
     @ViewBuilder
@@ -1052,52 +958,127 @@ struct RootView: View {
             }
         }
 
-        ToolbarItem(placement: .primaryAction) {
-            librarySearchField
-        }
+    }
 
-        ToolbarItemGroup(placement: .primaryAction) {
+    @ToolbarContentBuilder
+    private var listTitleToolbar: some ToolbarContent {
+        if selectedSidebarCreator == nil {
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .navigation) { listHeading }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigation) { listHeading }
+            }
+        }
+    }
+
+    private var listHeading: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(listTitle).font(.system(size: 15, weight: .semibold))
+            if !listSubtitle.isEmpty {
+                Text(listSubtitle).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// Library-wide actions sit over the list column (like Mail's compose).
+    /// Settings live in the app menu (⌘,), not the toolbar.
+    @ToolbarContentBuilder
+    private func libraryActions(placement: ToolbarItemPlacement) -> some ToolbarContent {
+        ToolbarItemGroup(placement: placement) {
             Button {
                 model.presentDownloadSheet()
             } label: {
-                Label("开始下载文章", systemImage: "square.and.arrow.down")
+                Label("下载文章", systemImage: "square.and.arrow.down")
             }
             .disabled(model.isRunning || model.hasActiveDownloadProgress)
-            .help("输入博主主页或 X Article 链接开始下载")
+            .help("输入博主主页或 X Article 链接开始下载（⌘N）")
 
             Button {
                 model.requestSyncAll()
             } label: {
-                Label("同步所有博主文章", systemImage: SyncVisualStyle.symbolName)
+                Label("同步博主", systemImage: SyncVisualStyle.symbolName)
             }
             .disabled(model.isRunning || model.hasActiveDownloadProgress || model.enabledCreatorCount == 0)
-            .help("选择每位博主要检查的最近文章数量，并在后台同步所有已跟踪博主")
-
-            if model.isRunning || model.hasActiveDownloadProgress {
-                Button(role: .cancel) { model.cancelCurrentTask() } label: {
-                    Label("安全停止", systemImage: "stop.circle")
-                }
-                .help("停止当前发现或精确采集流程，已完成内容保留")
-            }
+            .help("检查所有已跟踪博主的新文章（⌘R）")
 
             if model.hasActiveDownloadProgress {
                 Button {
                     model.showDownloadProgressWindow()
                 } label: {
-                    Label(
-                        model.isDownloadProgressWindowVisible ? "下载进度" : "显示下载进度",
-                        systemImage: "arrow.down.circle"
-                    )
+                    Label("下载进度", systemImage: "arrow.down.circle")
                 }
-                .help("重新打开后台下载队列和当前进度")
+                .help("打开后台下载队列和当前进度")
             }
-
-            SettingsLink {
-                Label("设置", systemImage: "gearshape")
+            if model.isRunning || model.hasActiveDownloadProgress {
+                Button(role: .cancel) { model.cancelCurrentTask() } label: {
+                    Label("停止", systemImage: "stop.circle")
+                }
+                .help("安全停止当前任务，已完成内容保留（⌘.）")
             }
-            .help("打开设置，管理 X 登录验证、存储与本地资料库")
-            .accessibilityIdentifier("openSettings")
         }
+    }
+
+    /// Actions for the selected article sit over the reading column.
+    @ToolbarContentBuilder
+    private var articleToolbar: some ToolbarContent {
+        if let article = model.selectedArticle {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Menu {
+                    collectionMenuItems(for: article)
+                } label: {
+                    Label("收藏", systemImage: model.collections.contains { $0.articleIDs.contains(article.id) }
+                          ? "star.fill" : "star")
+                }
+                .disabled(!model.canEditCollections)
+                .help("加入或移出收藏夹")
+
+                Button {
+                    model.openSource()
+                } label: {
+                    Label("打开原文", systemImage: "safari")
+                }
+                .help("在浏览器中打开 X 原文（⌘L）")
+
+                Menu {
+                    articleMoreItems(for: article)
+                } label: {
+                    Label("更多", systemImage: "ellipsis.circle")
+                }
+                .help("打开 Markdown、在 Finder 中显示、重新处理或删除")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func articleMoreItems(for article: ArchivedArticle) -> some View {
+        Button("打开 Markdown") { model.openSelectedArticle() }
+        Button("在 Finder 中显示") { model.revealSelectedArticle() }
+        Divider()
+        if article.pipelineState == .subscriptionRequired {
+            Button("在浏览器订阅 @\(article.authorHandle)") { model.openSubscriptionPage(for: article) }
+        }
+        if model.isArticleActivelyProcessing(article) {
+            Button("停止处理") { model.stopProcessing(article) }
+        } else {
+            Button("重新处理") { model.restartProcessing(article) }
+                .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        }
+        if model.selectedCollectionID == nil {
+            Divider()
+            Button("删除文章…", role: .destructive) { model.requestDeleteArticle(article) }
+                .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        }
+    }
+
+    private var listSubtitle: String {
+        let count = model.filteredArticles.count
+        return count == 0 ? "" : "\(count) 篇"
     }
 
     private var listTitle: String {
@@ -1176,48 +1157,6 @@ struct RootView: View {
         min(max(articlePreviewTextScale, 0.8), 1.6)
     }
 
-    private func adjustArticleTextScale(by delta: Double) {
-        articlePreviewTextScale = min(max((previewTextScale + delta) * 10, 8), 16).rounded() / 10
-    }
-}
-
-private struct SidebarSectionHeader: View {
-    let title: String
-    var count: Int? = nil
-    var countUnit = "篇文章"
-    var topSpacing: CGFloat = 0
-    @Binding var isExpanded: Bool
-
-    var body: some View {
-        Button { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } } label: {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(MarkXTypography.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.primary)
-                if let count {
-                    Text(count, format: .number.grouping(.never)).font(MarkXTypography.system(size: 10)).monospacedDigit()
-                        .accessibilityLabel("\(count) \(countUnit)")
-                }
-                Spacer(minLength: 4)
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(MarkXTypography.system(size: 9, weight: .semibold))
-                    .frame(width: 10)
-                    .accessibilityHidden(true)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 2)
-            .frame(minHeight: 32)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .textCase(nil)
-        .padding(.top, topSpacing)
-        .listRowInsets(EdgeInsets())
-        .selectionDisabled(true)
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityValue(isExpanded ? "已展开" : "已收起")
-        .help(isExpanded ? "折叠\(title)" : "展开\(title)")
-    }
 }
 
 struct DownloadResultView: View {
@@ -1251,7 +1190,7 @@ struct DownloadResultView: View {
             }
             MarkXFooter {
                 Button("完成") { dismiss() }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction).buttonStyle(.markxPillProminent)
                     .help("关闭结果窗口")
             }
         }
@@ -1734,18 +1673,19 @@ struct ArticleRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text(index, format: .number.grouping(.never))
-                .font(MarkXTypography.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(MarkXTypography.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(minWidth: 44, alignment: .trailing)
                 .layoutPriority(1)
                 .accessibilityLabel("第 \(index) 篇")
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(article.title)
-                    .font(MarkXTypography.headline)
+                    .font(MarkXTypography.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
+                    .lineSpacing(2)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -1774,7 +1714,7 @@ struct ArticleRow: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 9)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
         .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
@@ -1810,16 +1750,9 @@ private struct SidebarCountRow: View {
     let systemImage: String
     let count: Int
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(MarkXTypography.system(size: 12, weight: .regular))
-                .frame(width: SidebarMetricBadge.iconColumn, height: SidebarMetricBadge.iconColumn)
-            Text(title).font(MarkXTypography.system(size: 12))
-            Spacer(minLength: 4)
-            SidebarCountBadge(count: count)
-        }
-        .frame(minHeight: 27)
-        .contentShape(Rectangle())
+        // Native sidebar label and badge; macOS hides a zero badge.
+        Label(title, systemImage: systemImage)
+            .badge(count)
     }
 }
 
@@ -1868,20 +1801,6 @@ private struct SidebarMetricBadge: View {
             .minimumScaleFactor(0.85)
             .frame(width: Self.columnWidth, alignment: .trailing)
             .accessibilityLabel(accessibilityLabel)
-    }
-}
-
-private struct SidebarCountBadge: View {
-    let count: Int
-    var unit = "篇文章"
-    var horizontalPadding: CGFloat = 0
-    var body: some View {
-        Text(count, format: .number.grouping(.never))
-            .font(MarkXTypography.system(size: 10)).monospacedDigit()
-            .foregroundStyle(.secondary)
-            .frame(minWidth: 22, alignment: .trailing)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("\(count) \(unit)")
     }
 }
 
@@ -2051,24 +1970,6 @@ private struct ArticleProcessingPanel: View {
     }
 }
 
-private struct SetupStatusRow: View {
-    let title: String
-    let isReady: Bool
-    let detail: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: isReady ? "checkmark.circle.fill" : "circle.dashed")
-                .foregroundStyle(isReady ? .green : .secondary)
-                .font(MarkXTypography.title3)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).fontWeight(.semibold)
-                Text(detail).font(MarkXTypography.caption).foregroundStyle(.secondary).lineLimit(3)
-            }
-        }
-    }
-}
-
 private struct CommercialContentBadge: View {
     var body: some View {
         Text("商单内容")
@@ -2092,12 +1993,16 @@ private struct StatusPill: View {
     }
 
     var body: some View {
-        Text(title)
-            .font(MarkXTypography.caption.weight(.medium))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.13), in: Capsule())
-            .foregroundStyle(color)
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 7, height: 7)
+            Text(title)
+        }
+        .font(MarkXTypography.system(size: 11, weight: .medium))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
     }
 }
 
@@ -2219,6 +2124,27 @@ private struct LocalArticleImage: View {
             guard !Task.isCancelled else { return }
             thumbnail = image
             finished = true
+        }
+    }
+}
+
+private struct HiddenWindowTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
+        }
+    }
+}
+
+/// Lets content run under the title bar, without a separate toolbar strip.
+private struct SeamlessToolbar: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            content
         }
     }
 }

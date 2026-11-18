@@ -646,8 +646,14 @@ final class AppViewModel: ObservableObject {
     private var preferredSessionBrowser: BrowserSessionDefinition {
         BrowserSessionDefinition.supported.first(where: { $0.id == preferredBrowserID })
             ?? browserSessionProbe.loggedInProfiles.first?.browser
+            ?? browserSessionProbe.browserNeedingAccess.flatMap { issue in
+                BrowserSessionDefinition.supported.first { $0.id == issue.browserID }
+            }
             ?? browserSessionProbe.profiles.first?.browser ?? .chrome
     }
+
+    /// Name of the browser whose data macOS is blocking, for the grant button.
+    var browserNameNeedingAccess: String? { browserSessionProbe.browserNeedingAccess?.browserName }
 
     func chooseBrowserDataDirectory() {
         let browser = preferredSessionBrowser

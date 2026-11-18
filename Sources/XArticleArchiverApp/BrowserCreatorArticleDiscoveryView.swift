@@ -770,7 +770,7 @@ struct BrowserCreatorArticleDiscoveryView: View {
             Button("停止") { model.closeCreatorArticleDiscovery() }
                 .help("安全停止本次任务，已完成内容保留")
             Button("隐藏到后台") { model.hideDownloadProgressWindow() }
-                .buttonStyle(.borderedProminent).keyboardShortcut(.cancelAction)
+                .buttonStyle(.markxPillProminent).keyboardShortcut(.cancelAction)
                 .help("隐藏窗口并继续后台任务")
         }
     }

@@ -38,9 +38,13 @@ public struct BrowserSessionProfile: Sendable, Identifiable {
 }
 
 public struct BrowserSessionIssue: Sendable {
+    public var browserID: String = ""
     public var browserName: String
     public var root: URL
     public var detail: String
+    /// macOS privacy protection blocked the read; the user can grant access by
+    /// choosing the directory in an open panel.
+    public var isPermissionDenied = false
 }
 
 public struct BrowserSessionProbe: Sendable {
@@ -48,6 +52,11 @@ public struct BrowserSessionProbe: Sendable {
     public var profiles: [BrowserSessionProfile] = []
     public var issues: [BrowserSessionIssue] = []
     public var loggedInProfiles: [BrowserSessionProfile] { profiles.filter(\.hasLoginCookies) }
+    /// The first browser whose data macOS refused to read, when no readable
+    /// profile already has an X login.
+    public var browserNeedingAccess: BrowserSessionIssue? {
+        loggedInProfiles.isEmpty ? issues.first(where: \.isPermissionDenied) : nil
+    }
     public var summary: String {
         if let first = loggedInProfiles.first { return "已检测到 X 登录数据：\(first.description)" }
         if let first = issues.first { return "\(first.browserName) 数据读取受限：\(first.detail)" }
@@ -84,11 +93,11 @@ public enum BrowserXSessionReader {
                             let hasLogin = try hasAuthentication(databaseURL: url, engine: browser.engine)
                             result.profiles.append(.init(browser: browser, name: name, databaseURL: url, hasLoginCookies: hasLogin))
                         } catch where isMissing(error) { continue }
-                        catch { result.issues.append(.init(browserName: browser.name, root: root, detail: readableError(error))) }
+                        catch { result.issues.append(issue(for: browser, root: root, error: error)) }
                     }
                 }
             } catch where isMissing(error) { continue }
-            catch { result.issues.append(.init(browserName: browser.name, root: root, detail: readableError(error))) }
+            catch { result.issues.append(issue(for: browser, root: root, error: error)) }
         }
         return result
     }
@@ -259,9 +268,17 @@ public enum BrowserXSessionReader {
         let e = error as NSError
         return (e.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(e.code)) || (e.domain == NSPOSIXErrorDomain && e.code == 2)
     }
+    static func issue(for browser: BrowserSessionDefinition, root: URL, error: Error) -> BrowserSessionIssue {
+        BrowserSessionIssue(browserID: browser.id, browserName: browser.name, root: root,
+                            detail: readableError(error), isPermissionDenied: isPermissionDenied(error))
+    }
+    static func isPermissionDenied(_ error: Error) -> Bool {
+        let e = error as NSError
+        return (e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoPermissionError) || (e.domain == NSPOSIXErrorDomain && [1, 13].contains(e.code))
+    }
     static func readableError(_ error: Error) -> String {
         let e = error as NSError
-        if (e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoPermissionError) || (e.domain == NSPOSIXErrorDomain && [1, 13].contains(e.code)) { return "macOS 尚未允许读取此目录" }
+        if isPermissionDenied(error) { return "macOS 尚未允许读取此目录" }
         return error is BrowserSessionError ? error.localizedDescription : "读取配置失败（\(e.code)）"
     }
 }

@@ -24,6 +24,28 @@ final class BrowserXSessionReaderTests: XCTestCase {
         XCTAssertTrue(session.cookies.allSatisfy { $0.domain == ".x.com" })
     }
 
+    func testUnreadableBrowserRootIsReportedAsNeedingAccess() throws {
+        let root = directory.appending(path: "Chrome")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Same failure macOS privacy protection produces for another app's data.
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path) }
+        let probe = BrowserXSessionReader.probe(browsers: [.chrome], customRoots: ["chrome": root])
+        XCTAssertEqual(probe.browserNeedingAccess?.browserID, "chrome")
+        XCTAssertEqual(probe.browserNeedingAccess?.isPermissionDenied, true)
+        XCTAssertTrue(probe.summary.contains("macOS 尚未允许读取此目录"))
+    }
+
+    func testCorruptDataIsNotMistakenForMissingPermission() throws {
+        let root = directory.appending(path: "Chrome")
+        let url = root.appending(path: "Default/Cookies")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not a database".utf8).write(to: url)
+        let probe = BrowserXSessionReader.probe(browsers: [.chrome], customRoots: ["chrome": root])
+        XCTAssertFalse(probe.issues.isEmpty)
+        XCTAssertNil(probe.browserNeedingAccess)
+    }
+
     func testSearchesOtherProfilesWhenLastUsedProfileIsLoggedOut() throws {
         let root = directory.appending(path: "Chrome")
         _ = try chromium(root.appending(path: "Default/Cookies"))

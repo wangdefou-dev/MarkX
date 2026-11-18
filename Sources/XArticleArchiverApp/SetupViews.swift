@@ -51,7 +51,7 @@ struct AddCreatorsView: View {
                 Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                     .help("关闭窗口，不创建下载任务")
                 Button(downloadTitle, action: startDownload)
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                     .disabled(!canDownload).frame(minWidth: 120)
                     .help("按所选范围加入后台下载队列")
             }
@@ -345,7 +345,7 @@ struct ConnectionSetupView: View {
             }
             MarkXFooter(note: "配置保存在这台 Mac") {
                 Button("完成") { dismiss() }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                     .help("关闭连接与存储配置")
             }
         }
@@ -372,6 +372,16 @@ private struct BrowserConnectionConfiguration: View {
             MarkXInfoLine(symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
                 text: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
                 color: model.hasBrowserSessionData ? .green : .orange)
+            if let browser = model.browserNameNeedingAccess {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("macOS 默认不允许其他应用读取 \(browser) 的数据。点下面的按钮，在弹出的窗口里直接点「允许读取」即可，只需授权一次。")
+                        .font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("授权读取 \(browser)…") { model.chooseBrowserDataDirectory() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isChecking)
+                }
+            }
             HStack(spacing: 12) {
                 Button(isChecking ? "正在验证…" : "验证会话读取") {
                     isChecking = true
@@ -384,7 +394,7 @@ private struct BrowserConnectionConfiguration: View {
                     .help("重新检查全部受支持的浏览器与配置")
             }
             HStack(spacing: 12) {
-                Button("选择浏览器数据目录…") { model.chooseBrowserDataDirectory() }
+                Button("选择其他数据目录…") { model.chooseBrowserDataDirectory() }
                     .disabled(isChecking)
                     .help("为自定义目录或 macOS 读取受限的目录保存访问授权")
                 Button("在浏览器打开 X", systemImage: "arrow.up.right.square") { model.openBrowserXLogin() }
@@ -552,67 +562,78 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppViewModel
     @State private var tab = 0
 
+    // HIG settings: native toolbar tabs and grouped forms; the tab name is the
+    // title, so panes don't repeat it in a custom header.
     var body: some View {
         TabView(selection: $tab) {
-            pane(title: "通用", subtitle: "管理本地资料库的保存位置。", symbol: "slider.horizontal.3") {
-                MarkXSection(title: "本地资料库") { ArchiveFolderRow() }
+            Form {
+                Section {
+                    ArchiveFolderRow()
+                } header: {
+                    Text("本地资料库")
+                } footer: {
+                    Text("Markdown、原图、视频与资料库数据库都保存在这个文件夹。")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            .tabItem { Label("通用", systemImage: "slider.horizontal.3") }.tag(0)
-            pane(title: "X 登录验证", subtitle: "选择浏览器并验证 X 登录会话。", symbol: "globe") {
-                MarkXSection(title: "浏览器与 X 登录") {
+            .formStyle(.grouped)
+            .tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
+
+            Form {
+                Section {
                     BrowserConnectionConfiguration()
+                } header: {
+                    Text("浏览器与 X 登录")
+                } footer: {
                     Text("下载在后台进行，文章只保存在你选择的位置。")
-                        .font(MarkXTypography.system(size: 12)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .tabItem { Label("X 登录", systemImage: "globe") }.tag(1)
-            pane(title: "媒体与存储", subtitle: "选择图片、视频的保存方式，管理本地缓存。", symbol: "externaldrive") {
-                MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }
-                MarkXSection(title: "缓存管理", detail: "保留完整媒体备份，整理已经重复保存的隐藏缓存。") {
-                    Button("整理重复媒体缓存…") { model.cleanVerifiedMediaCache() }
-                        .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
-                        .help("核对内容后移除已有完整备份的重复缓存")
+            .formStyle(.grouped)
+            .tabItem { Label("X 登录", systemImage: "person.badge.key") }.tag(1)
+
+            Form {
+                Section("媒体存储") { MediaStorageConfiguration() }
+                Section {
+                    LabeledContent {
+                        Button("整理…") { model.cleanVerifiedMediaCache() }
+                            .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
+                            .help("核对内容后移除已有完整备份的重复缓存")
+                    } label: {
+                        Text("重复媒体缓存")
+                        Text("保留完整媒体备份，只移除已经重复保存的隐藏缓存。")
+                    }
+                } header: {
+                    Text("缓存管理")
                 }
             }
+            .formStyle(.grouped)
             .tabItem { Label("存储", systemImage: "externaldrive") }.tag(2)
-            pane(title: "隐私与关于", subtitle: "你的资料，由你掌握。", symbol: "hand.raised") {
-                MarkXSection(title: "隐私") {
+
+            Form {
+                Section("隐私") {
                     privacyRow("本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
-                    Divider()
                     privacyRow("会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
-                    Divider()
                     privacyRow("外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
                 }
-                MarkXSection(title: "MarkX") {
-                    LabeledContent("版本", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "开发版本") · Build \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—")")
-                        .font(MarkXTypography.system(size: 12))
-                    Text("原生 X 长文归档工具 · © 2026 得否").font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary)
+                Section("关于 MarkX") {
+                    LabeledContent("版本", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "开发版本") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"))")
+                    LabeledContent("版权", value: "© 2026 得否")
                 }
             }
+            .formStyle(.grouped)
             .tabItem { Label("隐私与关于", systemImage: "hand.raised") }.tag(3)
         }
-        .background(MarkXInterface.canvas)
         .font(MarkXTypography.body)
         .frame(width: 640, height: 520)
     }
 
-    private func pane<Content: View>(title: String, subtitle: String, symbol: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 0) {
-            MarkXPaneHeader(title: title, subtitle: subtitle, symbol: symbol)
-            ScrollView {
-                VStack(alignment: .leading, spacing: MarkXInterface.spacing) { content() }
-                    .padding(.horizontal, MarkXInterface.inset).padding(.bottom, MarkXInterface.inset)
-            }
-        }
-    }
-
     private func privacyRow(_ title: String, detail: String, symbol: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).font(MarkXTypography.system(size: 15)).foregroundStyle(.secondary).frame(width: 20)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(MarkXTypography.system(size: 12, weight: .medium))
-                Text(detail).font(MarkXTypography.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+        Label {
+            Text(title)
+            Text(detail)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(.secondary)
         }
     }
 }
