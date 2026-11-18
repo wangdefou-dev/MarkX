@@ -78,6 +78,9 @@ enum MarkXInterface {
     static let hairline = dynamic(light: 0x00002D, lightAlpha: 0.09, dark: 0xD3EDF8, darkAlpha: 0.11)
     /// Hover and quiet-selection wash.
     static let wash = dynamic(light: 0x000033, lightAlpha: 0.06, dark: 0xDDEAF8, darkAlpha: 0.08)
+    /// Selected list row (sidebar and article list): stronger than hover so it
+    /// reads as a clear rectangle in both appearances.
+    static let selection = dynamic(light: 0x00003B, lightAlpha: 0.10, dark: 0xD8F4F6, darkAlpha: 0.13)
     /// Pressed wash and filled input background.
     static let washStrong = dynamic(light: 0x00002D, lightAlpha: 0.09, dark: 0xD3EDF8, darkAlpha: 0.11)
     /// Secondary and tertiary text (Fog --text2 / --text3).
@@ -345,6 +348,41 @@ struct MarkXTextButtonStyle: ButtonStyle {
             .opacity(isEnabled ? 1 : 0.45)
             .contentShape(Rectangle())
     }
+}
+
+/// Icon-only action (Fog tool buttons): 28pt square, grey symbol, a wash
+/// appears on hover and press.
+struct MarkXIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        MarkXIconButtonBody(configuration: configuration)
+    }
+}
+
+private struct MarkXIconButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    var body: some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .font(MarkXFont.body)
+            .foregroundStyle(isHovered ? AnyShapeStyle(.primary) : AnyShapeStyle(MarkXInterface.text2))
+            .frame(minWidth: 28, minHeight: 28)
+            .padding(.horizontal, MarkXSpace.xxs)
+            .background(
+                RoundedRectangle(cornerRadius: MarkXRadius.control)
+                    .fill(configuration.isPressed ? MarkXInterface.washStrong
+                          : isHovered ? MarkXInterface.wash : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: MarkXRadius.control))
+            .opacity(isEnabled ? 1 : 0.4)
+            .onHover { isHovered = $0 && isEnabled }
+    }
+}
+
+extension ButtonStyle where Self == MarkXIconButtonStyle {
+    static var markxIcon: MarkXIconButtonStyle { MarkXIconButtonStyle() }
 }
 
 extension ButtonStyle where Self == MarkXPillButtonStyle {

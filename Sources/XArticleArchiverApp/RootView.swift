@@ -281,7 +281,6 @@ struct RootView: View {
                 detail
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
-                    .toolbar { articleToolbar }
                     .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar, SplitColumnLayout.list]))
                     .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 640)
             }
@@ -323,8 +322,25 @@ struct RootView: View {
                 .padding(.top, MarkXSpace.l)
                 .padding(.bottom, MarkXSpace.l)
             }
+            sidebarFooter
         }
         .background(.bar)
+    }
+
+    /// Settings stay one click away from the main window (Fog keeps its
+    /// settings entry in the window's bottom-left corner); ⌘, still works.
+    private var sidebarFooter: some View {
+        HStack(spacing: MarkXSpace.m) {
+            SettingsLink {
+                Label("设置", systemImage: "gearshape")
+                    .labelStyle(SidebarFooterLabelStyle())
+            }
+            .buttonStyle(.markxText)
+            .help("打开设置（⌘,）")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MarkXSpace.xl)
+        .frame(height: 44)
     }
 
     private var sidebarLibrary: some View {
@@ -337,6 +353,7 @@ struct RootView: View {
                     count: statistics.allArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.all)
+                .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.all)
                 .contextMenu {
                     Button {
                         model.presentDownloadSheet()
@@ -358,6 +375,7 @@ struct RootView: View {
                     count: model.todayArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.today)
+                .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.today)
                 .help("按 X 原始发布时间显示今天发布的文章")
 
                 SidebarCountRow(
@@ -366,6 +384,7 @@ struct RootView: View {
                     count: statistics.commercialArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.commercial)
+                .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.commercial)
                 .help("显示带有 X 官方 Paid partnership 标记的商单内容")
 
                 SidebarCountRow(
@@ -374,6 +393,7 @@ struct RootView: View {
                     count: statistics.waitingArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.pending)
+                .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.pending)
                 .contextMenu {
                     Button {
                         model.showDownloadProgressWindow()
@@ -401,6 +421,7 @@ struct RootView: View {
                     count: statistics.needsAttentionArticleCount
                 )
                 .tag(AppViewModel.SidebarSelection.failed)
+                .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.failed)
                 .contextMenu {
                     Button {
                         model.reprocessNeedsAttentionArticles()
@@ -417,7 +438,7 @@ struct RootView: View {
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
             } header: {
-                Text("资料库")
+                Text("资料库").padding(.top, MarkXSpace.m)
             }
             collectionsSection
             Section(isExpanded: $isCreatorsExpanded) {
@@ -433,12 +454,12 @@ struct RootView: View {
                         creatorSidebarRow(creator, statistics: statistics)
                     }
             } header: {
-                creatorHeadingRow
+                creatorHeadingRow.padding(.top, MarkXSpace.m)
             }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 32)
+        .environment(\.defaultMinListRowHeight, 38)
     }
 
     private var collectionsSection: some View {
@@ -469,6 +490,7 @@ struct RootView: View {
                         .listRowInsets(EdgeInsets())
                         .help(collection.name)
                         .tag(AppViewModel.SidebarSelection.collection(collection.id))
+                        .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.collection(collection.id))
                         .contextMenu {
                             Button(role: .destructive) {
                                 collectionPendingDeletion = collection
@@ -491,7 +513,7 @@ struct RootView: View {
                 .buttonStyle(.plain)
                 .disabled(!model.canEditCollections)
         } header: {
-            Text("收藏夹")
+            Text("收藏夹").padding(.top, MarkXSpace.m)
         }
     }
 
@@ -578,8 +600,10 @@ struct RootView: View {
                 localArticleCount: localArticleCount
             ))
         }
-        .frame(minHeight: 40)
+        .frame(minHeight: 44)
+        .padding(.vertical, MarkXSpace.xxs)
         .tag(AppViewModel.SidebarSelection.creator(creator.id))
+        .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.creator(creator.id))
         .contextMenu {
             if model.isCreatorPinned(creator) {
                 Button {
@@ -674,6 +698,7 @@ struct RootView: View {
                                     .accessibilityHidden(true)
                                 }
                                 .tag(article.id)
+                                .markxSelectableRow(isSelected: model.selectedArticleID == article.id)
                                 .listRowSeparator(.hidden)
                                 .contextMenu {
                                     articleCollectionActions(for: article)
@@ -819,6 +844,7 @@ struct RootView: View {
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                     .textSelection(.enabled)
             }
+            HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXFlowLayout(spacing: MarkXSpace.m) {
                 Button {
                     model.openCreatorProfile(handle: article.authorHandle)
@@ -846,6 +872,8 @@ struct RootView: View {
             .foregroundStyle(MarkXInterface.text2)
             .lineLimit(1)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                articleHeaderActions(article)
+            }
             .padding(.top, MarkXSpace.l)
             MarkXFlowLayout(spacing: MarkXSpace.s) {
                 StatusPill(
@@ -1028,35 +1056,42 @@ struct RootView: View {
         }
     }
 
-    /// Actions for the selected article sit over the reading column.
-    @ToolbarContentBuilder
-    private var articleToolbar: some ToolbarContent {
-        if let article = model.selectedArticle {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Menu {
-                    collectionMenuItems(for: article)
-                } label: {
-                    Label("收藏", systemImage: model.collections.contains { $0.articleIDs.contains(article.id) }
-                          ? "star.fill" : "star")
-                }
-                .disabled(!model.canEditCollections)
-                .help("加入或移出收藏夹")
-
-                Button {
-                    model.openSource()
-                } label: {
-                    Label("打开原文", systemImage: "safari")
-                }
-                .help("在浏览器中打开 X 原文（⌘L）")
-
-                Menu {
-                    articleMoreItems(for: article)
-                } label: {
-                    Label("更多", systemImage: "ellipsis")
-                }
-                .help("打开 Markdown、在 Finder 中显示、重新处理或删除")
+    /// Actions for the selected article sit on the author line under its
+    /// title, next to the content they act on.
+    private func articleHeaderActions(_ article: ArchivedArticle) -> some View {
+        let isCollected = model.collections.contains { $0.articleIDs.contains(article.id) }
+        return HStack(spacing: MarkXSpace.xs) {
+            Menu {
+                collectionMenuItems(for: article)
+            } label: {
+                Label("收藏", systemImage: isCollected ? "star.fill" : "star")
             }
+            .menuIndicator(.hidden)
+            .menuStyle(.button)
+            .buttonStyle(.markxIcon)
+            .foregroundStyle(isCollected ? Color.orange : MarkXInterface.text2)
+            .disabled(!model.canEditCollections)
+            .help("加入或移出收藏夹")
+
+            Button {
+                model.openSource()
+            } label: {
+                Label("打开原文", systemImage: "safari")
+            }
+            .buttonStyle(.markxIcon)
+            .help("在浏览器中打开 X 原文（⌘L）")
+
+            Menu {
+                articleMoreItems(for: article)
+            } label: {
+                Label("更多", systemImage: "ellipsis")
+            }
+            .menuIndicator(.hidden)
+            .menuStyle(.button)
+            .buttonStyle(.markxIcon)
+            .help("打开 Markdown、在 Finder 中显示、重新处理或删除")
         }
+        .fixedSize()
     }
 
     @ViewBuilder
@@ -1773,7 +1808,20 @@ private struct SidebarCountRow: View {
         } icon: {
             SidebarIcon(systemImage: systemImage)
         }
+        .padding(.vertical, MarkXSpace.xs)
         .badge(count)
+    }
+}
+
+private struct SidebarFooterLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: MarkXSpace.m) {
+            configuration.icon.frame(width: SidebarMetricBadge.iconColumn)
+            configuration.title
+        }
+        .font(MarkXFont.body)
+        .padding(.vertical, MarkXSpace.s)
+        .contentShape(Rectangle())
     }
 }
 
