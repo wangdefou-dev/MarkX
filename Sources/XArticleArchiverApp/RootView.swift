@@ -422,6 +422,9 @@ struct RootView: View {
             // A section like 资料库 and 收藏夹: one entry for the full creator
             // list (opened in the middle column), then the pinned creators.
             Section {
+                // A plain row, not a section header: the system adds its own
+                // disclosure arrow to sidebar headers on hover, which doubled ours.
+                SidebarSectionHeader(title: "博主列表", isExpanded: $creatorsSectionExpanded)
                 if creatorsSectionExpanded {
                 SidebarCountRow(
                     title: "全部博主",
@@ -445,11 +448,12 @@ struct RootView: View {
                     .contextMenu { creatorMenuItems(creator) }
                 }
                 }
-            } header: {
-                SidebarSectionHeader(title: "博主列表", isExpanded: $creatorsSectionExpanded)
             }
             .collapsible(false)
             Section {
+                // A plain row, not a section header: the system adds its own
+                // disclosure arrow to sidebar headers on hover, which doubled ours.
+                SidebarSectionHeader(title: "资料库", isExpanded: $librarySectionExpanded)
                 if librarySectionExpanded {
                 SidebarCountRow(
                     title: "全部文章",
@@ -542,8 +546,6 @@ struct RootView: View {
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
                 }
-            } header: {
-                SidebarSectionHeader(title: "资料库", isExpanded: $librarySectionExpanded)
             }
             .collapsible(false)
             collectionsSection
@@ -558,6 +560,9 @@ struct RootView: View {
 
     private var collectionsSection: some View {
         Section {
+            // A plain row, not a section header: the system adds its own
+            // disclosure arrow to sidebar headers on hover, which doubled ours.
+            SidebarSectionHeader(title: "收藏夹", isExpanded: $collectionsSectionExpanded)
             if collectionsSectionExpanded {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
@@ -608,8 +613,6 @@ struct RootView: View {
                 .disabled(!model.canEditCollections)
                 .markxSelectableRow(isSelected: false)
             }
-        } header: {
-            SidebarSectionHeader(title: "收藏夹", isExpanded: $collectionsSectionExpanded)
         }
         .collapsible(false)
     }
@@ -1980,6 +1983,8 @@ private struct SidebarSectionHeader: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .selectionDisabled()
+        .listRowSeparator(.hidden)
         .help(isExpanded ? "折叠\(title)" : "展开\(title)")
         .accessibilityLabel(title)
         .accessibilityValue(isExpanded ? "已展开" : "已折叠")
