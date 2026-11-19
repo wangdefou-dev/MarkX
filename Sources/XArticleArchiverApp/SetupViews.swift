@@ -664,9 +664,9 @@ struct SettingsView: View {
 
         var subtitle: String {
             switch self {
-            case .general: "资料库位置与软件更新。"
+            case .general: "软件更新。"
             case .x: "MarkX 通过你本机浏览器里的 X 登录来下载文章。"
-            case .storage: "图片和视频的保存方式，以及缓存整理。"
+            case .storage: "资料库位置、图片和视频的保存方式，以及缓存整理。"
             case .about: "MarkX 如何处理你的数据。"
             }
         }
@@ -741,13 +741,13 @@ struct SettingsView: View {
     @ViewBuilder private var content: some View {
         switch pane {
         case .general:
-            MarkXGroup(title: "本地资料库", footer: "Markdown、原图、视频与资料库数据库都保存在这个文件夹。") {
-                ArchiveFolderRow()
-            }
             SoftwareUpdateSettingsSection()
         case .x:
             BrowserConnectionConfiguration()
         case .storage:
+            MarkXGroup(title: "本地资料库", footer: "Markdown、原图、视频与资料库数据库都保存在这个文件夹。") {
+                ArchiveFolderRow()
+            }
             MediaStorageConfiguration()
             MarkXGroup(title: "缓存管理") {
                 MarkXRow(title: "重复媒体缓存",

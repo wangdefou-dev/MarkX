@@ -124,7 +124,6 @@ struct RootView: View {
         .modifier(HiddenWindowTitle())
         .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
-        .toolbar { toolbar }
         .font(MarkXFont.body)
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: isWelcomeLayout) { _, _ in
@@ -252,12 +251,6 @@ struct RootView: View {
                 WelcomeView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
-                    .toolbar {
-                        if #available(macOS 26.0, *) {
-                            ToolbarSpacer(.flexible)
-                        }
-                        libraryActions(placement: .automatic)
-                    }
                     .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar]))
                     .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 900)
             }
@@ -268,10 +261,7 @@ struct RootView: View {
                 articleList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
-                    .toolbar {
-                        listTitleToolbar
-                        libraryActions(placement: .primaryAction)
-                    }
+                    .toolbar { listTitleToolbar }
                     .navigationSplitViewColumnWidth(
                         min: SplitColumnLayout.list.min,
                         ideal: SplitColumnLayout.list.ideal,
@@ -330,16 +320,50 @@ struct RootView: View {
     /// Settings stay one click away from the main window (Fog keeps its
     /// settings entry in the window's bottom-left corner); ⌘, still works.
     private var sidebarFooter: some View {
-        HStack(spacing: MarkXSpace.m) {
+        HStack(spacing: MarkXSpace.xxs) {
             SettingsLink {
                 Label("设置", systemImage: "gearshape")
                     .labelStyle(SidebarFooterLabelStyle())
             }
             .buttonStyle(.markxText)
             .help("打开设置（⌘,）")
+            libraryFooterActions
         }
         .padding(.horizontal, MarkXSpace.m)
         .frame(height: 44)
+    }
+
+    /// Library-wide actions: download and sync, plus progress and stop while
+    /// a task runs. They act on the whole library, so they sit with the
+    /// sidebar rather than over one list.
+    private var libraryFooterActions: some View {
+        let isBusy = model.isRunning || model.hasActiveDownloadProgress
+        return HStack(spacing: MarkXSpace.xxs) {
+            if model.hasActiveDownloadProgress {
+                Button { model.showDownloadProgressWindow() } label: {
+                    Label("下载进度", systemImage: "arrow.down.circle")
+                }
+                .help("打开后台下载队列和当前进度")
+            }
+            if isBusy {
+                Button(role: .cancel) { model.cancelCurrentTask() } label: {
+                    Label("停止", systemImage: "stop.circle")
+                }
+                .help("安全停止当前任务，已完成内容保留（⌘.）")
+            }
+            Button { model.requestSyncAll() } label: {
+                Label("同步博主", systemImage: SyncVisualStyle.symbolName)
+            }
+            .disabled(isBusy || model.enabledCreatorCount == 0)
+            .help("检查所有已跟踪博主的新文章（⌘R）")
+            Button { model.presentDownloadSheet() } label: {
+                Label("下载文章", systemImage: "square.and.arrow.down")
+            }
+            .disabled(isBusy)
+            .help("输入博主主页或 X Article 链接开始下载（⌘N）")
+        }
+        .buttonStyle(.markxIcon)
+        .fixedSize()
     }
 
     private var sidebarLibrary: some View {
@@ -966,37 +990,14 @@ struct RootView: View {
     }
 
     @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        if let creator = selectedSidebarCreator {
-            if #available(macOS 26.0, *) {
-                ToolbarItem(placement: .navigation) {
-                    CreatorProfileToolbarHeader(
-                        creator: creator,
-                        openProfile: { model.openCreatorProfile(creator) }
-                    )
-                }
-                .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .navigation) {
-                    CreatorProfileToolbarHeader(
-                        creator: creator,
-                        openProfile: { model.openCreatorProfile(creator) }
-                    )
-                }
-            }
-        }
-
-    }
-
-    @ToolbarContentBuilder
     private var listTitleToolbar: some ToolbarContent {
-        if selectedSidebarCreator == nil {
-            if #available(macOS 26.0, *) {
-                ToolbarItem(placement: .navigation) { listHeading }
-                    .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .navigation) { listHeading }
-            }
+        // Only the column's name and count; creator links and library
+        // actions live in the sidebar (context menu and footer).
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .navigation) { listHeading }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { listHeading }
         }
     }
 
@@ -1012,44 +1013,6 @@ struct RootView: View {
         .padding(.horizontal, MarkXSpace.xs)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
-    }
-
-    /// Library-wide actions sit over the list column (like Mail's compose).
-    /// Settings live in the app menu (⌘,), not the toolbar.
-    @ToolbarContentBuilder
-    private func libraryActions(placement: ToolbarItemPlacement) -> some ToolbarContent {
-        ToolbarItemGroup(placement: placement) {
-            Button {
-                model.presentDownloadSheet()
-            } label: {
-                Label("下载文章", systemImage: "square.and.arrow.down")
-            }
-            .disabled(model.isRunning || model.hasActiveDownloadProgress)
-            .help("输入博主主页或 X Article 链接开始下载（⌘N）")
-
-            Button {
-                model.requestSyncAll()
-            } label: {
-                Label("同步博主", systemImage: SyncVisualStyle.symbolName)
-            }
-            .disabled(model.isRunning || model.hasActiveDownloadProgress || model.enabledCreatorCount == 0)
-            .help("检查所有已跟踪博主的新文章（⌘R）")
-
-            if model.hasActiveDownloadProgress {
-                Button {
-                    model.showDownloadProgressWindow()
-                } label: {
-                    Label("下载进度", systemImage: "arrow.down.circle")
-                }
-                .help("打开后台下载队列和当前进度")
-            }
-            if model.isRunning || model.hasActiveDownloadProgress {
-                Button(role: .cancel) { model.cancelCurrentTask() } label: {
-                    Label("停止", systemImage: "stop.circle")
-                }
-                .help("安全停止当前任务，已完成内容保留（⌘.）")
-            }
-        }
     }
 
     /// Actions for the selected article sit on the author line under its
@@ -1259,37 +1222,6 @@ private struct DownloadResultMetricText: View {
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
         .padding(MarkXSpace.l).markxSurface()
         .accessibilityElement(children: .combine)
-    }
-}
-
-private struct CreatorProfileToolbarHeader: View {
-    let creator: Creator
-    let openProfile: () -> Void
-
-    var body: some View {
-        HStack(alignment: .center, spacing: MarkXSpace.m) {
-            Text(creator.displayName)
-                .font(MarkXFont.title)
-                .lineLimit(1)
-
-            Button(action: openProfile) {
-                HStack(alignment: .center, spacing: MarkXSpace.xs) {
-                    Text("查看主页")
-                    Image(systemName: "arrow.up.right")
-                        .font(MarkXFont.metaStrong)
-                }
-                .font(MarkXFont.body)
-                .foregroundStyle(MarkXInterface.text2)
-                .fixedSize(horizontal: true, vertical: false)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("查看 @\(creator.username) 的 X 主页")
-        }
-        .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(height: 36, alignment: .center)
-        .padding(.leading, MarkXSpace.l)
     }
 }
 
@@ -1733,7 +1665,7 @@ struct ArticleRow: View {
                 .fixedSize()
                 .accessibilityLabel("第 \(index) 篇")
 
-            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+            VStack(alignment: .leading, spacing: MarkXSpace.xs) {
                 Text(article.title)
                     .font(MarkXFont.headline)
                     .foregroundStyle(.primary)
@@ -1759,7 +1691,7 @@ struct ArticleRow: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, MarkXSpace.m + MarkXSpace.xxs)
+        .padding(.vertical, MarkXSpace.s)
         .padding(.trailing, MarkXSpace.xs)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
@@ -1842,7 +1774,7 @@ private struct SidebarMetricBadge: View {
     static let iconColumn: CGFloat = 18
     /// Vertical padding inside every sidebar row. The sidebar list style
     /// ignores the minimum row height, so this sets the ~44pt row pitch.
-    static let rowPadding: CGFloat = 10
+    static let rowPadding: CGFloat = 7
     static let columnWidth: CGFloat = 56
 
     let text: String
