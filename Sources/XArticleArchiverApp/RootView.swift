@@ -421,7 +421,7 @@ struct RootView: View {
         )) {
             // A section like 资料库 and 收藏夹: one entry for the full creator
             // list (opened in the middle column), then the pinned creators.
-            Section {
+            Group {
                 // A plain row, not a section header: the system adds its own
                 // disclosure arrow to sidebar headers on hover, which doubled ours.
                 SidebarSectionHeader(title: "博主列表", isExpanded: $creatorsSectionExpanded)
@@ -449,11 +449,11 @@ struct RootView: View {
                 }
                 }
             }
-            .collapsible(false)
-            Section {
+            Group {
                 // A plain row, not a section header: the system adds its own
                 // disclosure arrow to sidebar headers on hover, which doubled ours.
-                SidebarSectionHeader(title: "资料库", isExpanded: $librarySectionExpanded)
+                SidebarSectionHeader(title: "资料库", isExpanded: $librarySectionExpanded,
+                                     followsOpenGroup: creatorsSectionExpanded)
                 if librarySectionExpanded {
                 SidebarCountRow(
                     title: "全部文章",
@@ -547,7 +547,6 @@ struct RootView: View {
                 }
                 }
             }
-            .collapsible(false)
             collectionsSection
         }
         .listStyle(.sidebar)
@@ -559,10 +558,11 @@ struct RootView: View {
     }
 
     private var collectionsSection: some View {
-        Section {
+        Group {
             // A plain row, not a section header: the system adds its own
             // disclosure arrow to sidebar headers on hover, which doubled ours.
-            SidebarSectionHeader(title: "收藏夹", isExpanded: $collectionsSectionExpanded)
+            SidebarSectionHeader(title: "收藏夹", isExpanded: $collectionsSectionExpanded,
+                                 followsOpenGroup: librarySectionExpanded)
             if collectionsSectionExpanded {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
@@ -614,7 +614,6 @@ struct RootView: View {
                 .markxSelectableRow(isSelected: false)
             }
         }
-        .collapsible(false)
     }
 
     private func sidebarMetricRow<Icon: View, Title: View, Value: View>(
@@ -1956,6 +1955,9 @@ private struct SidebarFooterLabelStyle: LabelStyle {
 private struct SidebarSectionHeader: View {
     let title: String
     @Binding var isExpanded: Bool
+    /// Extra air above the title only when the group above is open; folded
+    /// groups stack tightly.
+    var followsOpenGroup = false
     @State private var isHovered = false
 
     /// The whole header row is the click target (the system's disclosure
@@ -1975,10 +1977,9 @@ private struct SidebarSectionHeader: View {
                     .foregroundStyle(isHovered ? MarkXInterface.text2 : MarkXInterface.text3)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
-            .padding(.top, MarkXSpace.xxl)
-            .padding(.bottom, MarkXSpace.xs)
-            // Arrow sits in the same column as the rows' count badges.
-            .padding(.trailing, MarkXSpace.xl + MarkXSpace.xxs)
+            .padding(.top, followsOpenGroup ? MarkXSpace.x3 : MarkXSpace.l)
+            // Arrow right-aligned with the rows' count badges.
+            .padding(.trailing, 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
