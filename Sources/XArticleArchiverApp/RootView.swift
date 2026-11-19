@@ -13,8 +13,8 @@ struct RootView: View {
     @AppStorage("sidebarCollectionsExpanded") private var isCollectionsExpanded = true
     @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
     @State private var columnVisibility = NavigationSplitViewVisibility.all
-    @State private var showsDetailTitle = false
-    private static let detailScrollSpace = "markx.detail.scroll"
+    /// Held, not observed: only the header pieces redraw while scrolling.
+    @State private var headerTracker = DetailHeaderTracker()
     @State private var showingNewCollection = false
     @State private var newCollectionName = ""
     @State private var newCollectionArticleID: UUID?
@@ -841,14 +841,17 @@ struct RootView: View {
                 .padding(.horizontal, MarkXSpace.pageSide)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
-            .coordinateSpace(name: Self.detailScrollSpace)
-            .onPreferenceChange(DetailTitleBottomKey.self) { bottom in
-                // Under the transparent toolbar band (~52pt) the title is hidden.
-                let shows = bottom < MarkXSpace.pageTop
-                if shows != showsDetailTitle { showsDetailTitle = shows }
+            .overlay {
+                DetailHeaderOverlay(
+                    tracker: headerTracker,
+                    title: article.title,
+                    titleSize: MarkXTypography.readingPointSize(22, scale: ArticleTypography(previewTextScale).scale),
+                    collapsedTitleSize: MarkXTypography.pointSize(14)
+                ) {
+                    articleHeaderActions(article)
+                }
             }
-            .onDisappear { showsDetailTitle = false }
-            .overlay(alignment: .top) { detailTopBand(article) }
+            .onDisappear { headerTracker.reset() }
             .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .background(MarkXInterface.reading)
@@ -862,17 +865,15 @@ struct RootView: View {
     private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: MarkXSpace.xl) {
-                Text(article.title)
-                    .font(ArticleTypography(previewTextScale).titleFont)
-                    .lineSpacing(ArticleTypography(previewTextScale).titleLineSpacing)
-                    .lineLimit(3)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-                    .textSelection(.enabled)
-                    .background(GeometryReader { proxy in
-                        Color.clear.preference(key: DetailTitleBottomKey.self,
-                                               value: proxy.frame(in: .named(Self.detailScrollSpace)).maxY)
-                    })
+                DetailInPageTitle(tracker: headerTracker) {
+                    Text(article.title)
+                        .font(ArticleTypography(previewTextScale).titleFont)
+                        .lineSpacing(ArticleTypography(previewTextScale).titleLineSpacing)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
+                        .textSelection(.enabled)
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
             }
             HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXFlowLayout(spacing: MarkXSpace.m) {
@@ -904,6 +905,7 @@ struct RootView: View {
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
             .padding(.top, MarkXSpace.l)
+            HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXFlowLayout(spacing: MarkXSpace.s) {
                 StatusPill(
                     article.pipelineState.displayName,
@@ -932,6 +934,10 @@ struct RootView: View {
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                DetailInPageActions(tracker: headerTracker) {
+                    articleHeaderActions(article)
+                }
+            }
             .padding(.top, MarkXSpace.xl)
         }
         .padding(.top, MarkXSpace.pageTop)
@@ -998,54 +1004,30 @@ struct RootView: View {
             }
     }
 
-    /// Article actions sit at the far right of the window toolbar, over the
-    /// reading column.
+    /// Article actions rest at the right of the status row and glide to the
+    /// far right of the window toolbar as the header collapses.
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
         if let article = model.selectedArticle {
             if #available(macOS 26.0, *) {
                 // Without a spacer the item joins the list column's leading edge.
                 ToolbarSpacer(.flexible)
-                ToolbarItem(placement: .primaryAction) { articleHeaderActions(article) }
+                ToolbarItem(placement: .primaryAction) { toolbarActions(article) }
                     .sharedBackgroundVisibility(.hidden)
             } else {
-                ToolbarItem(placement: .primaryAction) { articleHeaderActions(article) }
+                ToolbarItem(placement: .primaryAction) { toolbarActions(article) }
             }
         }
     }
 
-    /// The reading column's top band (under the transparent toolbar) is empty
-    /// while the in-page title is visible. Once it scrolls away, the title
-    /// fades in there in the former list heading's style, over a fade that
-    /// hides the text scrolling beneath.
-    private func detailTopBand(_ article: ArchivedArticle) -> some View {
-        GeometryReader { proxy in
-            let band = max(proxy.safeAreaInsets.top, 38)
-            ZStack(alignment: .topLeading) {
-                LinearGradient(stops: [.init(color: MarkXInterface.reading, location: 0),
-                                       .init(color: MarkXInterface.reading, location: band / (band + MarkXSpace.xl)),
-                                       .init(color: MarkXInterface.reading.opacity(0), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: band + MarkXSpace.xl)
-                Text(article.title)
-                    .font(MarkXFont.columnTitle)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(height: band)
-                    .padding(.leading, MarkXSpace.pageSide)
-                    // Leave room for the toolbar actions on the right.
-                    .padding(.trailing, 140)
-            }
-            .ignoresSafeArea(.container, edges: .top)
+    /// The actions' final place once the header has collapsed.
+    private func toolbarActions(_ article: ArchivedArticle) -> some View {
+        DetailToolbarActions(tracker: headerTracker) {
+            articleHeaderActions(article)
         }
-        .opacity(showsDetailTitle ? 1 : 0)
-        .animation(.easeOut(duration: 0.15), value: showsDetailTitle)
-        .allowsHitTesting(false)
-        .accessibilityHidden(!showsDetailTitle)
     }
 
-    /// Actions for the selected article sit on the author line under its
-    /// title, next to the content they act on.
+    /// Collect, open the original and more.
     private func articleHeaderActions(_ article: ArchivedArticle) -> some View {
         let isCollected = model.collections.contains { $0.articleIDs.contains(article.id) }
         return HStack(spacing: MarkXSpace.xs) {
@@ -1665,18 +1647,26 @@ struct ArticleRow: View {
     let index: Int
     let creator: Creator?
 
-    // Only the title: the list is for picking an article; author, date and
-    // state are in the reading pane.
+    // Number and title only: author, date and state are in the reading pane.
     var body: some View {
-        Text(article.title)
-            .font(MarkXFont.headline)
-            .foregroundStyle(.primary)
-            .lineSpacing(MarkXSpace.xxs)
-            .lineLimit(2)
-            .truncationMode(.tail)
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
+            Text(index, format: .number.grouping(.never))
+                .font(MarkXFont.meta.monospacedDigit())
+                .foregroundStyle(MarkXInterface.text3)
+                .lineLimit(1)
+                .frame(minWidth: 24, alignment: .trailing)
+                .fixedSize()
+            Text(article.title)
+                .font(MarkXFont.headline)
+                .foregroundStyle(.primary)
+                .lineSpacing(MarkXSpace.xxs)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        }
             .padding(.vertical, MarkXSpace.m)
-            .padding(.horizontal, MarkXSpace.l)
+            .padding(.trailing, MarkXSpace.l)
+            .padding(.leading, MarkXSpace.xs)
             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
             .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
             .contentShape(Rectangle())
@@ -2115,12 +2105,6 @@ private struct ColumnEdgeShadow: View {
     }
 }
 
-/// Bottom edge of the article title in the reading scroll view.
-private struct DetailTitleBottomKey: PreferenceKey {
-    static let defaultValue: CGFloat = .greatestFiniteMagnitude
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = min(value, nextValue()) }
-}
-
 private struct HiddenWindowTitle: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
@@ -2141,3 +2125,4 @@ private struct SeamlessToolbar: ViewModifier {
         }
     }
 }
+
