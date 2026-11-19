@@ -31,12 +31,12 @@ struct DetailTopBar<Actions: View>: View {
         HStack(spacing: MarkXSpace.l) {
             if shown {
                 Text(title)
-                    .font(MarkXFont.headline)
+                    .font(MarkXTypography.system(size: 16, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .transition(.offset(y: Self.rise)
-                        .combined(with: .scale(scale: 1.35, anchor: .leading))
+                        .combined(with: .scale(scale: 1.3, anchor: .leading))
                         .combined(with: .opacity))
                 actions
                     .transition(.offset(y: Self.rise).combined(with: .opacity))

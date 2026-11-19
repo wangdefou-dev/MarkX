@@ -59,11 +59,20 @@ struct SplitColumnGuard: NSViewRepresentable {
         var columns: [SplitColumnLayout.Column] = []
         private var isScheduled = false
         private var pendingCheck: DispatchWorkItem?
+        private var mouseMonitor: Any?
+        private var sidebarLock: (item: NSSplitViewItem, minimum: CGFloat, maximum: CGFloat)?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             NotificationCenter.default.removeObserver(self)
+            if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+            mouseMonitor = nil
+            unlockSidebar()
             guard let splitView = enclosingSplitView() else { return }
+            mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+                self?.handleMouse(event)
+                return event
+            }
             QuietSplitDivider.apply(to: splitView)
             NotificationCenter.default.addObserver(
                 self, selector: #selector(splitViewDidResize),
@@ -95,6 +104,42 @@ struct SplitColumnGuard: NSViewRepresentable {
                 if let splitView = self?.enclosingSplitView() { QuietSplitDivider.apply(to: splitView) }
                 self?.enforce()
             }
+        }
+
+        /// Dragging the list/reading divider past the list's minimum or
+        /// maximum made AppKit push the sidebar's divider too. While that
+        /// divider is held, the sidebar is pinned to its current width.
+        private func handleMouse(_ event: NSEvent) {
+            guard event.type == .leftMouseDown else {
+                unlockSidebar()
+                return
+            }
+            guard let splitView = enclosingSplitView(), event.window === splitView.window else { return }
+            let arranged = splitView.arrangedSubviews
+            guard arranged.count >= 3, !splitView.isSubviewCollapsed(arranged[0]),
+                  !arranged[0].isHidden, arranged[0].frame.width >= 1 else { return }
+            let point = splitView.convert(event.locationInWindow, from: nil)
+            let dividerX = arranged[1].frame.maxX + splitView.dividerThickness / 2
+            guard splitView.bounds.contains(point), abs(point.x - dividerX) <= 6 else { return }
+            lockSidebar(in: splitView)
+        }
+
+        func lockSidebar(in splitView: NSSplitView) {
+            guard sidebarLock == nil,
+                  let controller = splitView.delegate as? NSSplitViewController,
+                  let item = controller.splitViewItems.first,
+                  let sidebar = splitView.arrangedSubviews.first else { return }
+            sidebarLock = (item, item.minimumThickness, item.maximumThickness)
+            let width = sidebar.frame.width
+            item.minimumThickness = width
+            item.maximumThickness = width
+        }
+
+        func unlockSidebar() {
+            guard let lock = sidebarLock else { return }
+            sidebarLock = nil
+            lock.item.minimumThickness = lock.minimum
+            lock.item.maximumThickness = lock.maximum
         }
 
         private func enclosingSplitView() -> NSSplitView? {

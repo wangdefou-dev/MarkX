@@ -379,12 +379,11 @@ struct RootView: View {
             .disabled(isBusy || model.enabledCreatorCount == 0)
             .help("检查所有已跟踪博主的新文章（⌘R）")
         }
-        // The one action a new user needs first, so it carries words
-        // beside its icon, in the toolbar's own style.
+        // Icon only, like sync: a titled item overflowed into the »
+        // menu at the window's far right when the sidebar was narrow.
         ToolbarItem(placement: .primaryAction) {
             Button { model.presentDownloadSheet() } label: {
-                Label("下载", systemImage: "square.and.arrow.down")
-                    .labelStyle(.titleAndIcon)
+                Label("下载文章", systemImage: "square.and.arrow.down")
             }
             .disabled(isBusy)
             .help("输入博主主页或 X Article 链接开始下载（⌘N）")
@@ -410,7 +409,7 @@ struct RootView: View {
             }
         )) {
             // A section like 资料库 and 收藏夹: one entry for the full creator
-            // list (opened in the middle column), then the starred creators.
+            // list (opened in the middle column), then the pinned creators.
             Section {
                 SidebarCountRow(
                     title: "全部博主",
@@ -423,7 +422,8 @@ struct RootView: View {
                 ForEach(model.pinnedCreators) { creator in
                     SidebarCountRow(
                         title: creator.displayName,
-                        systemImage: "person",
+                        systemImage: "pin.fill",
+                        iconColor: .orange,
                         count: statistics.downloadedArticleCount(for: creator.id)
                     )
                     .lineLimit(1)
@@ -433,7 +433,7 @@ struct RootView: View {
                     .contextMenu { creatorMenuItems(creator) }
                 }
             } header: {
-                Text("博主列表")
+                SidebarSectionHeader(title: "博主列表")
             }
             .collapsible(false)
             Section {
@@ -528,13 +528,14 @@ struct RootView: View {
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
             } header: {
-                Text("资料库").padding(.top, MarkXSpace.m)
+                SidebarSectionHeader(title: "资料库")
             }
             .collapsible(false)
             collectionsSection
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
+        .padding(.top, Self.topBandExtra)
         // More room between the rows and the window's left edge.
         .padding(.horizontal, Self.sidebarInset)
         .environment(\.defaultMinListRowHeight, 40)
@@ -591,7 +592,7 @@ struct RootView: View {
                 .disabled(!model.canEditCollections)
                 .markxSelectableRow(isSelected: false)
         } header: {
-            Text("收藏夹").padding(.top, MarkXSpace.m)
+            SidebarSectionHeader(title: "收藏夹")
         }
         .collapsible(false)
     }
@@ -631,8 +632,8 @@ struct RootView: View {
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
         return sidebarMetricRow {
             if model.isCreatorPinned(creator) {
-                // Starred creators keep an orange star so they stand out.
-                SidebarIcon(systemImage: "star.fill", color: .orange)
+                // Pinned creators keep MarkX's orange pin so they stand out.
+                SidebarIcon(systemImage: "pin.fill", color: .orange)
             } else {
                 SidebarIcon(systemImage: creator.isProtected ? "lock" : "person")
             }
@@ -686,20 +687,20 @@ struct RootView: View {
             Button {
                 model.unpinCreator(creator)
             } label: {
-                Label("取消收藏", systemImage: "star.slash")
+                Label("取消置顶", systemImage: "pin.slash")
             }
             if let index = model.pinnedCreatorIndex(of: creator) {
                 Divider()
                 Button {
                     model.movePinnedCreator(creator, by: -1)
                 } label: {
-                    Label("在收藏中上移", systemImage: "arrow.up")
+                    Label("置顶上移", systemImage: "arrow.up")
                 }
                 .disabled(index == 0)
                 Button {
                     model.movePinnedCreator(creator, by: 1)
                 } label: {
-                    Label("在收藏中下移", systemImage: "arrow.down")
+                    Label("置顶下移", systemImage: "arrow.down")
                 }
                 .disabled(index == model.pinnedCreators.count - 1)
             }
@@ -707,11 +708,11 @@ struct RootView: View {
             Button {
                 model.pinCreator(creator)
             } label: {
-                Label("收藏博主", systemImage: "star")
+                Label("置顶博主", systemImage: "pin")
             }
-            .help("收藏 @\(creator.username)：排在博主列表最前面，并显示在侧边栏，最多 5 位")
+            .help("置顶 @\(creator.username)：排在博主列表最前面，并显示在侧边栏，最多 5 位")
         } else {
-            Button("收藏博主（最多 5 位）", systemImage: "star") {}
+            Button("置顶博主（最多 5 位）", systemImage: "pin") {}
                 .disabled(true)
         }
         Divider()
@@ -746,7 +747,7 @@ struct RootView: View {
     }
 
     /// 全部博主 stays highlighted for the creator list and for any creator
-    /// that has no row of its own in the sidebar (not starred).
+    /// that has no row of its own in the sidebar (not pinned).
     private var isAllCreatorsScope: Bool {
         if model.sidebarSelection == .creators { return true }
         if case .creator(let id) = model.sidebarSelection {
@@ -866,6 +867,9 @@ struct RootView: View {
             }
         }
         .clipped()
+        // Same empty band under the toolbar as the sidebar and reading pane;
+        // the list is clipped above it, so rows never scroll into it.
+        .padding(.top, Self.topBandExtra)
         .background {
             // Two-finger swipe right (trackpad or Magic Mouse) goes back.
             HorizontalSwipeMonitor(isEnabled: selectedSidebarCreator != nil && !showsCreatorList) {
@@ -1029,6 +1033,9 @@ struct RootView: View {
     }
 
     private static let detailScrollSpace = "detailScroll"
+    /// The system toolbar band cannot grow, so every column leaves this much
+    /// more empty space under it; the three column tops stay level.
+    static let topBandExtra: CGFloat = 20
 
     @ViewBuilder
     private var detail: some View {
@@ -1038,7 +1045,7 @@ struct RootView: View {
             DetailTopBar(state: detailTitleState, title: article.title) {
                 articleHeaderActions(article)
             }
-            .frame(height: max(proxy.safeAreaInsets.top, 52))
+            .frame(height: max(proxy.safeAreaInsets.top, 52) + Self.topBandExtra)
             // Drawn above the scroll view, so text can never cover it.
             .zIndex(1)
             ScrollView {
@@ -1896,13 +1903,14 @@ struct ArticleRow: View {
 private struct SidebarCountRow: View {
     let title: String
     let systemImage: String
+    var iconColor: Color? = nil
     let count: Int
     var body: some View {
         // Native sidebar row and badge (macOS hides a zero badge). Icons are
         // one monochrome outline set in secondary grey, as in Fog's sidebar.
         // Same icon column and gap as creator rows, so every title lines up.
         HStack(spacing: MarkXSpace.m) {
-            SidebarIcon(systemImage: systemImage)
+            SidebarIcon(systemImage: systemImage, color: iconColor ?? MarkXInterface.text2)
             Text(title)
         }
         .padding(.vertical, SidebarMetricBadge.rowPadding)
@@ -1925,6 +1933,19 @@ private struct SidebarFooterLabelStyle: LabelStyle {
 }
 
 /// The one sidebar icon treatment: monochrome, secondary grey, fixed column.
+/// One look for every sidebar section title. The first section's header
+/// otherwise came out brighter and heavier than the others.
+private struct SidebarSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(MarkXFont.metaStrong)
+            .foregroundStyle(MarkXInterface.text3)
+            .padding(.top, MarkXSpace.m)
+    }
+}
+
 private struct SidebarIcon: View {
     let systemImage: String
     var color: Color = MarkXInterface.text2
