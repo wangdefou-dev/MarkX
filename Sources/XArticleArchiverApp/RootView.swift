@@ -13,6 +13,8 @@ struct RootView: View {
     @AppStorage("sidebarCollectionsExpanded") private var isCollectionsExpanded = true
     @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var showsDetailTitle = false
+    private static let detailScrollSpace = "markx.detail.scroll"
     @State private var showingNewCollection = false
     @State private var newCollectionName = ""
     @State private var newCollectionArticleID: UUID?
@@ -261,7 +263,6 @@ struct RootView: View {
                 articleList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
-                    .toolbar { listTitleToolbar }
                     .navigationSplitViewColumnWidth(
                         min: SplitColumnLayout.list.min,
                         ideal: SplitColumnLayout.list.ideal,
@@ -271,11 +272,10 @@ struct RootView: View {
                 detail
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
+
                     .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar, SplitColumnLayout.list]))
                     .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 640)
             }
-            // Nothing to search on the welcome page, so only the library has it.
-            .searchable(text: $model.searchText, placement: .toolbar, prompt: "搜索标题、博主或正文")
         }
     }
 
@@ -691,11 +691,6 @@ struct RootView: View {
 
     private var articleList: some View {
         VStack(spacing: 0) {
-            if model.isPreparingSearch {
-                Text("正在整理历史文章，搜索结果会逐步补齐…")
-                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).padding(MarkXSpace.m)
-                Divider()
-            }
             Group {
                 if !model.filteredArticles.isEmpty {
                     let collectionID = model.selectedCollectionID
@@ -843,6 +838,14 @@ struct RootView: View {
                 .padding(.horizontal, MarkXSpace.pageSide)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
+            .coordinateSpace(name: Self.detailScrollSpace)
+            .onPreferenceChange(DetailTitleBottomKey.self) { bottom in
+                // Under the transparent toolbar band (~52pt) the title is hidden.
+                let shows = bottom < MarkXSpace.pageTop
+                if shows != showsDetailTitle { showsDetailTitle = shows }
+            }
+            .onDisappear { showsDetailTitle = false }
+            .overlay(alignment: .top) { detailScrolledTitle(article) }
             .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .background(MarkXInterface.reading)
@@ -863,6 +866,10 @@ struct RootView: View {
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                     .textSelection(.enabled)
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: DetailTitleBottomKey.self,
+                                               value: proxy.frame(in: .named(Self.detailScrollSpace)).maxY)
+                    })
             }
             HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXFlowLayout(spacing: MarkXSpace.m) {
@@ -989,30 +996,30 @@ struct RootView: View {
             }
     }
 
-    @ToolbarContentBuilder
-    private var listTitleToolbar: some ToolbarContent {
-        // Only the column's name and count; creator links and library
-        // actions live in the sidebar (context menu and footer).
-        if #available(macOS 26.0, *) {
-            ToolbarItem(placement: .navigation) { listHeading }
-                .sharedBackgroundVisibility(.hidden)
-        } else {
-            ToolbarItem(placement: .navigation) { listHeading }
-        }
-    }
-
-    private var listHeading: some View {
-        HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.s) {
-            Text(listTitle).font(MarkXFont.columnTitle)
-            if !listSubtitle.isEmpty {
-                Text(listSubtitle).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text3).monospacedDigit()
+    /// The reading column's top band (under the transparent window toolbar)
+    /// stays empty while the article title is on screen and shows the title,
+    /// on a reading-colour bar with a hairline, once it scrolls away.
+    private func detailScrolledTitle(_ article: ArchivedArticle) -> some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                Text(article.title)
+                    .font(MarkXFont.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 860, alignment: .leading)
+                    .padding(.horizontal, MarkXSpace.pageSide)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(height: max(proxy.safeAreaInsets.top, 38))
+                    .background(MarkXInterface.reading)
+                Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
+                Spacer(minLength: 0)
             }
+            .ignoresSafeArea(.container, edges: .top)
         }
-        .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, MarkXSpace.xs)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
+        .opacity(showsDetailTitle ? 1 : 0)
+        .animation(.easeOut(duration: 0.15), value: showsDetailTitle)
+        .allowsHitTesting(false)
+        .accessibilityHidden(!showsDetailTitle)
     }
 
     /// Actions for the selected article sit on the author line under its
@@ -1071,23 +1078,6 @@ struct RootView: View {
             Divider()
             Button("删除文章…", role: .destructive) { model.requestDeleteArticle(article) }
                 .disabled(model.isRunning || model.hasActiveDownloadProgress)
-        }
-    }
-
-    private var listSubtitle: String {
-        let count = model.filteredArticles.count
-        return count == 0 ? "" : "\(count) 篇"
-    }
-
-    private var listTitle: String {
-        switch model.sidebarSelection {
-        case .all, .none: "全部文章"
-        case .today: "今日推文"
-        case .commercial: "商单内容"
-        case .pending: "等待继续"
-        case .failed: "需要处理"
-        case .collection: selectedCollection?.name ?? "收藏夹"
-        case .creator(let id): model.creators.first(where: { $0.id == id })?.displayName ?? "博主"
         }
     }
 
@@ -2117,6 +2107,12 @@ private struct LocalArticleImage: View {
             finished = true
         }
     }
+}
+
+/// Bottom edge of the article title in the reading scroll view.
+private struct DetailTitleBottomKey: PreferenceKey {
+    static let defaultValue: CGFloat = .greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = min(value, nextValue()) }
 }
 
 private struct HiddenWindowTitle: ViewModifier {
