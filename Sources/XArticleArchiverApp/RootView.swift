@@ -264,7 +264,7 @@ struct RootView: View {
             } content: {
                 articleList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(MarkXInterface.listBackground)
+                    .background(MarkXInterface.listGradient)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
                     .navigationSplitViewColumnWidth(
                         min: SplitColumnLayout.list.min,
@@ -314,17 +314,20 @@ struct RootView: View {
                     Text(model.progress.stage).font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, MarkXSpace.xl)
+                .padding(.horizontal, MarkXSpace.xl + Self.sidebarInset)
                 .padding(.top, MarkXSpace.l)
                 .padding(.bottom, MarkXSpace.l)
             }
             sidebarFooter
         }
-        .background(.bar)
+        .background(MarkXInterface.sidebarGradient)
     }
 
     /// Settings stay one click away from the main window (Fog keeps its
     /// settings entry in the window's bottom-left corner); ⌘, still works.
+    /// Extra side margin for the sidebar rows and footer.
+    private static let sidebarInset: CGFloat = MarkXSpace.m
+
     private var sidebarFooter: some View {
         HStack(spacing: MarkXSpace.xxs) {
             SettingsLink {
@@ -335,7 +338,7 @@ struct RootView: View {
             .help("打开设置（⌘,）")
             libraryFooterActions
         }
-        .padding(.horizontal, MarkXSpace.m)
+        .padding(.horizontal, MarkXSpace.m + Self.sidebarInset)
         .frame(height: 44)
     }
 
@@ -376,14 +379,13 @@ struct RootView: View {
             .disabled(isBusy || model.enabledCreatorCount == 0)
             .help("检查所有已跟踪博主的新文章（⌘R）")
         }
-        // The one action a new user needs first, so it carries a word
-        // and the accent colour instead of a bare icon.
+        // The one action a new user needs first, so it carries words
+        // beside its icon, in the toolbar's own style.
         ToolbarItem(placement: .primaryAction) {
             Button { model.presentDownloadSheet() } label: {
-                Label("下载", systemImage: "arrow.down")
+                Label("下载", systemImage: "square.and.arrow.down")
+                    .labelStyle(.titleAndIcon)
             }
-            // Accent fill even in an inactive window, unlike .borderedProminent.
-            .buttonStyle(.markxCompactProminent)
             .disabled(isBusy)
             .help("输入博主主页或 X Article 链接开始下载（⌘N）")
         }
@@ -398,22 +400,40 @@ struct RootView: View {
                 // like the back button instead of swapping instantly.
                 if picked == .creators, case .creator = model.sidebarSelection {
                     DispatchQueue.main.async { returnToCreatorList() }
+                } else if case .creator = picked, model.sidebarSelection == .creators {
+                    DispatchQueue.main.async {
+                        withAnimation(Self.paneSlide) { model.sidebarSelection = picked }
+                    }
                 } else {
                     model.sidebarSelection = picked
                 }
             }
         )) {
-            // One entry for all creators; the list itself opens in the
-            // middle column, so the sidebar stays short and fixed.
+            // A section like 资料库 and 收藏夹: one entry for the full creator
+            // list (opened in the middle column), then the starred creators.
             Section {
                 SidebarCountRow(
-                    title: "博主列表",
+                    title: "全部博主",
                     systemImage: "person.2",
                     count: model.enabledCreatorCount
                 )
                 .tag(AppViewModel.SidebarSelection.creators)
-                .markxSelectableRow(isSelected: isCreatorScope)
+                .markxSelectableRow(isSelected: isAllCreatorsScope)
                 .help("显示全部博主，点击博主查看其文章")
+                ForEach(model.pinnedCreators) { creator in
+                    SidebarCountRow(
+                        title: creator.displayName,
+                        systemImage: "person",
+                        count: statistics.downloadedArticleCount(for: creator.id)
+                    )
+                    .lineLimit(1)
+                    .help(creator.displayName + " · @" + creator.username)
+                    .tag(AppViewModel.SidebarSelection.creator(creator.id))
+                    .markxSelectableRow(isSelected: model.sidebarSelection == .creator(creator.id))
+                    .contextMenu { creatorMenuItems(creator) }
+                }
+            } header: {
+                Text("博主列表")
             }
             .collapsible(false)
             Section {
@@ -515,6 +535,8 @@ struct RootView: View {
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
+        // More room between the rows and the window's left edge.
+        .padding(.horizontal, Self.sidebarInset)
         .environment(\.defaultMinListRowHeight, 40)
     }
 
@@ -609,8 +631,8 @@ struct RootView: View {
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
         return sidebarMetricRow {
             if model.isCreatorPinned(creator) {
-                // Pinned creators keep MarkX's orange pin so they stand out.
-                SidebarIcon(systemImage: "pin.fill", color: .orange)
+                // Starred creators keep an orange star so they stand out.
+                SidebarIcon(systemImage: "star.fill", color: .orange)
             } else {
                 SidebarIcon(systemImage: creator.isProtected ? "lock" : "person")
             }
@@ -653,74 +675,84 @@ struct RootView: View {
         .tag(AppViewModel.SidebarSelection.creator(creator.id))
         .markxSelectableRow(isSelected: highlightedCreator?.id == creator.id)
         .contextMenu {
-            if model.isCreatorPinned(creator) {
-                Button {
-                    model.unpinCreator(creator)
-                } label: {
-                    Label("取消置顶", systemImage: "pin.slash")
-                }
-                if let index = model.pinnedCreatorIndex(of: creator) {
-                    Divider()
-                    Button {
-                        model.movePinnedCreator(creator, by: -1)
-                    } label: {
-                        Label("置顶上移", systemImage: "arrow.up")
-                    }
-                    .disabled(index == 0)
-                    Button {
-                        model.movePinnedCreator(creator, by: 1)
-                    } label: {
-                        Label("置顶下移", systemImage: "arrow.down")
-                    }
-                    .disabled(index == model.pinnedCreators.count - 1)
-                }
-            } else if model.canPinAnotherCreator {
-                Button {
-                    model.pinCreator(creator)
-                } label: {
-                    Label("置顶博主", systemImage: "pin")
-                }
-                .help("将 @\(creator.username) 放入置顶列表，最多 5 位")
-            } else {
-                Button("置顶博主（最多 5 位）", systemImage: "pin") {}
-                    .disabled(true)
-            }
-            Divider()
-            Button {
-                model.openCreatorProfile(creator)
-            } label: {
-                Label("查看 X 主页", systemImage: "arrow.up.right.square")
-            }
-            .help("在默认浏览器打开 @\(creator.username) 的 X 主页")
-            Button {
-                model.presentDownloadSheet(for: creator)
-            } label: {
-                Label("重新拉取文章…", systemImage: "arrow.clockwise")
-            }
-            .disabled(model.isRunning || model.hasActiveDownloadProgress)
-            .help("重新选择数量并拉取 @\(creator.username) 的 X Article")
-            Button {
-                model.refreshCreatorArticleCount(creator)
-            } label: {
-                Label("刷新线上文章总数", systemImage: "number.circle")
-            }
-            .disabled(model.isRunning || model.hasActiveDownloadProgress)
-            .help("完整扫描 @\(creator.username) 的 Articles 列表，只更新线上文章总数，不下载文章")
-            Divider()
-            Button(role: .destructive) {
-                model.requestDeleteCreator(creator)
-            } label: {
-                Label("删除博主…", systemImage: "trash")
-            }
-            .disabled(model.isRunning || model.hasActiveDownloadProgress)
-            .help("从博主列表移除 @\(creator.username)，已归档文章保留")
+            creatorMenuItems(creator)
         }
     }
 
-    /// The 博主 entry and a chosen creator both belong to the creator scope.
-    private var isCreatorScope: Bool {
-        if case .creator = model.sidebarSelection { return true }
-        return model.sidebarSelection == .creators
+    /// Shared by creator rows in the sidebar and the middle column.
+    @ViewBuilder
+    private func creatorMenuItems(_ creator: Creator) -> some View {
+        if model.isCreatorPinned(creator) {
+            Button {
+                model.unpinCreator(creator)
+            } label: {
+                Label("取消收藏", systemImage: "star.slash")
+            }
+            if let index = model.pinnedCreatorIndex(of: creator) {
+                Divider()
+                Button {
+                    model.movePinnedCreator(creator, by: -1)
+                } label: {
+                    Label("在收藏中上移", systemImage: "arrow.up")
+                }
+                .disabled(index == 0)
+                Button {
+                    model.movePinnedCreator(creator, by: 1)
+                } label: {
+                    Label("在收藏中下移", systemImage: "arrow.down")
+                }
+                .disabled(index == model.pinnedCreators.count - 1)
+            }
+        } else if model.canPinAnotherCreator {
+            Button {
+                model.pinCreator(creator)
+            } label: {
+                Label("收藏博主", systemImage: "star")
+            }
+            .help("收藏 @\(creator.username)：排在博主列表最前面，并显示在侧边栏，最多 5 位")
+        } else {
+            Button("收藏博主（最多 5 位）", systemImage: "star") {}
+                .disabled(true)
+        }
+        Divider()
+        Button {
+            model.openCreatorProfile(creator)
+        } label: {
+            Label("查看 X 主页", systemImage: "arrow.up.right.square")
+        }
+        .help("在默认浏览器打开 @\(creator.username) 的 X 主页")
+        Button {
+            model.presentDownloadSheet(for: creator)
+        } label: {
+            Label("重新拉取文章…", systemImage: "arrow.clockwise")
+        }
+        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        .help("重新选择数量并拉取 @\(creator.username) 的 X Article")
+        Button {
+            model.refreshCreatorArticleCount(creator)
+        } label: {
+            Label("刷新线上文章总数", systemImage: "number.circle")
+        }
+        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        .help("完整扫描 @\(creator.username) 的 Articles 列表，只更新线上文章总数，不下载文章")
+        Divider()
+        Button(role: .destructive) {
+            model.requestDeleteCreator(creator)
+        } label: {
+            Label("删除博主…", systemImage: "trash")
+        }
+        .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        .help("从博主列表移除 @\(creator.username)，已归档文章保留")
+    }
+
+    /// 全部博主 stays highlighted for the creator list and for any creator
+    /// that has no row of its own in the sidebar (not starred).
+    private var isAllCreatorsScope: Bool {
+        if model.sidebarSelection == .creators { return true }
+        if case .creator(let id) = model.sidebarSelection {
+            return !model.pinnedCreators.contains { $0.id == id }
+        }
+        return false
     }
 
     /// All creators, shown in the middle column from the sidebar's 博主
@@ -761,7 +793,7 @@ struct RootView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .background(MarkXInterface.listBackground)
+            .background(MarkXInterface.listGradient)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             // Arrow keys move the highlight; Return opens it.
             .onKeyPress(.upArrow) { moveCreatorHighlight(by: -1); return .handled }
@@ -824,12 +856,12 @@ struct RootView: View {
                 creatorList
                     .animation(nil, value: model.sidebarSelection)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(MarkXInterface.listBackground)
+                    .background(MarkXInterface.listGradient)
                     .transition(.move(edge: .leading))
             } else {
                 articleListPane
                     .animation(nil, value: model.sidebarSelection)
-                    .background(MarkXInterface.listBackground)
+                    .background(MarkXInterface.listGradient)
                     .transition(.move(edge: .trailing))
             }
         }
@@ -953,7 +985,7 @@ struct RootView: View {
                     // Plain style: no extra top padding under the toolbar band.
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(MarkXInterface.listBackground)
+                    .background(MarkXInterface.listGradient)
                     .focused($isArticleListFocused)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
@@ -997,8 +1029,6 @@ struct RootView: View {
     }
 
     private static let detailScrollSpace = "detailScroll"
-    /// Extra height below the toolbar band for the reading pane's top bar.
-    private static let detailTopBarExtra: CGFloat = 20
 
     @ViewBuilder
     private var detail: some View {
@@ -1008,23 +1038,36 @@ struct RootView: View {
             DetailTopBar(state: detailTitleState, title: article.title) {
                 articleHeaderActions(article)
             }
-            .frame(height: max(proxy.safeAreaInsets.top, 38) + Self.detailTopBarExtra)
+            .frame(height: max(proxy.safeAreaInsets.top, 52))
             // Drawn above the scroll view, so text can never cover it.
             .zIndex(1)
             ScrollView {
                 VStack(spacing: 0) {
-                    articleDetailHeader(article)
-                    if article.pipelineState != .committed || article.lastError != nil {
-                        ArticleProcessingPanel(
-                            article: article,
-                            isActive: model.isArticleActivelyProcessing(article),
-                            isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                            stop: { model.stopProcessing(article) },
-                            restart: { model.restartProcessing(article) },
-                            openSubscription: { model.openSubscriptionPage(for: article) }
-                        )
+                    VStack(spacing: 0) {
+                        articleDetailHeader(article)
+                        if article.pipelineState != .committed || article.lastError != nil {
+                            ArticleProcessingPanel(
+                                article: article,
+                                isActive: model.isArticleActivelyProcessing(article),
+                                isActionDisabled: model.isRunning || model.hasActiveDownloadProgress,
+                                stop: { model.stopProcessing(article) },
+                                restart: { model.restartProcessing(article) },
+                                openSubscription: { model.openSubscriptionPage(for: article) }
+                            )
+                            .padding(.top, MarkXSpace.x3)
+                        }
+                        // Separates the title, metadata and status from the text.
+                        Rectangle()
+                            .fill(MarkXInterface.hairline)
+                            .frame(height: 1)
+                            .padding(.top, MarkXSpace.x3)
                     }
+                    // Flips once everything above the text has scrolled away.
+                    .onGeometryChange(for: Bool.self) { proxy in
+                        proxy.frame(in: .named(Self.detailScrollSpace)).maxY < 0
+                    } action: { detailTitleState.set($0) }
                     articleDetailBody(article)
+                        .padding(.top, MarkXSpace.x3)
                 }
                 .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
                 .padding(.horizontal, MarkXSpace.pageSide)
@@ -1038,7 +1081,7 @@ struct RootView: View {
             .onDisappear { detailTitleState.set(false) }
             .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
-            .background(MarkXInterface.reading)
+            .background(MarkXInterface.readingGradient)
         } else {
             Group {
                 if model.sidebarSelection == .creators, let creator = highlightedCreator {
@@ -1060,7 +1103,7 @@ struct RootView: View {
                 }
             }
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .background(MarkXInterface.reading)
+                .background(MarkXInterface.readingGradient)
         }
     }
 
@@ -1074,10 +1117,6 @@ struct RootView: View {
                     .truncationMode(.tail)
                     .textSelection(.enabled)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-                    // Flips only when the title leaves or re-enters the view.
-                    .onGeometryChange(for: Bool.self) { proxy in
-                        proxy.frame(in: .named(Self.detailScrollSpace)).maxY < 0
-                    } action: { detailTitleState.set($0) }
             }
             HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXFlowLayout(spacing: MarkXSpace.m) {
@@ -1144,7 +1183,6 @@ struct RootView: View {
         }
         // Sits right under the fixed top bar.
         .padding(.top, MarkXSpace.l)
-        .padding(.bottom, MarkXSpace.x4)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
     }
 

@@ -19,6 +19,7 @@ struct XArticleArchiverApp: App {
             #endif
         }
         .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
         .defaultSize(width: 1_360, height: 860)
         .handlesExternalEvents(matching: MarkXWindowPolicy.externalEventKeys)
         .commands {

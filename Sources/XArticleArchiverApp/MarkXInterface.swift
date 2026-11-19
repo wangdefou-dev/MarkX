@@ -81,6 +81,22 @@ enum MarkXInterface {
     /// Article list column: between the sidebar and the reading pane.
     static let listBackgroundNS = dynamicNS(light: 0xF5F5F7, dark: 0x1A1B1D)
     static let listBackground = Color(nsColor: listBackgroundNS)
+
+    // Main-window column tones: one left-to-right gradient, darkest at the
+    // sidebar's left edge and lightest at the reading pane's right edge,
+    // with a small step at each column boundary so the columns still read
+    // as separate panels.
+    static let sidebarGradient = horizontalGradient(light: (0xE4E5E9, 0xEAEBEE), dark: (0x0B0C0E, 0x0F1012))
+    static let listGradient = horizontalGradient(light: (0xEEEFF2, 0xF4F4F6), dark: (0x131416, 0x17181A))
+    static let readingGradient = horizontalGradient(light: (0xF8F8FA, 0xFFFFFF), dark: (0x1A1B1D, 0x1E1F21))
+
+    private static func horizontalGradient(light: (UInt32, UInt32), dark: (UInt32, UInt32)) -> LinearGradient {
+        LinearGradient(
+            colors: [dynamic(light: light.0, dark: dark.0), dynamic(light: light.1, dark: dark.1)],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
     /// Soft shadow cast by a column onto the one to its right.
     static let columnShadow = dynamic(light: 0x000000, lightAlpha: 0.045, dark: 0x000000, darkAlpha: 0.28)
     static let hairline = dynamic(light: 0x00002D, lightAlpha: 0.09, dark: 0xD3EDF8, darkAlpha: 0.11)
