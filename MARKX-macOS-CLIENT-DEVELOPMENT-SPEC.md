@@ -15,7 +15,7 @@
 
 - 资料库、博主分组支持折叠和展开；分组标题需要明显高于条目，但不得放大条目内容。
 - 收藏夹保存在当前资料库的 SQLite 数据库中。同一篇文章可以加入多个收藏夹，收藏夹内沿用资料库搜索。移出收藏只删除对应关系，删除收藏夹需确认并保留原归档。
-- 博主行只展示博主名称、ID 和“已下载 / 线上总数”分数；查看主页、重新拉取、刷新线上总数和删除放入右键菜单。
+- 博主行只展示博主名称和“已下载 / 线上总数”分数，不显示 @ID（悬停提示里保留）；查看主页、重新拉取、刷新线上总数和删除放入右键菜单。
 - 文章列表按当前筛选结果连续编号；“今日推文”按 X 原始发布时间动态更新；“商单内容”只包含带有 X 官方 Paid partnership 标记的文章，列表和详情页需显示同一商单内容标签。
 - 文章详情显示发布时间，精确到分钟；文章标题、作者、类型和时间保持清晰的层级关系。
 - 任务结果使用可视化统计项展示博主数、检查数、保存数、跳过、订阅、失败、图片、视频和待处理数量，不使用难以扫描的一整段结果文字。
@@ -26,10 +26,10 @@
 ### 3.1 字号
 
 - `MarkXTypography` 将界面与正文分开：外层界面在 0.3.44 基础上增加 1pt，正文增加 2pt 后再应用用户缩放。语义字体保留系统字重和设计，原生输入框与产品名跟随界面字号。
-- 侧边栏遵循 macOS 原生样式（HIG Sidebars）：分组使用 `Section(isExpanded:)` 的原生小号灰色标题，折叠控件悬停时出现；资料库分类与收藏夹使用 `Label` + `.badge()`，数量为 0 时不显示徽标。“博主”标题后附人数。博主名称 13pt，用户名与分数 11pt，普通博主图标 14pt、置顶图钉 12pt。
+- 侧边栏遵循 macOS 原生样式（HIG Sidebars）：分组使用 `Section(isExpanded:)` 的原生小号灰色标题，折叠控件悬停时出现；资料库分类与收藏夹使用 `Label` + `.badge()`，数量为 0 时不显示徽标。“博主”标题后附人数。博主名称 `body`、分数 11pt；普通博主用线性图标，置顶博主用橙色实心图钉 `pin.fill`。
 - 资料库分类与博主条目共用 18pt 图标列和 8pt 图文间距，文字起点保持一致；缩小视觉内容时保留原有整行点击区域。
 - 博主 ID、文章数量、分数和状态辅助信息：使用 `caption`；数量使用 `monospacedDigit()`，保持紧凑稳定。
-- 文章列表标题：`headline`；作者、类型、发布时间和状态说明：`caption`。序号列至少预留 44pt，保持等宽数字、单行和右对齐，完整展示至 99999，更多位数允许继续扩宽。列表分隔线按整行的左右边界对齐，两端留白保持一致，不按序号文字的实际起点缩进。
+- 文章列表每行只显示序号、标题、作者名称、发布日期和商单标签，不显示 @ID、处理状态和图片 / 视频数量（状态由侧栏分组和阅读区承担）。序号列至少预留 44pt，保持等宽数字、单行和右对齐，完整展示至 99999，更多位数允许继续扩宽。列表分隔线按整行的左右边界对齐，两端留白保持一致，不按序号文字的实际起点缩进。
 - 文章详情标题：26pt 粗体（`MarkXTypography.system(size: 25, weight: .bold)`），行距 4pt，最多 3 行；作者、类型、发布时间：`subheadline` 和 secondary。
 - 任务进度、状态卡和按钮辅助说明：`caption` / `caption2`，避免抢过主内容。
 - 正文 100% 时基础字号为 15pt，独立的文字缩放控制作用于新基础字号，不改写用户已有比例。
@@ -37,14 +37,16 @@
 ### 3.2 颜色
 
 - 视觉语言参考 Fog（`/Applications/Fog.app/Contents/Resources/Web/thread/*.css`）：低饱和中性灰阶、1pt 细描边、wash 浅色底，不用大面积重色。所有界面数值都来自 `MarkXInterface.swift` 中的设计令牌，**界面代码不得再写裸字号、裸间距和裸圆角**。
-- 颜色：`canvas` #F9F9FB / #18191B（列表与面板底色），`surface` #FFFFFF / #212225（卡片），`reading` #FCFCFD / #111113（阅读区），`hairline`（细描边），`wash` / `washStrong`（悬停、按钮、输入框底色），`text2` #646464 / #B4B4B4（次要文字），`text3` #8D8D8D / #6E6E6E（第三级文字、序号、时间）。
+- 颜色：`canvas` #F9F9FB / #18191B（列表与面板底色），`surface` #FFFFFF / #212225（卡片），`reading` #FCFCFD / #111113（阅读区），`hairline`（细描边），`wash` / `washStrong`（按钮、输入框底色），`hover`（列表行与导航项悬停）、`selection`（选中行），`text2` #646464 / #B4B4B4（次要文字），`text3` #8D8D8D / #6E6E6E（第三级文字、序号、时间）。
 - 字号 `MarkXFont`（Fog 字号 +1pt，延续 0.3.4x 界面放大）：`display` 25 medium（欢迎页大标题）、`title` 19 medium（弹窗与面板标题）、`columnTitle` 15 medium（栏标题）、`headline` 14 medium（区块标题、行标题、名字）、`body` 14、`lead` 15（大标题下的导语）、`detail` 13 / `detailStrong` 13 medium（说明、按钮、标签）、`meta` 12 / `metaStrong`（元信息、脚注）、`badge` 11 medium（计数）、`metric` 23 medium 等宽数字。全局只用 regular 与 medium，不用 bold/semibold。
 - 间距 `MarkXSpace`：2 / 4 / 6 / 8 / 12 / 16 / 20 / 24 / 32 / 40 / 48，阅读页边距 `pageSide` 52、`pageTop` 56。圆角 `MarkXRadius`：`control` 6（按钮、标签、输入框、图标块）、`card` 8（卡片、分组、图片、列表容器）、`panel` 12、`hero` 20（欢迎页浮层）。
 - 按钮三级：`.markxPillProminent` / `.markxPill`（32pt 胶囊，仅用于弹窗底栏和页面主操作）；`.markxCompact` / `.markxCompactProminent`（26pt、6pt 圆角 wash 底，用于内容区内的操作，可带灰色图标）；`.markxText`（灰色文字按钮，用于次要或危险的低频操作）。内容区内不使用系统 bordered 按钮。
 - 输入框为 Fog 填充式：`.markxField()`，wash 底色、6pt 圆角、无描边、30–32pt 高。
-- 图标：界面内只用单色线性 SF Symbols（不用 `.fill` 与彩色渲染），默认 `text2`，次要 `text3`；侧栏统一用 `SidebarIcon`，设置行用 `MarkXIconTile`（28pt wash 方块）。弹窗标题不放装饰图标，只有结果类弹窗保留表示成败的小状态图标。状态一律用 `StatusDot`（7pt、2pt 圆角彩色方点）加文字表示，不用实心彩色圆形图标或彩色胶囊。
-- 选中效果：侧栏和文章列表都关闭系统高亮（`ListHighlightSuppressor`），统一用 `markxSelectableRow` 绘制 8pt 圆角 `selection` 浅底矩形，文字保持原色，不使用强调色蓝底。侧栏行最小高度 38pt、行内上下各 4pt，分组标题上方多留 8pt。
-- 列表行：序号 `meta` + `text3` 右对齐 24pt 列，标题 `headline` 最多两行，第二行作者 `text2`、用户名与日期 `text3`，第三行状态点 + 状态文字；行内间距 4pt，上下 10pt；不显示分隔线。
+- 图标：界面内只用单色线性 SF Symbols（不用 `.fill` 与彩色渲染；置顶博主的橙色 `pin.fill` 是唯一例外），默认 `text2`，次要 `text3`；侧栏统一用 `SidebarIcon`，设置行用 `MarkXIconTile`（28pt wash 方块）。弹窗标题不放装饰图标，只有结果类弹窗保留表示成败的小状态图标。状态一律用 `StatusDot`（7pt、2pt 圆角彩色方点）加文字表示，不用实心彩色圆形图标或彩色胶囊。
+- 选中与悬停：侧栏和文章列表都关闭系统高亮，统一用 `markxSelectableRow` 绘制 8pt 圆角矩形：选中为 `selection`，鼠标悬停为更浅的 `hover`，文字保持原色，不使用强调色蓝底。悬停由 `ListRowTracker` 在整行（`NSTableRowView`）上挂追踪区域判断，覆盖行的内边距、行与行之间无空隙、无动画，紧跟鼠标；仅在应用处于前台时显示。列表外的导航项和行用 `.markxHover()`。
+- 侧栏行距约 44pt：sidebar 列表样式会忽略最小行高，所以由行内上下各 10pt（`SidebarMetricBadge.rowPadding`）撑开；资料库、收藏夹、博主、“新建收藏夹…”统一使用 `SidebarIcon` + 8pt 间距，文字左缘对齐。分组标题上方多留 8pt。
+- 列表行：序号 `meta` + `text3` 右对齐 24pt 列，标题 `headline` 最多两行；第二行作者名 `text2`、日期 `text3`，商单标签靠右；行内间距 6pt，上下 10pt；不显示分隔线。
+- 设置与表单：使用 `MarkXGroup`（灰色小标题 + 白底卡片 + 灰色脚注）装 `MarkXRow`（左侧图标块、标题与灰色说明，右侧控件），行间用 `MarkXRowDivider` 细线；开关用小号 switch。设置窗口为左侧导航（196pt，`.bar` 底，选中/悬停圆角矩形）+ 右侧分组卡片，窗口 780 × 580pt。弹窗里的互斥选项（下载来源、下载范围）用 `MarkXChoiceCard` 选项卡片，选中为强调色描边与浅底。
 - 阅读排版（`ArticleTypography`，全部按 em 随缩放）：正文 15pt、行距 0.5em；段落间距 1.15em；文章标题 24pt medium；h1 / h2 / h3 为正文的 1.4 / 1.22 / 1.1 倍，medium，上方 1.6em、下方 0.8em；列表项间距 0.5em、缩进 1.25em、圆点 `text3`、编号常规字重；引用为 2pt 灰线 + `text2` 正文、不用斜体；代码与表格 0.857em、wash 底、6pt 圆角；分隔线 1pt `washStrong`。
 - 窗口工具栏背景隐藏，内容直通顶部。欢迎页使用冷暖渐变底色与毛玻璃卡片。
 

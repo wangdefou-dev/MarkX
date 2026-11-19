@@ -337,9 +337,8 @@ struct RootView: View {
             }
             .buttonStyle(.markxText)
             .help("打开设置（⌘,）")
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, MarkXSpace.xl)
+        .padding(.horizontal, MarkXSpace.m)
         .frame(height: 44)
     }
 
@@ -459,7 +458,7 @@ struct RootView: View {
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 38)
+        .environment(\.defaultMinListRowHeight, 40)
     }
 
     private var collectionsSection: some View {
@@ -487,7 +486,6 @@ struct RootView: View {
                             // Extend past the label margins to the sidebar's selection edges.
                             .padding(.horizontal, -6)
                         }
-                        .listRowInsets(EdgeInsets())
                         .help(collection.name)
                         .tag(AppViewModel.SidebarSelection.collection(collection.id))
                         .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.collection(collection.id))
@@ -507,11 +505,12 @@ struct RootView: View {
                         Spacer(minLength: 0)
                     }
                     .foregroundStyle(MarkXInterface.text2)
-                    .frame(minHeight: 28)
+                    .padding(.vertical, SidebarMetricBadge.rowPadding)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.canEditCollections)
+                .markxSelectableRow(isSelected: false)
         } header: {
             Text("收藏夹").padding(.top, MarkXSpace.m)
         }
@@ -562,19 +561,17 @@ struct RootView: View {
         let localArticleCount = statistics.articleCount(for: creator.id)
         let downloadedArticleCount = statistics.downloadedArticleCount(for: creator.id)
         return sidebarMetricRow {
-            SidebarIcon(systemImage: model.isCreatorPinned(creator)
-                        ? "pin"
-                        : creator.isProtected ? "lock" : "person")
-        } title: {
-            VStack(alignment: .leading, spacing: MarkXSpace.xxs) {
-                Text(creator.displayName)
-                    .font(MarkXFont.body)
-                    .lineLimit(1).help(creator.displayName + " · @" + creator.username)
-                Text("@\(creator.username)")
-                    .font(MarkXFont.meta)
-                    .foregroundStyle(MarkXInterface.text3)
-                    .lineLimit(1)
+            if model.isCreatorPinned(creator) {
+                // Pinned creators keep MarkX's orange pin so they stand out.
+                SidebarIcon(systemImage: "pin.fill", color: .orange)
+            } else {
+                SidebarIcon(systemImage: creator.isProtected ? "lock" : "person")
             }
+        } title: {
+            Text(creator.displayName)
+                .font(MarkXFont.body)
+                .lineLimit(1)
+                .help(creator.displayName + " · @" + creator.username)
         } value: {
             let verifiedEmpty = creator.completeness == .fullArchiveVerified
                 && downloadedArticleCount == 0
@@ -600,8 +597,7 @@ struct RootView: View {
                 localArticleCount: localArticleCount
             ))
         }
-        .frame(minHeight: 44)
-        .padding(.vertical, MarkXSpace.xxs)
+        .padding(.vertical, SidebarMetricBadge.rowPadding)
         .tag(AppViewModel.SidebarSelection.creator(creator.id))
         .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.creator(creator.id))
         .contextMenu {
@@ -1725,6 +1721,8 @@ struct ArticleRow: View {
     let index: Int
     let creator: Creator?
 
+    // Only what helps pick an article: number, title, author, date and the
+    // 商单 mark. Processing state lives in the sidebar groups and the reader.
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
             Text(index, format: .number.grouping(.never))
@@ -1735,7 +1733,7 @@ struct ArticleRow: View {
                 .fixedSize()
                 .accessibilityLabel("第 \(index) 篇")
 
-            VStack(alignment: .leading, spacing: MarkXSpace.xs) {
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
                 Text(article.title)
                     .font(MarkXFont.headline)
                     .foregroundStyle(.primary)
@@ -1744,30 +1742,20 @@ struct ArticleRow: View {
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: MarkXSpace.s) {
-                    if article.isPaidPartnership {
-                        CommercialContentBadge()
-                    }
-                    Text(creator?.displayName ?? "@\(article.authorHandle)")
+                    Text(creator?.displayName ?? article.authorHandle)
                         .foregroundStyle(MarkXInterface.text2)
-                    Text("@\(creator?.username ?? article.authorHandle)")
-                        .foregroundStyle(MarkXInterface.text3)
-                    Spacer(minLength: MarkXSpace.m)
+                        .lineLimit(1)
                     Text(article.publishedAt, style: .date)
                         .foregroundStyle(MarkXInterface.text3)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Spacer(minLength: MarkXSpace.s)
+                    if article.isPaidPartnership {
+                        CommercialContentBadge()
+                    }
                 }
                 .font(MarkXFont.meta)
-                .lineLimit(1)
-                HStack(spacing: MarkXSpace.s) {
-                    StatusDot(color: statusColor)
-                    Text(statusTitle)
-                    if article.imageCount > 0 { Text("· \(article.imageCount) 张图") }
-                    if article.videoCount > 0 { Text("· \(article.videoCount) 个视频") }
-                }
-                .font(MarkXFont.meta)
-                .foregroundStyle(MarkXInterface.text2)
-                .lineLimit(1)
-                .accessibilityElement(children: .combine)
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
@@ -1778,22 +1766,6 @@ struct ArticleRow: View {
         .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
         .contentShape(Rectangle())
     }
-
-    private var hasLayoutLimit: Bool {
-        article.warnings.contains {
-            $0.contains("未提供段落级富文本块") || $0.contains("精确插入位置") || $0.contains("富文本样式可能不完整")
-        }
-    }
-
-    private var statusTitle: String {
-        if article.pipelineState == .committed, hasLayoutLimit { return "文字图片完整 · 排版受限" }
-        return article.pipelineState.displayName
-    }
-
-    private var statusColor: Color {
-        if article.pipelineState == .subscriptionRequired { return .purple }
-        return article.pipelineState == .committed && !hasLayoutLimit ? .green : .orange
-    }
 }
 
 private struct SidebarCountRow: View {
@@ -1803,12 +1775,12 @@ private struct SidebarCountRow: View {
     var body: some View {
         // Native sidebar row and badge (macOS hides a zero badge). Icons are
         // one monochrome outline set in secondary grey, as in Fog's sidebar.
-        Label {
-            Text(title)
-        } icon: {
+        // Same icon column and gap as creator rows, so every title lines up.
+        HStack(spacing: MarkXSpace.m) {
             SidebarIcon(systemImage: systemImage)
+            Text(title)
         }
-        .padding(.vertical, MarkXSpace.xs)
+        .padding(.vertical, SidebarMetricBadge.rowPadding)
         .badge(count)
     }
 }
@@ -1821,7 +1793,9 @@ private struct SidebarFooterLabelStyle: LabelStyle {
         }
         .font(MarkXFont.body)
         .padding(.vertical, MarkXSpace.s)
-        .contentShape(Rectangle())
+        .padding(.horizontal, MarkXSpace.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .markxHover()
     }
 }
 
@@ -1866,6 +1840,9 @@ private struct SidebarMetricRow<Icon: View, Title: View, Value: View>: View {
 
 private struct SidebarMetricBadge: View {
     static let iconColumn: CGFloat = 18
+    /// Vertical padding inside every sidebar row. The sidebar list style
+    /// ignores the minimum row height, so this sets the ~44pt row pitch.
+    static let rowPadding: CGFloat = 10
     static let columnWidth: CGFloat = 56
 
     let text: String

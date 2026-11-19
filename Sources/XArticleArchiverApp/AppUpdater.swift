@@ -372,30 +372,26 @@ struct SoftwareUpdateView: View {
     }
 }
 
-/// Settings rows for the 通用 pane.
+/// Settings group for the 通用 pane.
 struct SoftwareUpdateSettingsSection: View {
     @ObservedObject private var updater = AppUpdater.shared
     @AppStorage(AppUpdater.automaticChecksKey) private var automaticChecks = true
 
     var body: some View {
-        Section {
-            Toggle("自动检查更新", isOn: $automaticChecks)
-            LabeledContent {
+        MarkXGroup(title: "软件更新",
+                   footer: "开启后 MarkX 会定期查看官网是否有新版本，发现后提醒你在应用内一键安装。") {
+            MarkXRow(title: "自动检查更新", detail: "有新版本时在应用内提醒。", symbol: "arrow.triangle.2.circlepath") {
+                Toggle("自动检查更新", isOn: $automaticChecks)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            MarkXRowDivider()
+            MarkXRow(title: "当前版本 \(updater.currentVersion)（\(updater.currentBuild)）",
+                     detail: updater.lastChecked.map { "上次检查：\($0.formatted(date: .abbreviated, time: .shortened))" } ?? "尚未检查",
+                     symbol: "shippingbox") {
                 Button("立即检查") { updater.check(userInitiated: true) }
                     .buttonStyle(.markxCompact)
                     .disabled(!updater.isSupported)
-            } label: {
-                Text("当前版本 \(updater.currentVersion)（\(updater.currentBuild)）")
-                if let lastChecked = updater.lastChecked {
-                    Text("上次检查：\(lastChecked.formatted(date: .abbreviated, time: .shortened))")
-                }
             }
-        } header: {
-            Text("软件更新")
-        } footer: {
-            Text("开启后 MarkX 会定期查看官网是否有新版本，发现后提醒你在应用内一键安装。")
-                .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

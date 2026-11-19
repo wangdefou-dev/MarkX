@@ -81,6 +81,9 @@ enum MarkXInterface {
     /// Selected list row (sidebar and article list): stronger than hover so it
     /// reads as a clear rectangle in both appearances.
     static let selection = dynamic(light: 0x00003B, lightAlpha: 0.10, dark: 0xD8F4F6, darkAlpha: 0.13)
+    /// Pointer-over row: half way between nothing and `selection`, drawn
+    /// without animation so it tracks the mouse.
+    static let hover = dynamic(light: 0x000033, lightAlpha: 0.05, dark: 0xDDEAF8, darkAlpha: 0.065)
     /// Pressed wash and filled input background.
     static let washStrong = dynamic(light: 0x00002D, lightAlpha: 0.09, dark: 0xD3EDF8, darkAlpha: 0.11)
     /// Secondary and tertiary text (Fog --text2 / --text3).
@@ -237,6 +240,166 @@ extension View {
             .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
             .frame(minHeight: 30)
             .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
+    }
+}
+
+/// Settings group (macOS System Settings layout in Fog's palette): a small
+/// grey heading, a card of rows separated by inset hairlines, a grey footnote.
+/// Put `MarkXRowDivider()` between rows.
+struct MarkXGroup<Content: View>: View {
+    var title: String? = nil
+    var footer: String? = nil
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MarkXSpace.m) {
+            if let title {
+                Text(title)
+                    .font(MarkXFont.detailStrong)
+                    .foregroundStyle(MarkXInterface.text2)
+                    .padding(.horizontal, MarkXSpace.xs)
+            }
+            VStack(alignment: .leading, spacing: 0) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .markxSurface()
+            if let footer {
+                Text(footer)
+                    .font(MarkXFont.meta)
+                    .foregroundStyle(MarkXInterface.text3)
+                    .lineSpacing(MarkXSpace.xxs)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, MarkXSpace.xs)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One settings row: optional icon tile, title and grey description on the
+/// left, the control on the right.
+struct MarkXRow<Accessory: View>: View {
+    let title: String
+    var detail: String? = nil
+    var symbol: String? = nil
+    var symbolColor: Color = MarkXInterface.text2
+    @ViewBuilder let accessory: Accessory
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MarkXSpace.l) {
+            if let symbol { MarkXIconTile(systemImage: symbol, color: symbolColor) }
+            VStack(alignment: .leading, spacing: MarkXSpace.xxs + 1) {
+                Text(title).font(MarkXFont.body)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(MarkXFont.detail)
+                        .foregroundStyle(MarkXInterface.text2)
+                        .lineSpacing(MarkXSpace.xxs)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            accessory
+        }
+        .padding(.horizontal, MarkXSpace.xl)
+        .padding(.vertical, MarkXSpace.l)
+        .frame(minHeight: 48)
+    }
+}
+
+extension MarkXRow where Accessory == EmptyView {
+    init(title: String, detail: String? = nil, symbol: String? = nil, symbolColor: Color = MarkXInterface.text2) {
+        self.init(title: title, detail: detail, symbol: symbol, symbolColor: symbolColor) { EmptyView() }
+    }
+}
+
+/// Free-form content inside a `MarkXGroup`, with the row padding.
+struct MarkXRowContent<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MarkXSpace.m) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, MarkXSpace.xl)
+            .padding(.vertical, MarkXSpace.l)
+    }
+}
+
+struct MarkXRowDivider: View {
+    var body: some View {
+        Rectangle().fill(MarkXInterface.hairline).frame(height: 1).padding(.leading, MarkXSpace.xl)
+    }
+}
+
+/// A selectable option card (source and range pickers in sheets): icon,
+/// title, one grey line; the selected card gets an accent outline and tint.
+struct MarkXChoiceCard: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                HStack(spacing: MarkXSpace.s) {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(MarkXInterface.text2))
+                        .frame(width: MarkXIcon.rowWidth)
+                    Text(title).font(MarkXFont.headline)
+                    Spacer(minLength: 0)
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(MarkXFont.body)
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(MarkXInterface.text3))
+                }
+                Text(detail)
+                    .font(MarkXFont.meta)
+                    .foregroundStyle(MarkXInterface.text2)
+                    .lineSpacing(MarkXSpace.xxs)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(MarkXSpace.l)
+            .background(
+                RoundedRectangle(cornerRadius: MarkXRadius.card)
+                    .fill(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.08))
+                          : isHovered ? AnyShapeStyle(MarkXInterface.hover) : AnyShapeStyle(MarkXInterface.surface))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: MarkXRadius.card)
+                    .strokeBorder(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.7)) : AnyShapeStyle(MarkXInterface.hairline),
+                                  lineWidth: isSelected ? 1.5 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// A pointer-following wash for plain buttons and rows outside lists.
+struct MarkXHoverBackground: ViewModifier {
+    var isSelected = false
+    var cornerRadius: CGFloat = MarkXRadius.card
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(isSelected ? MarkXInterface.selection : isHovered ? MarkXInterface.hover : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .onHover { isHovered = $0 }
+    }
+}
+
+extension View {
+    func markxHover(isSelected: Bool = false, cornerRadius: CGFloat = MarkXRadius.card) -> some View {
+        modifier(MarkXHoverBackground(isSelected: isSelected, cornerRadius: cornerRadius))
     }
 }
 

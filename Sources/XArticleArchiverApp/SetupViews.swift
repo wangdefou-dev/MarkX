@@ -34,17 +34,15 @@ struct AddCreatorsView: View {
             MarkXPaneHeader(title: model.downloadSheetPrefill.isEmpty ? "开始下载文章" : "重新拉取文章",
                 subtitle: "选择来源与下载范围，完整文章会保存在你的 Mac。")
             ScrollView {
-                VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
-                    Picker("添加方式", selection: $entryMode) {
-                        ForEach(EntryMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .labelsHidden().pickerStyle(.segmented)
-                    .help("选择输入单个博主、多个博主，或 X Article 链接")
+                VStack(alignment: .leading, spacing: MarkXSpace.x3) {
+                    sourceSection
                     inputSection
                     if entryMode != .articleLinks { rangeSection }
                     MarkXInfoLine(symbol: "checkmark.shield", text: "仅下载 X Article，保留正文排版、图片与视频。")
+                        .padding(.horizontal, MarkXSpace.xs)
                 }
-                .padding(MarkXInterface.inset)
+                .padding(.horizontal, MarkXInterface.inset)
+                .padding(.bottom, MarkXInterface.inset)
             }
             MarkXFooter(note: "已有完整归档默认跳过") {
                 Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
@@ -57,7 +55,7 @@ struct AddCreatorsView: View {
         }
         .background(MarkXInterface.canvas)
         .font(MarkXFont.body)
-        .frame(width: 640, height: MarkXInterface.sheetHeight(610))
+        .frame(width: 660, height: MarkXInterface.sheetHeight(660))
         .onAppear {
             input = model.downloadSheetPrefill
             entryMode = model.downloadSheetUsesArticleLinks ? .articleLinks : .single
@@ -70,42 +68,78 @@ struct AddCreatorsView: View {
         }
     }
 
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(MarkXFont.detailStrong)
+            .foregroundStyle(MarkXInterface.text2)
+            .padding(.horizontal, MarkXSpace.xs)
+    }
+
+    private var sourceSection: some View {
+        VStack(alignment: .leading, spacing: MarkXSpace.m) {
+            sectionLabel("下载来源")
+            HStack(alignment: .top, spacing: MarkXSpace.m) {
+                MarkXChoiceCard(title: "单个博主", detail: "下载一位博主的 X Article。",
+                                systemImage: "person", isSelected: entryMode == .single) { entryMode = .single }
+                MarkXChoiceCard(title: "批量博主", detail: "每行一位，一次加入多位博主。",
+                                systemImage: "person.2", isSelected: entryMode == .batch) { entryMode = .batch }
+                MarkXChoiceCard(title: "文章链接", detail: "粘贴一条或多条文章链接。",
+                                systemImage: "link", isSelected: entryMode == .articleLinks) { entryMode = .articleLinks }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     @ViewBuilder private var inputSection: some View {
         switch entryMode {
         case .single:
-            MarkXSection(title: "博主主页", detail: "输入用户名或 X 主页链接。") {
-                StrictSingleLineTextField(text: Binding(get: { input }, set: { input = SingleCreatorInputPolicy.sanitize($0) }),
-                    placeholder: "@username 或 https://x.com/username")
-                    .frame(height: 20)
-                    .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
-                    .frame(height: 32)
-                    .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
-                    .help("只接受一行；粘贴多行时保留第一条非空内容")
-                if let handle = parsedHandles.first {
-                    MarkXInfoLine(symbol: "person.crop.circle.badge.checkmark", text: "已识别 @\(handle)")
+            MarkXGroup(title: "博主主页", footer: "输入用户名或 X 主页链接，只接受一行。") {
+                MarkXRowContent {
+                    StrictSingleLineTextField(text: Binding(get: { input }, set: { input = SingleCreatorInputPolicy.sanitize($0) }),
+                        placeholder: "@username 或 https://x.com/username")
+                        .frame(height: 20)
+                        .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
+                        .frame(height: 34)
+                        .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
+                        .help("只接受一行；粘贴多行时保留第一条非空内容")
+                    recognizedLine(parsedHandles.first.map { "已识别 @\($0)" } ?? "等待输入博主",
+                                   ok: parsedHandles.count == 1)
                 }
             }
         case .batch:
-            MarkXSection(title: "博主列表", detail: "每行一位，支持 @用户名或主页链接。") {
-                multilineInput(placeholder: "@username\nhttps://x.com/another_creator")
-                Text("已识别 \(parsedHandles.count) 位博主")
-                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).monospacedDigit()
-            }
-        case .articleLinks:
-            MarkXSection(title: "X Article 链接", detail: "每行一条，最多 500 条；重复链接会自动合并。") {
-                multilineInput(placeholder: "https://x.com/username/status/…")
-                Text("已识别 \(parsedArticleLinks.count) 条链接")
-                    .font(MarkXFont.meta).monospacedDigit()
-                    .foregroundStyle(parsedArticleLinks.count > 500 ? Color.red : MarkXInterface.text2)
-                Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
-                Toggle("重新获取已归档文章", isOn: $refreshExistingLinks)
-                    .font(MarkXFont.detail).help("重新打开原页并校验完整排版，手工修改的 Markdown 受到保护")
-                if refreshExistingLinks {
-                    Text("校验成功后更新本地归档，手工修改的正文不会被直接覆盖。")
-                        .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
+            MarkXGroup(title: "博主列表", footer: "每行一位，支持 @用户名或主页链接。") {
+                MarkXRowContent {
+                    multilineInput(placeholder: "@username\nhttps://x.com/another_creator")
+                    recognizedLine("已识别 \(parsedHandles.count) 位博主", ok: !parsedHandles.isEmpty)
                 }
             }
+        case .articleLinks:
+            MarkXGroup(title: "X Article 链接", footer: "每行一条，最多 500 条；重复链接会自动合并。") {
+                MarkXRowContent {
+                    multilineInput(placeholder: "https://x.com/username/status/…")
+                    recognizedLine("已识别 \(parsedArticleLinks.count) 条链接",
+                                   ok: !parsedArticleLinks.isEmpty && parsedArticleLinks.count <= 500,
+                                   warning: parsedArticleLinks.count > 500)
+                }
+                MarkXRowDivider()
+                MarkXRow(title: "重新获取已归档文章",
+                         detail: refreshExistingLinks ? "校验成功后更新本地归档，手工修改的正文不会被直接覆盖。"
+                                                      : "默认跳过已经完整归档的文章。") {
+                    Toggle("重新获取已归档文章", isOn: $refreshExistingLinks)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                .help("重新打开原页并校验完整排版，手工修改的 Markdown 受到保护")
+            }
         }
+    }
+
+    private func recognizedLine(_ text: String, ok: Bool, warning: Bool = false) -> some View {
+        HStack(spacing: MarkXSpace.s) {
+            StatusDot(color: warning ? .red : ok ? .green : MarkXInterface.text3)
+            Text(text).monospacedDigit()
+        }
+        .font(MarkXFont.meta)
+        .foregroundStyle(warning ? Color.red : MarkXInterface.text2)
     }
 
     private func multilineInput(placeholder: String) -> some View {
@@ -124,33 +158,40 @@ struct AddCreatorsView: View {
     }
 
     private var rangeSection: some View {
-        MarkXSection(title: "下载范围") {
-            Picker("归档范围", selection: $mode) {
-                ForEach(ArchiveMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+        VStack(alignment: .leading, spacing: MarkXSpace.m) {
+            sectionLabel("下载范围")
+            HStack(alignment: .top, spacing: MarkXSpace.m) {
+                MarkXChoiceCard(title: "最近文章", detail: "每位博主下载最近发布的若干篇，速度最快。",
+                                systemImage: "clock", isSelected: mode == .recentWindow) { mode = .recentWindow }
+                MarkXChoiceCard(title: "全部文章", detail: "扫描到列表底部，下载全部可见文章。",
+                                systemImage: "square.stack", isSelected: mode == .fullArchive) { mode = .fullArchive }
             }
-            .labelsHidden().pickerStyle(.segmented).help("选择最近文章或全部可见文章")
+            .fixedSize(horizontal: false, vertical: true)
             if mode == .recentWindow {
-                HStack {
-                    Text("每位博主").font(MarkXFont.detail)
-                    Spacer()
-                    Menu("预设") {
-                        ForEach([5, 10, 20, 50, 100], id: \.self) { value in
-                            Button("最近 \(value) 篇") { articleLimit = value }
+                MarkXGroup {
+                    MarkXRow(title: "每位博主", detail: "最多 100 篇") {
+                        HStack(spacing: MarkXSpace.s) {
+                            ForEach([5, 10, 20, 50, 100], id: \.self) { value in
+                                Button("\(value)") { articleLimit = value }
+                                    .buttonStyle(MarkXCompactButtonStyle(prominent: articleLimit == value))
+                                    .monospacedDigit()
+                                    .help("最近 \(value) 篇")
+                            }
+                            Stepper(value: $articleLimit, in: 1...100) {
+                                Text("\(articleLimit) 篇").monospacedDigit().frame(minWidth: 44, alignment: .trailing)
+                            }
+                            .fixedSize().help("每位博主下载最近 1–100 篇文章")
+                            .padding(.leading, MarkXSpace.xs)
                         }
                     }
-                    .fixedSize().help("快速选择每位博主的文章数量")
-                    Stepper(value: $articleLimit, in: 1...100) {
-                        Text("\(articleLimit) 篇").monospacedDigit().frame(minWidth: 44, alignment: .trailing)
+                    MarkXRowDivider()
+                    MarkXRow(title: "同时刷新线上文章总数",
+                             detail: resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数也可稍后单独刷新。") {
+                        Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     }
-                    .fixedSize().help("每位博主下载最近 1–100 篇文章")
+                    .help("扫描完整列表来更新总数，下载范围仍为最近指定数量")
                 }
-                Divider()
-                Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
-                    .font(MarkXFont.detail).help("扫描完整列表来更新总数，下载范围仍为最近指定数量")
-                Text(resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数也可稍后单独刷新。")
-                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-            } else {
-                MarkXInfoLine(symbol: "text.page", text: "扫描到列表底部，下载全部可见文章，不受 100 篇限制。")
             }
         }
     }
@@ -319,15 +360,17 @@ struct ConnectionSetupView: View {
             MarkXPaneHeader(title: "连接与存储", subtitle: "管理浏览器会话、归档位置，以及图片和视频的保存方式。")
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
-                        MarkXSection(title: "归档位置", detail: "Markdown、原图、视频与资料库会一起保存。") {
+                    VStack(alignment: .leading, spacing: MarkXSpace.x3) {
+                        MarkXGroup(title: "归档位置", footer: "Markdown、原图、视频与资料库会一起保存。") {
                             ArchiveFolderRow()
                         }.id("archive-directory")
-                        MarkXSection(title: "浏览器与 X 登录") { BrowserConnectionConfiguration() }.id("browser-session")
-                        MarkXSection(title: "媒体存储") { MediaStorageConfiguration() }.id("image-host")
+                        BrowserConnectionConfiguration().id("browser-session")
+                        MediaStorageConfiguration().id("image-host")
                         MarkXInfoLine(symbol: "lock.shield", text: "正文在本机转换，访问密钥仅保存在 macOS 钥匙串。")
+                            .padding(.horizontal, MarkXSpace.xs)
                     }
-                    .padding(MarkXInterface.inset)
+                    .padding(.horizontal, MarkXInterface.inset)
+                    .padding(.bottom, MarkXInterface.inset)
                 }
                 .onAppear {
                     let target: String? = switch model.connectionSetupTarget {
@@ -356,65 +399,86 @@ struct ConnectionSetupView: View {
     }
 }
 
+/// Browser session settings as one group of rows: which browser, its state,
+/// and one action per row.
 private struct BrowserConnectionConfiguration: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var isChecking = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MarkXSpace.l) {
-            Picker("使用浏览器", selection: $model.preferredBrowserID) {
-                Text("自动查找已登录的配置").tag("automatic")
-                ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
+        MarkXGroup(title: "浏览器与 X 登录",
+                   footer: "兼容 Chrome、Edge、Brave、Arc、Vivaldi、Opera、Chromium、夸克、豆包及 Firefox。仅读取 X 会话，不保存密码或 Cookie。Safari 暂不支持自动导入。") {
+            MarkXRow(title: "使用浏览器", detail: "MarkX 从这里读取你的 X 登录状态。", symbol: "globe") {
+                Picker("使用浏览器", selection: $model.preferredBrowserID) {
+                    Text("自动查找").tag("automatic")
+                    ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
+                }
+                .labelsHidden().fixedSize()
+                .disabled(isChecking)
             }
-            .disabled(isChecking)
-            MarkXInfoLine(symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
-                text: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
-                color: model.hasBrowserSessionData ? .green : .orange)
+            MarkXRowDivider()
+            MarkXRow(title: model.hasBrowserSessionData ? "已找到 X 登录" : "未找到 X 登录",
+                     detail: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
+                     symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
+                     symbolColor: model.hasBrowserSessionData ? .green : .orange) {
+                Button("刷新", systemImage: "arrow.clockwise") { model.refreshBrowserStatus() }
+                    .buttonStyle(.markxCompact)
+                    .disabled(model.isRefreshingBrowserStatus || isChecking)
+                    .help("重新检查全部受支持的浏览器与配置")
+            }
             if let browser = model.browserNameNeedingAccess {
-                VStack(alignment: .leading, spacing: MarkXSpace.m) {
-                    Text("macOS 默认不允许其他应用读取 \(browser) 的数据。点下面的按钮，在弹出的窗口里直接点「允许读取」即可，只需授权一次。")
-                        .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-                        .lineSpacing(MarkXSpace.xxs)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("授权读取 \(browser)…") { model.chooseBrowserDataDirectory() }
+                MarkXRowDivider()
+                MarkXRow(title: "授权读取 \(browser)",
+                         detail: "macOS 默认不允许其他应用读取 \(browser) 的数据。点按钮后在弹出的窗口里选择「允许读取」，只需授权一次。",
+                         symbol: "key", symbolColor: .orange) {
+                    Button("授权…") { model.chooseBrowserDataDirectory() }
                         .buttonStyle(.markxCompactProminent)
                         .disabled(isChecking)
                 }
             }
-            MarkXFlowLayout(spacing: MarkXSpace.m) {
-                Button(isChecking ? "正在验证…" : "验证会话读取", systemImage: "checkmark.shield") {
+            MarkXRowDivider()
+            MarkXRow(title: "验证会话读取",
+                     detail: model.browserSessionCheckMessage ?? "仅在本机解密并验证 X 登录数据，不发起下载，也不修改浏览器。",
+                     symbol: "checkmark.shield") {
+                Button(isChecking ? "正在验证…" : "验证") {
                     isChecking = true
                     Task { await model.verifyBrowserSession(); isChecking = false }
                 }
+                .buttonStyle(.markxCompact)
                 .disabled(isChecking || model.isRefreshingBrowserStatus)
-                .help("仅在本机解密并验证 X 登录数据，不发起下载或修改浏览器")
-                Button("刷新状态", systemImage: "arrow.clockwise") { model.refreshBrowserStatus() }
-                    .disabled(model.isRefreshingBrowserStatus || isChecking)
-                    .help("重新检查全部受支持的浏览器与配置")
-                Button("选择其他数据目录…", systemImage: "folder") { model.chooseBrowserDataDirectory() }
-                    .disabled(isChecking)
-                    .help("为自定义目录或 macOS 读取受限的目录保存访问授权")
-                Button("在浏览器打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
             }
-            .buttonStyle(.markxCompact)
-            if let message = model.browserSessionCheckMessage {
-                Text(message).font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).textSelection(.enabled)
+            .textSelection(.enabled)
+            MarkXRowDivider()
+            MarkXRow(title: "其他数据目录", detail: "为自定义目录或 macOS 读取受限的目录保存访问授权。", symbol: "folder") {
+                Button("选择…") { model.chooseBrowserDataDirectory() }
+                    .buttonStyle(.markxCompact)
+                    .disabled(isChecking)
+            }
+            MarkXRowDivider()
+            MarkXRow(title: "登录 X", detail: "还没登录时，先在浏览器里打开 X 完成登录。", symbol: "person.crop.circle") {
+                Button("打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
+                    .buttonStyle(.markxCompact)
             }
             if !model.browserSessionProbe.profiles.isEmpty {
-                DisclosureGroup("检测到的配置（\(model.browserSessionProbe.profiles.count)）") {
-                    VStack(alignment: .leading, spacing: MarkXSpace.s) {
-                        ForEach(model.browserSessionProbe.profiles) { profile in
-                            Text(profile.description + (profile.hasLoginCookies ? " · 有 X 登录数据" : " · 未检测到 X 登录数据"))
+                MarkXRowDivider()
+                MarkXRowContent {
+                    DisclosureGroup("检测到的配置（\(model.browserSessionProbe.profiles.count)）") {
+                        VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                            ForEach(model.browserSessionProbe.profiles) { profile in
+                                HStack(spacing: MarkXSpace.s) {
+                                    StatusDot(color: profile.hasLoginCookies ? .green : MarkXInterface.text3)
+                                    Text(profile.description + (profile.hasLoginCookies ? " · 有 X 登录数据" : " · 未检测到 X 登录数据"))
+                                }
                                 .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
+                            }
                         }
-                    }.padding(.top, MarkXSpace.m)
-                }.font(MarkXFont.detail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, MarkXSpace.m)
+                    }
+                    .font(MarkXFont.detail)
+                }
             }
-            Text("兼容 Chrome、Edge、Brave、Arc、Vivaldi、Opera、Chromium、夸克、豆包及 Firefox。仅读取 X 会话，不保存密码或 Cookie。Safari 暂不支持自动导入。")
-                .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text3)
-                .lineSpacing(MarkXSpace.xxs)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .onAppear { model.refreshBrowserStatus() }
         .onChange(of: scenePhase) { _, phase in
@@ -428,22 +492,32 @@ private struct ArchiveFolderRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXIconTile(systemImage: "folder")
-            VStack(alignment: .leading, spacing: MarkXSpace.xxs) {
-                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择归档目录").font(MarkXFont.headline)
-                Text(model.archiveRoot?.path ?? "选择一个你方便管理和备份的文件夹")
-                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-                    .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: MarkXSpace.xxs + 1) {
+                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择归档目录").font(MarkXFont.body)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(model.archiveRoot.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "选择一个你方便管理和备份的文件夹")
+                    .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
+                    .lineLimit(1).truncationMode(.middle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .help(model.archiveRoot?.path ?? "尚未选择")
-            Button(model.archiveRoot == nil ? "选择目录…" : "更换…") { model.chooseArchiveFolder() }
-                .buttonStyle(.markxCompact)
-                .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                .help("同步现有资料后切换归档位置，旧目录保留")
+            HStack(spacing: MarkXSpace.s) {
+                if let root = model.archiveRoot {
+                    Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([root]) }
+                        .buttonStyle(.markxCompact)
+                }
+                Button(model.archiveRoot == nil ? "选择目录…" : "更换…") { model.chooseArchiveFolder() }
+                    .buttonStyle(.markxCompact)
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                    .help("同步现有资料后切换归档位置，旧目录保留")
+            }
         }
+        .padding(.horizontal, MarkXSpace.xl)
+        .padding(.vertical, MarkXSpace.l)
     }
 }
 
+/// Media storage as one group: the choice, its configuration, its state.
 struct MediaStorageConfiguration: View {
     @EnvironmentObject private var model: AppViewModel
     @State private var accessKey = ""
@@ -454,48 +528,57 @@ struct MediaStorageConfiguration: View {
     @State private var confirmsRemovingKeys = false
     private var isTesting: Bool { isTestingUPic || isTestingS3 }
 
+    private var choiceDetail: String {
+        switch model.imageHostChoice {
+        case .local: "原图和视频保存在归档目录内，整个目录可以一起移动或备份。"
+        case .uPic: "使用 uPic 当前的默认图床，原图和视频仍保留本地备份。"
+        case .s3: "上传到你的 S3 兼容存储（如 Cloudflare R2），本地仍保留备份。"
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: MarkXSpace.xl) {
-            Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { model.selectImageHost($0) })) {
-                Text("本地存储").tag(AppViewModel.ImageHostChoice.local)
-                Text("本地 + uPic").tag(AppViewModel.ImageHostChoice.uPic)
-                Text("S3 / R2").tag(AppViewModel.ImageHostChoice.s3)
-            }
-            .labelsHidden().pickerStyle(.segmented).disabled(isTesting)
-            .help("选择本地保存，或同时使用外部媒体存储")
-            Group {
-                switch model.imageHostChoice {
-                case .local:
-                    MarkXInfoLine(symbol: "internaldrive", text: "无需额外配置。原图和视频保存在归档目录内，整个目录可以一起移动或备份。")
-                case .uPic:
-                    VStack(alignment: .leading, spacing: MarkXSpace.l) {
-                        Text("使用 uPic 当前选择的默认图床，原图和视频仍保留本地备份。")
-                            .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                        MarkXInfoLine(symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
-                            text: model.upicCapability.detail, color: model.upicCapability.isAvailable ? .green : .orange)
-                        Button(isTestingUPic ? "正在验证…" : "验证 uPic 连接") {
-                            isTestingUPic = true
-                            Task { _ = await model.testUPic(); isTestingUPic = false }
-                        }
-                        .buttonStyle(.markxCompact)
-                        .disabled(!model.upicCapability.isAvailable || isTesting)
-                        .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
-                        Text("验证会上传一张无隐私测试图片；本应用不读取 uPic 密钥。")
-                            .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-                    }
-                case .s3: s3Fields
+        MarkXGroup(title: "媒体存储") {
+            MarkXRow(title: "存储方式", detail: choiceDetail, symbol: "photo.on.rectangle") {
+                Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { model.selectImageHost($0) })) {
+                    Text("本地").tag(AppViewModel.ImageHostChoice.local)
+                    Text("uPic").tag(AppViewModel.ImageHostChoice.uPic)
+                    Text("S3 / R2").tag(AppViewModel.ImageHostChoice.s3)
                 }
+                .labelsHidden().pickerStyle(.segmented).fixedSize().disabled(isTesting)
+                .help("选择本地保存，或同时使用外部媒体存储")
             }
-            Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
+            switch model.imageHostChoice {
+            case .local:
+                EmptyView()
+            case .uPic:
+                MarkXRowDivider()
+                MarkXRow(title: model.upicCapability.isAvailable ? "已找到 uPic" : "未找到 uPic",
+                         detail: model.upicCapability.detail + " 验证会上传一张无隐私测试图片；本应用不读取 uPic 密钥。",
+                         symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
+                         symbolColor: model.upicCapability.isAvailable ? .green : .orange) {
+                    Button(isTestingUPic ? "正在验证…" : "验证连接") {
+                        isTestingUPic = true
+                        Task { _ = await model.testUPic(); isTestingUPic = false }
+                    }
+                    .buttonStyle(.markxCompact)
+                    .disabled(!model.upicCapability.isAvailable || isTesting)
+                    .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
+                }
+            case .s3:
+                MarkXRowDivider()
+                MarkXRowContent { s3Fields }
+            }
+            MarkXRowDivider()
             HStack(spacing: MarkXSpace.m) {
                 if isTesting { ProgressView().controlSize(.mini) }
-                else {
-                    StatusDot(color: model.imageHostVerified ? .green : .orange)
-                }
+                else { StatusDot(color: model.imageHostVerified ? .green : .orange) }
                 Text(isTesting ? "正在检查媒体上传与公开访问…" : model.imageHostDetail)
-                    .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
+                    .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, MarkXSpace.xl)
+            .padding(.vertical, MarkXSpace.l)
         }
         .confirmationDialog("移除已保存的 S3 / R2 密钥？", isPresented: $confirmsRemovingKeys, titleVisibility: .visible) {
             Button("移除密钥", role: .destructive) { model.removeS3Credentials() }
@@ -563,86 +646,143 @@ struct MediaStorageConfiguration: View {
     }
 }
 
+/// Settings window: a quiet navigation column on the left (Fog / System
+/// Settings layout) and grouped cards of rows on the right.
 struct SettingsView: View {
-    @EnvironmentObject private var model: AppViewModel
-    @State private var tab = 0
+    enum Pane: String, CaseIterable, Identifiable {
+        case general, x, storage, about
+        var id: Self { self }
 
-    // HIG settings: native toolbar tabs and grouped forms; the tab name is the
-    // title, so panes don't repeat it in a custom header.
-    var body: some View {
-        TabView(selection: $tab) {
-            Form {
-                Section {
-                    ArchiveFolderRow()
-                } header: {
-                    Text("本地资料库")
-                } footer: {
-                    Text("Markdown、原图、视频与资料库数据库都保存在这个文件夹。")
-                        .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                SoftwareUpdateSettingsSection()
+        var title: String {
+            switch self {
+            case .general: "通用"
+            case .x: "X 登录"
+            case .storage: "存储"
+            case .about: "隐私与关于"
             }
-            .formStyle(.grouped)
-            .tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
-
-            Form {
-                Section {
-                    BrowserConnectionConfiguration()
-                } header: {
-                    Text("浏览器与 X 登录")
-                } footer: {
-                    Text("下载在后台进行，文章只保存在你选择的位置。")
-                        .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .formStyle(.grouped)
-            .tabItem { Label("X 登录", systemImage: "person.badge.key") }.tag(1)
-
-            Form {
-                Section("媒体存储") { MediaStorageConfiguration() }
-                Section {
-                    LabeledContent {
-                        Button("整理…") { model.cleanVerifiedMediaCache() }
-                            .buttonStyle(.markxCompact)
-                            .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
-                            .help("核对内容后移除已有完整备份的重复缓存")
-                    } label: {
-                        Text("重复媒体缓存")
-                        Text("保留完整媒体备份，只移除已经重复保存的隐藏缓存。")
-                    }
-                } header: {
-                    Text("缓存管理")
-                }
-            }
-            .formStyle(.grouped)
-            .tabItem { Label("存储", systemImage: "externaldrive") }.tag(2)
-
-            Form {
-                Section("隐私") {
-                    privacyRow("本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
-                    privacyRow("会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
-                    privacyRow("外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
-                }
-                Section("关于 MarkX") {
-                    LabeledContent("版本", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "开发版本") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"))")
-                    LabeledContent("版权", value: "© 2026 得否")
-                }
-            }
-            .formStyle(.grouped)
-            .tabItem { Label("隐私与关于", systemImage: "hand.raised") }.tag(3)
         }
-        .font(MarkXFont.body)
-        .frame(width: 640, height: 520)
+
+        var subtitle: String {
+            switch self {
+            case .general: "资料库位置与软件更新。"
+            case .x: "MarkX 通过你本机浏览器里的 X 登录来下载文章。"
+            case .storage: "图片和视频的保存方式，以及缓存整理。"
+            case .about: "MarkX 如何处理你的数据。"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .general: "gearshape"
+            case .x: "person.badge.key"
+            case .storage: "externaldrive"
+            case .about: "hand.raised"
+            }
+        }
     }
 
-    private func privacyRow(_ title: String, detail: String, symbol: String) -> some View {
-        Label {
-            Text(title)
-            Text(detail)
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(.secondary)
+    @EnvironmentObject private var model: AppViewModel
+    @State private var pane: Pane = .general
+
+    var body: some View {
+        HStack(spacing: 0) {
+            navigation
+            Rectangle().fill(MarkXInterface.hairline).frame(width: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: MarkXSpace.x3) {
+                    VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                        Text(pane.title).font(MarkXFont.title)
+                        Text(pane.subtitle).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
+                    }
+                    .padding(.horizontal, MarkXSpace.xs)
+                    content
+                }
+                .padding(.horizontal, MarkXSpace.x4)
+                .padding(.top, MarkXSpace.x3)
+                .padding(.bottom, MarkXSpace.x4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .id(pane)
+            .background(MarkXInterface.canvas)
+        }
+        .font(MarkXFont.body)
+        .frame(width: 780, height: 580)
+        .navigationTitle(pane.title)
+    }
+
+    private var navigation: some View {
+        VStack(alignment: .leading, spacing: MarkXSpace.xxs) {
+            ForEach(Pane.allCases) { item in
+                Button { pane = item } label: {
+                    HStack(spacing: MarkXSpace.m + MarkXSpace.xxs) {
+                        Image(systemName: item.symbol)
+                            .foregroundStyle(MarkXInterface.text2)
+                            .frame(width: MarkXIcon.rowWidth)
+                        Text(item.title)
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 0)
+                    }
+                    .font(pane == item ? MarkXFont.headline : MarkXFont.body)
+                    .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
+                    .frame(height: 34)
+                    .markxHover(isSelected: pane == item)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(pane == item ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
+        .padding(.top, MarkXSpace.l)
+        .frame(width: 196)
+        .background(.bar)
+    }
+
+    @ViewBuilder private var content: some View {
+        switch pane {
+        case .general:
+            MarkXGroup(title: "本地资料库", footer: "Markdown、原图、视频与资料库数据库都保存在这个文件夹。") {
+                ArchiveFolderRow()
+            }
+            SoftwareUpdateSettingsSection()
+        case .x:
+            BrowserConnectionConfiguration()
+        case .storage:
+            MediaStorageConfiguration()
+            MarkXGroup(title: "缓存管理") {
+                MarkXRow(title: "重复媒体缓存",
+                         detail: "保留完整媒体备份，只移除已经重复保存的隐藏缓存。",
+                         symbol: "trash") {
+                    Button("整理…") { model.cleanVerifiedMediaCache() }
+                        .buttonStyle(.markxCompact)
+                        .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
+                        .help("核对内容后移除已有完整备份的重复缓存")
+                }
+            }
+        case .about:
+            MarkXGroup {
+                HStack(spacing: MarkXSpace.l + MarkXSpace.xs) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable().frame(width: 56, height: 56)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: MarkXSpace.xs) {
+                        Text("MarkX").font(MarkXFont.title)
+                        Text("版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "开发版本")（\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—")）")
+                            .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
+                            .textSelection(.enabled)
+                        Text("© 2026 得否").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text3)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(MarkXSpace.xl)
+            }
+            MarkXGroup(title: "隐私") {
+                MarkXRow(title: "本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
+                MarkXRowDivider()
+                MarkXRow(title: "会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
+                MarkXRowDivider()
+                MarkXRow(title: "外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
+            }
         }
     }
 }
