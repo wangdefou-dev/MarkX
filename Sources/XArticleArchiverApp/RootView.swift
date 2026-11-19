@@ -11,7 +11,9 @@ struct RootView: View {
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// Held, not observed: only the header pieces redraw while scrolling.
-    @State private var headerTracker = DetailHeaderTracker()
+    @StateObject private var detailTitleState = DetailTitleState()
+    /// True while the creator's article list slides back to the creator list.
+    @State private var isReturningToCreators = false
     @State private var showingNewCollection = false
     @State private var newCollectionName = ""
     @State private var newCollectionArticleID: UUID?
@@ -120,7 +122,6 @@ struct RootView: View {
         // The visible heading is the list title item; the window title stays
         // "MarkX" (set on each column) because MarkXWindowPolicy matches it.
         .modifier(HiddenWindowTitle())
-        .animation(nil, value: model.sidebarSelection)
         .animation(nil, value: model.selectedArticleID)
         .font(MarkXFont.body)
         .onAppear { model.refreshBrowserStatus() }
@@ -248,6 +249,7 @@ struct RootView: View {
                 sidebarColumn
             } detail: {
                 WelcomeView()
+                    .animation(nil, value: model.sidebarSelection)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
                     .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar]))
@@ -268,6 +270,7 @@ struct RootView: View {
                     )
             } detail: {
                 detail
+                    .animation(nil, value: model.sidebarSelection)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
                     .overlay(alignment: .leading) { ColumnEdgeShadow() }
@@ -279,6 +282,7 @@ struct RootView: View {
 
     private var sidebarColumn: some View {
         sidebar
+            .animation(nil, value: model.sidebarSelection)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
             .toolbar { libraryToolbar }
@@ -379,7 +383,7 @@ struct RootView: View {
             // middle column, so the sidebar stays short and fixed.
             Section {
                 SidebarCountRow(
-                    title: "博主",
+                    title: "博主列表",
                     systemImage: "person.2",
                     count: model.enabledCreatorCount
                 )
@@ -715,7 +719,8 @@ struct RootView: View {
             List(selection: Binding<AppViewModel.SidebarSelection?>(
                 get: { nil },
                 set: { picked in
-                    if case .creator = picked { model.sidebarSelection = picked }
+                    guard case .creator = picked else { return }
+                    withAnimation(Self.paneSlide) { model.sidebarSelection = picked }
                 }
             )) {
                 if !model.pinnedCreators.isEmpty {
@@ -737,12 +742,63 @@ struct RootView: View {
         }
     }
 
+    /// Creator list ↔ a creator's articles slide sideways, like a
+    /// navigation stack: picking a creator pushes left, back pops right.
+    private static let paneSlide = Animation.snappy(duration: 0.3)
+
+    private var showsCreatorList: Bool {
+        model.sidebarSelection == .creators || isReturningToCreators
+    }
+
+    /// Slides back first and only then switches the selection, so the
+    /// creator's articles stay on screen while they leave.
+    private func returnToCreatorList() {
+        withAnimation(Self.paneSlide) {
+            isReturningToCreators = true
+        } completion: {
+            model.sidebarSelection = .creators
+            isReturningToCreators = false
+        }
+    }
+
     private var articleList: some View {
+        ZStack {
+            if showsCreatorList {
+                creatorList
+                    .animation(nil, value: model.sidebarSelection)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(MarkXInterface.listBackground)
+                    .transition(.move(edge: .leading))
+            } else {
+                articleListPane
+                    .animation(nil, value: model.sidebarSelection)
+                    .background(MarkXInterface.listBackground)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .clipped()
+        .toolbar { creatorBackToolbar }
+    }
+
+    /// Back to the creator list, shown while a creator's articles are listed.
+    @ToolbarContentBuilder
+    private var creatorBackToolbar: some ToolbarContent {
+        if selectedSidebarCreator != nil, !showsCreatorList {
+            ToolbarItem(placement: .navigation) {
+                Button { returnToCreatorList() } label: {
+                    Label("博主列表", systemImage: "chevron.left")
+                        .labelStyle(.titleAndIcon)
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .help("返回博主列表（⌘[）")
+            }
+        }
+    }
+
+    private var articleListPane: some View {
         VStack(spacing: 0) {
             Group {
-                if model.sidebarSelection == .creators {
-                    creatorList
-                } else if !model.filteredArticles.isEmpty {
+                if !model.filteredArticles.isEmpty {
                     let collectionID = model.selectedCollectionID
                     List(selection: $model.selectedArticleID) {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
@@ -867,9 +923,17 @@ struct RootView: View {
         }
     }
 
+    private static let detailScrollSpace = "detailScroll"
+
     @ViewBuilder
     private var detail: some View {
         if let article = model.selectedArticle {
+            GeometryReader { proxy in
+            VStack(spacing: 0) {
+            DetailTopBar(state: detailTitleState, title: article.title) {
+                articleHeaderActions(article)
+            }
+            .frame(height: max(proxy.safeAreaInsets.top, 38))
             ScrollView {
                 VStack(spacing: 0) {
                     articleDetailHeader(article)
@@ -889,16 +953,11 @@ struct RootView: View {
                 .padding(.horizontal, MarkXSpace.pageSide)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
-            .overlay {
-                DetailHeaderOverlay(
-                    tracker: headerTracker,
-                    title: article.title,
-                    titleFont: ArticleTypography(previewTextScale).titleFont
-                ) {
-                    articleHeaderActions(article)
-                }
+            .coordinateSpace(.named(Self.detailScrollSpace))
             }
-            .onDisappear { headerTracker.reset() }
+            .ignoresSafeArea(.container, edges: .top)
+            }
+            .onDisappear { detailTitleState.set(false) }
             .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .background(MarkXInterface.reading)
@@ -918,15 +977,17 @@ struct RootView: View {
     private func articleDetailHeader(_ article: ArchivedArticle) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: MarkXSpace.xl) {
-                DetailInPageTitle(tracker: headerTracker) {
-                    Text(article.title)
-                        .font(ArticleTypography(previewTextScale).titleFont)
-                        .lineSpacing(ArticleTypography(previewTextScale).titleLineSpacing)
-                        .lineLimit(3)
-                        .truncationMode(.tail)
-                        .textSelection(.enabled)
-                }
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+                Text(article.title)
+                    .font(ArticleTypography(previewTextScale).titleFont)
+                    .lineSpacing(ArticleTypography(previewTextScale).titleLineSpacing)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .textSelection(.enabled)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+                    // Flips only when the title leaves or re-enters the view.
+                    .onGeometryChange(for: Bool.self) { proxy in
+                        proxy.frame(in: .named(Self.detailScrollSpace)).maxY < 0
+                    } action: { detailTitleState.set($0) }
             }
             HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXFlowLayout(spacing: MarkXSpace.m) {
@@ -987,9 +1048,7 @@ struct RootView: View {
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                DetailInPageActions(tracker: headerTracker) {
-                    articleHeaderActions(article)
-                }
+                articleHeaderActions(article)
             }
             .padding(.top, MarkXSpace.xl)
         }
