@@ -73,8 +73,16 @@ enum MarkXInterface {
     // low saturation, hairline borders, soft washes instead of strong fills.
     static let canvas = dynamic(light: 0xF9F9FB, dark: 0x18191B)
     static let surface = dynamic(light: 0xFFFFFF, dark: 0x212225)
-    /// Flat reading background behind article text.
-    static let reading = dynamic(light: 0xFCFCFD, dark: 0x111113)
+    /// Flat reading background behind article text. With `listBackground`
+    /// and the sidebar material it forms three tones that separate the main
+    /// window's columns without divider lines (Fog's tonal panels).
+    static let readingNS = dynamicNS(light: 0xFFFFFF, dark: 0x111113)
+    static let reading = Color(nsColor: readingNS)
+    /// Article list column: between the sidebar and the reading pane.
+    static let listBackgroundNS = dynamicNS(light: 0xF5F5F7, dark: 0x1A1B1D)
+    static let listBackground = Color(nsColor: listBackgroundNS)
+    /// Soft shadow cast by a column onto the one to its right.
+    static let columnShadow = dynamic(light: 0x000000, lightAlpha: 0.045, dark: 0x000000, darkAlpha: 0.28)
     static let hairline = dynamic(light: 0x00002D, lightAlpha: 0.09, dark: 0xD3EDF8, darkAlpha: 0.11)
     /// Hover and quiet-selection wash.
     static let wash = dynamic(light: 0x000033, lightAlpha: 0.06, dark: 0xDDEAF8, darkAlpha: 0.08)
@@ -92,14 +100,19 @@ enum MarkXInterface {
 
     private static func dynamic(light: UInt32, lightAlpha: CGFloat = 1,
                                 dark: UInt32, darkAlpha: CGFloat = 1) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+        Color(nsColor: dynamicNS(light: light, lightAlpha: lightAlpha, dark: dark, darkAlpha: darkAlpha))
+    }
+
+    private static func dynamicNS(light: UInt32, lightAlpha: CGFloat = 1,
+                                  dark: UInt32, darkAlpha: CGFloat = 1) -> NSColor {
+        NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             let hex = isDark ? dark : light
             return NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
                            green: CGFloat((hex >> 8) & 0xFF) / 255,
                            blue: CGFloat(hex & 0xFF) / 255,
                            alpha: isDark ? darkAlpha : lightAlpha)
-        })
+        }
     }
 
     static func sheetHeight(_ preferred: CGFloat) -> CGFloat {

@@ -262,6 +262,7 @@ struct RootView: View {
             } content: {
                 articleList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(MarkXInterface.listBackground)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
                     .navigationSplitViewColumnWidth(
                         min: SplitColumnLayout.list.min,
@@ -272,7 +273,8 @@ struct RootView: View {
                 detail
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
-
+                    .toolbar { detailToolbar }
+                    .overlay(alignment: .leading) { ColumnEdgeShadow() }
                     .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar, SplitColumnLayout.list]))
                     .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 640)
             }
@@ -771,9 +773,10 @@ struct RootView: View {
                     }
                     // Recreate the native row menus when switching collection scope.
                     .id(collectionID)
-                    .listStyle(.inset)
+                    // Plain style: no extra top padding under the toolbar band.
+                    .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(MarkXInterface.canvas)
+                    .background(MarkXInterface.listBackground)
                     .focused($isArticleListFocused)
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 } else if model.archiveRoot == nil || !model.imageHostVerified {
@@ -845,7 +848,7 @@ struct RootView: View {
                 if shows != showsDetailTitle { showsDetailTitle = shows }
             }
             .onDisappear { showsDetailTitle = false }
-            .overlay(alignment: .top) { detailScrolledTitle(article) }
+            .overlay(alignment: .top) { detailTopBand(article) }
             .id(article.id)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .background(MarkXInterface.reading)
@@ -899,7 +902,6 @@ struct RootView: View {
             .foregroundStyle(MarkXInterface.text2)
             .lineLimit(1)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                articleHeaderActions(article)
             }
             .padding(.top, MarkXSpace.l)
             MarkXFlowLayout(spacing: MarkXSpace.s) {
@@ -996,23 +998,43 @@ struct RootView: View {
             }
     }
 
-    /// The reading column's top band (under the transparent window toolbar)
-    /// stays empty while the article title is on screen and shows the title,
-    /// on a reading-colour bar with a hairline, once it scrolls away.
-    private func detailScrolledTitle(_ article: ArchivedArticle) -> some View {
+    /// Article actions sit at the far right of the window toolbar, over the
+    /// reading column.
+    @ToolbarContentBuilder
+    private var detailToolbar: some ToolbarContent {
+        if let article = model.selectedArticle {
+            if #available(macOS 26.0, *) {
+                // Without a spacer the item joins the list column's leading edge.
+                ToolbarSpacer(.flexible)
+                ToolbarItem(placement: .primaryAction) { articleHeaderActions(article) }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) { articleHeaderActions(article) }
+            }
+        }
+    }
+
+    /// The reading column's top band (under the transparent toolbar) is empty
+    /// while the in-page title is visible. Once it scrolls away, the title
+    /// fades in there in the former list heading's style, over a fade that
+    /// hides the text scrolling beneath.
+    private func detailTopBand(_ article: ArchivedArticle) -> some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
+            let band = max(proxy.safeAreaInsets.top, 38)
+            ZStack(alignment: .topLeading) {
+                LinearGradient(stops: [.init(color: MarkXInterface.reading, location: 0),
+                                       .init(color: MarkXInterface.reading, location: band / (band + MarkXSpace.xl)),
+                                       .init(color: MarkXInterface.reading.opacity(0), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: band + MarkXSpace.xl)
                 Text(article.title)
-                    .font(MarkXFont.headline)
+                    .font(MarkXFont.columnTitle)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 860, alignment: .leading)
-                    .padding(.horizontal, MarkXSpace.pageSide)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .frame(height: max(proxy.safeAreaInsets.top, 38))
-                    .background(MarkXInterface.reading)
-                Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
-                Spacer(minLength: 0)
+                    .frame(height: band)
+                    .padding(.leading, MarkXSpace.pageSide)
+                    // Leave room for the toolbar actions on the right.
+                    .padding(.trailing, 140)
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -1643,50 +1665,23 @@ struct ArticleRow: View {
     let index: Int
     let creator: Creator?
 
-    // Only what helps pick an article: number, title, author, date and the
-    // 商单 mark. Processing state lives in the sidebar groups and the reader.
+    // Only the title: the list is for picking an article; author, date and
+    // state are in the reading pane.
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
-            Text(index, format: .number.grouping(.never))
-                .font(MarkXFont.meta.monospacedDigit())
-                .foregroundStyle(MarkXInterface.text3)
-                .lineLimit(1)
-                .frame(minWidth: 24, alignment: .trailing)
-                .fixedSize()
-                .accessibilityLabel("第 \(index) 篇")
-
-            VStack(alignment: .leading, spacing: MarkXSpace.xs) {
-                Text(article.title)
-                    .font(MarkXFont.headline)
-                    .foregroundStyle(.primary)
-                    .lineSpacing(MarkXSpace.xxs)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: MarkXSpace.s) {
-                    Text(creator?.displayName ?? article.authorHandle)
-                        .foregroundStyle(MarkXInterface.text2)
-                        .lineLimit(1)
-                    Text(article.publishedAt, style: .date)
-                        .foregroundStyle(MarkXInterface.text3)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                    Spacer(minLength: MarkXSpace.s)
-                    if article.isPaidPartnership {
-                        CommercialContentBadge()
-                    }
-                }
-                .font(MarkXFont.meta)
-            }
+        Text(article.title)
+            .font(MarkXFont.headline)
+            .foregroundStyle(.primary)
+            .lineSpacing(MarkXSpace.xxs)
+            .lineLimit(2)
+            .truncationMode(.tail)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.vertical, MarkXSpace.s)
-        .padding(.trailing, MarkXSpace.xs)
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-        .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
-        .contentShape(Rectangle())
+            .padding(.vertical, MarkXSpace.m)
+            .padding(.horizontal, MarkXSpace.l)
+            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
+            .contentShape(Rectangle())
+            .help(article.title)
+            .accessibilityLabel("第 \(index) 篇，\(article.title)")
     }
 }
 
@@ -2106,6 +2101,17 @@ private struct LocalArticleImage: View {
             thumbnail = image
             finished = true
         }
+    }
+}
+
+/// A soft shadow along a column's leading edge, in place of a divider line.
+private struct ColumnEdgeShadow: View {
+    var body: some View {
+        LinearGradient(colors: [MarkXInterface.columnShadow, .clear], startPoint: .leading, endPoint: .trailing)
+            .frame(width: MarkXSpace.s)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 

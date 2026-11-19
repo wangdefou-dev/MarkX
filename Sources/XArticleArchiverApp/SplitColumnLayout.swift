@@ -64,6 +64,7 @@ struct SplitColumnGuard: NSViewRepresentable {
             super.viewDidMoveToWindow()
             NotificationCenter.default.removeObserver(self)
             guard let splitView = enclosingSplitView() else { return }
+            QuietSplitDivider.apply(to: splitView)
             NotificationCenter.default.addObserver(
                 self, selector: #selector(splitViewDidResize),
                 name: NSSplitView.didResizeSubviewsNotification, object: splitView
@@ -72,11 +73,17 @@ struct SplitColumnGuard: NSViewRepresentable {
         }
 
         @objc private func splitViewDidResize() {
+            if let splitView = enclosingSplitView() { QuietSplitDivider.apply(to: splitView) }
             // Sidebar transitions resize continuously; correct once they settle.
             pendingCheck?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.enforce() }
             pendingCheck = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            if let splitView = enclosingSplitView() { QuietSplitDivider.apply(to: splitView) }
         }
 
         func scheduleCheck() {
@@ -85,6 +92,7 @@ struct SplitColumnGuard: NSViewRepresentable {
             // Let SwiftUI finish its own pass before moving dividers.
             DispatchQueue.main.async { [weak self] in
                 self?.isScheduled = false
+                if let splitView = self?.enclosingSplitView() { QuietSplitDivider.apply(to: splitView) }
                 self?.enforce()
             }
         }
@@ -129,6 +137,23 @@ struct SplitColumnGuard: NSViewRepresentable {
                 splitView.setPosition(x, ofDividerAt: entry.index)
                 x += splitView.dividerThickness
             }
+        }
+    }
+}
+
+/// Fog separates panels by tone, not by lines. AppKit draws split dividers
+/// as their own subviews; they are made transparent (still draggable) and the
+/// split view's own background shows the list tone through the 1pt gap, next
+/// to the reading pane's soft edge shadow.
+enum QuietSplitDivider {
+    @MainActor
+    static func apply(to splitView: NSSplitView) {
+        for divider in splitView.subviews where NSStringFromClass(type(of: divider)).contains("Divider") {
+            if divider.alphaValue != 0 { divider.alphaValue = 0 }
+        }
+        splitView.wantsLayer = true
+        splitView.effectiveAppearance.performAsCurrentDrawingAppearance {
+            splitView.layer?.backgroundColor = MarkXInterface.listBackgroundNS.cgColor
         }
     }
 }
