@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Collapsing reading header. While the article scrolls, the in-page title
-/// stops when it reaches the window's top band and shrinks there into the
-/// toolbar title; the article actions leave the status row and glide to the
-/// toolbar's top-right corner. Both follow the scroll position (no timed
+/// stops when it reaches the window's top band and stays there at its own
+/// size; the article actions leave the status row and glide up to sit just
+/// right of that title. Both follow the scroll position (no timed
 /// animation), so scrolling back reverses them exactly.
 ///
 /// All frames are in `.global` (window) coordinates. Only the small views
@@ -12,17 +12,16 @@ import SwiftUI
 final class DetailHeaderTracker: ObservableObject {
     /// In-page title text frame.
     @Published var titleFrame: CGRect = .null
-    /// Height of one title line at the in-page size.
+    /// Height of one title line, and the title's width on one line.
     @Published var titleLineHeight: CGFloat = 30
+    @Published var titleNaturalWidth: CGFloat = 0
     /// In-page actions slot (status row, right side).
     @Published var actionsFrame: CGRect = .null
-    /// Toolbar actions slot (window top-right).
-    @Published var toolbarActionsFrame: CGRect = .null
     /// Top of the reading column and the height of the toolbar band over it.
     @Published var bandTop: CGFloat = 0
     @Published var band: CGFloat = 38
 
-    /// Scroll distance over which the title shrinks and the actions travel.
+    /// Scroll distance over which the actions travel.
     let travel: CGFloat = 48
 
     func set<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<DetailHeaderTracker, Value>, _ value: Value) {
@@ -37,7 +36,7 @@ final class DetailHeaderTracker: ObservableObject {
     /// Where the title's first line stops: vertically centred in the band.
     var titleStickTop: CGFloat { bandTop + (band - titleLineHeight) / 2 }
 
-    /// nil while the title scrolls normally; 0…1 while it shrinks in the band.
+    /// nil while the title scrolls normally; 0…1 just after it stops.
     var titleProgress: CGFloat? {
         guard !titleFrame.isNull, titleFrame.minY < titleStickTop else { return nil }
         return min(1, (titleStickTop - titleFrame.minY) / travel)
@@ -68,7 +67,7 @@ final class DetailHeaderTracker: ObservableObject {
     }
 
     var showsInPageActions: Bool { actionsProgress == nil }
-    var showsToolbarActions: Bool { (actionsProgress ?? 0) >= 1 }
+    var actionsDocked: Bool { (actionsProgress ?? 0) >= 1 }
 }
 
 extension View {
@@ -110,57 +109,75 @@ struct DetailInPageActions<Content: View>: View {
     }
 }
 
-/// The actions' final place in the window toolbar. Always laid out so its
-/// position is known; visible and clickable only once the glide has ended.
-struct DetailToolbarActions<Content: View>: View {
-    @ObservedObject var tracker: DetailHeaderTracker
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .markxGlobalFrame { tracker.set(\.toolbarActionsFrame, $0) }
-            .opacity(tracker.showsToolbarActions ? 1 : 0)
-            .allowsHitTesting(tracker.showsToolbarActions)
-            .accessibilityHidden(!tracker.showsToolbarActions)
-    }
-}
-
 /// Drawn over the reading column, including the toolbar band: the fade that
-/// hides scrolled text, the shrinking title and the gliding actions.
+/// hides scrolled text, the stopped title and the actions beside it.
 struct DetailHeaderOverlay<Actions: View>: View {
     @ObservedObject var tracker: DetailHeaderTracker
     let title: String
-    /// In-page title point size and the toolbar title size it shrinks to.
-    let titleSize: CGFloat
-    let collapsedTitleSize: CGFloat
+    /// The in-page title font, so the stopped title looks identical.
+    let titleFont: Font
     @ViewBuilder let actions: Actions
+
+    /// Gap between the stopped title and the actions.
+    private let gap = MarkXSpace.l
 
     var body: some View {
         GeometryReader { proxy in
             let inner = proxy.frame(in: .global)
             let band = max(proxy.safeAreaInsets.top, 38)
             let origin = CGPoint(x: inner.minX, y: inner.minY - proxy.safeAreaInsets.top)
+            let layout = Layout(tracker: tracker, origin: origin, gap: gap)
             ZStack(alignment: .topLeading) {
-                fade(band: band)
-                bandTitle(origin: origin, width: inner.width)
-                glidingActions(origin: origin)
-                // Measures one title line at the in-page size.
-                Text("国X").font(.system(size: titleSize, weight: .medium))
-                    .hidden()
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { tracker.set(\.titleLineHeight, $0) }
+                Group {
+                    fade(band: band)
+                    bandTitle(layout)
+                    // Measure one title line and the title's one-line width.
+                    Text("国X").font(titleFont)
+                        .hidden()
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { tracker.set(\.titleLineHeight, $0) }
+                    Text(title).font(titleFont).lineLimit(1).fixedSize()
+                        .hidden()
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tracker.set(\.titleNaturalWidth, $0) }
+                }
+                .allowsHitTesting(false)
+                movingActions(layout)
             }
             .frame(width: inner.width, height: inner.height + proxy.safeAreaInsets.top, alignment: .topLeading)
             .ignoresSafeArea(.container, edges: .top)
             .onChange(of: origin.y, initial: true) { _, value in tracker.set(\.bandTop, value) }
             .onChange(of: band, initial: true) { _, value in tracker.set(\.band, value) }
         }
-        .allowsHitTesting(false)
+    }
+
+    /// Positions in overlay coordinates. The title keeps the in-page left
+    /// edge; the actions follow the title and never pass the column's right
+    /// edge (the in-page actions' right edge), so a long title truncates.
+    private struct Layout {
+        let titleLeading: CGFloat
+        let titleTop: CGFloat
+        let titleWidth: CGFloat
+        let actionsStart: CGPoint
+        let actionsEnd: CGPoint
+
+        @MainActor init(tracker: DetailHeaderTracker, origin: CGPoint, gap: CGFloat) {
+            titleLeading = tracker.titleFrame.isNull ? 0 : tracker.titleFrame.minX - origin.x
+            titleTop = tracker.titleStickTop - origin.y
+            let actions = tracker.actionsFrame.isNull ? CGRect(x: 0, y: 0, width: 0, height: 0) : tracker.actionsFrame
+            let rightEdge = actions.maxX - origin.x
+            titleWidth = max(0, min(tracker.titleNaturalWidth, rightEdge - actions.width - gap - titleLeading))
+            actionsStart = CGPoint(x: actions.minX - origin.x, y: tracker.actionsStartLine - origin.y)
+            actionsEnd = CGPoint(x: titleLeading + titleWidth + gap,
+                                 y: tracker.bandTop + (tracker.band - actions.height) / 2 - origin.y)
+        }
     }
 
     private func fade(band: CGFloat) -> some View {
-        let height = band + MarkXSpace.xl
+        // Solid a little past the band, since the full-size title nearly
+        // fills it, then fading out so scrolled text slips away softly.
+        let solid = band + MarkXSpace.m
+        let height = solid + MarkXSpace.xxl
         return LinearGradient(stops: [.init(color: MarkXInterface.reading, location: 0),
-                                      .init(color: MarkXInterface.reading, location: band / height),
+                                      .init(color: MarkXInterface.reading, location: solid / height),
                                       .init(color: MarkXInterface.reading.opacity(0), location: 1)],
                               startPoint: .top, endPoint: .bottom)
             .frame(height: height)
@@ -168,36 +185,32 @@ struct DetailHeaderOverlay<Actions: View>: View {
     }
 
     @ViewBuilder
-    private func bandTitle(origin: CGPoint, width: CGFloat) -> some View {
-        if let progress = tracker.titleProgress {
-            let scale = 1 - progress * (1 - collapsedTitleSize / titleSize)
-            let leading = tracker.titleFrame.minX - origin.x
-            // Room for the toolbar actions on the right.
-            let available = max(80, width - leading - 148)
+    private func bandTitle(_ layout: Layout) -> some View {
+        if tracker.titleProgress != nil {
             Text(title)
-                .font(.system(size: titleSize, weight: .medium))
+                .font(titleFont)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(width: available / scale, height: tracker.titleLineHeight, alignment: .leading)
-                .scaleEffect(scale, anchor: .leading)
-                .offset(x: leading, y: tracker.titleStickTop - origin.y)
+                .frame(width: layout.titleWidth, height: tracker.titleLineHeight, alignment: .leading)
+                .offset(x: layout.titleLeading, y: layout.titleTop)
                 .opacity(tracker.bandTitleOpacity)
                 .accessibilityHidden(true)
         }
     }
 
+    /// One view for the whole trip, so it never flickers: a ghost while it
+    /// glides, the clickable actions once it has arrived.
     @ViewBuilder
-    private func glidingActions(origin: CGPoint) -> some View {
-        if let progress = tracker.actionsProgress, progress < 1, !tracker.actionsFrame.isNull {
-            let start = CGPoint(x: tracker.actionsFrame.minX,
-                                y: tracker.actionsStartLine)
-            let end = tracker.toolbarActionsFrame.isNull ? start : tracker.toolbarActionsFrame.origin
+    private func movingActions(_ layout: Layout) -> some View {
+        if let progress = tracker.actionsProgress, !tracker.actionsFrame.isNull {
             let eased = progress * progress * (3 - 2 * progress)
+            let docked = tracker.actionsDocked
             actions
                 .fixedSize()
-                .offset(x: start.x + (end.x - start.x) * eased - origin.x,
-                        y: start.y + (end.y - start.y) * eased - origin.y)
-                .accessibilityHidden(true)
+                .offset(x: layout.actionsStart.x + (layout.actionsEnd.x - layout.actionsStart.x) * eased,
+                        y: layout.actionsStart.y + (layout.actionsEnd.y - layout.actionsStart.y) * eased)
+                .allowsHitTesting(docked)
+                .accessibilityHidden(!docked)
         }
     }
 }

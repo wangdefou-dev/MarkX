@@ -44,6 +44,8 @@ final class AppViewModel: ObservableObject {
         case pending
         case failed
         case collection(UUID)
+        /// The creator list (sidebar 博主 entry); lists no articles itself.
+        case creators
         case creator(UUID)
     }
 
@@ -261,7 +263,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var filteredArticles: [ArchivedArticle] {
-        let visible = switch sidebarSelection {
+        let visible: [ArchivedArticle] = switch sidebarSelection {
         case .all, .none:
             articles
         case .today:
@@ -276,6 +278,8 @@ final class AppViewModel: ObservableObject {
             articles.filter(ArchiveSidebarStatistics.needsAttention)
         case .collection(let id):
             articlesInCollection(id)
+        case .creators:
+            []
         case .creator(let id):
             articles.filter { $0.creatorID == id }
         }
@@ -2426,7 +2430,7 @@ final class AppViewModel: ObservableObject {
             do {
                 try await database.setCreatorEnabled(id: creator.id, isEnabled: false)
                 if sidebarSelection == .creator(creator.id) {
-                    sidebarSelection = .all
+                    sidebarSelection = .creators
                 }
                 try await reload()
                 statusMessage = "已删除博主 @\(creator.username)；已经下载的文章和图片均已保留"
@@ -3107,7 +3111,7 @@ final class AppViewModel: ObservableObject {
         if !searchText.isEmpty { updateSearchResults() }
         if case .creator(let creatorID) = sidebarSelection,
            !creators.contains(where: { $0.id == creatorID }) {
-            sidebarSelection = .all
+            sidebarSelection = .creators
         }
         synchronizeSelectedArticleWithSidebar()
     }

@@ -9,9 +9,6 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isArticleListFocused: Bool
     @AppStorage("articlePreviewTextScale") private var articlePreviewTextScale = 1.0
-    @AppStorage("sidebarLibraryExpanded") private var isLibraryExpanded = true
-    @AppStorage("sidebarCollectionsExpanded") private var isCollectionsExpanded = true
-    @AppStorage("sidebarCreatorsExpanded") private var isCreatorsExpanded = true
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// Held, not observed: only the header pieces redraw while scrolling.
     @State private var headerTracker = DetailHeaderTracker()
@@ -48,7 +45,6 @@ struct RootView: View {
                 TextField("收藏夹名称", text: $newCollectionName)
                 Button("取消", role: .cancel) {}
                 Button("创建") {
-                    isCollectionsExpanded = true
                     model.createCollection(name: newCollectionName, articleID: newCollectionArticleID)
                 }
                 .disabled(newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canEditCollections)
@@ -237,7 +233,8 @@ struct RootView: View {
     /// First run and an empty library have nothing to list or read, so the
     /// welcome page spans the whole content area instead of a narrow list column.
     private var isWelcomeLayout: Bool {
-        guard model.filteredArticles.isEmpty, selectedSidebarCreator == nil, selectedCollection == nil else {
+        guard model.filteredArticles.isEmpty, selectedSidebarCreator == nil, selectedCollection == nil,
+              model.sidebarSelection != .creators else {
             return false
         }
         if model.archiveRoot == nil || !model.imageHostVerified { return true }
@@ -273,7 +270,6 @@ struct RootView: View {
                 detail
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                     .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
-                    .toolbar { detailToolbar }
                     .overlay(alignment: .leading) { ColumnEdgeShadow() }
                     .background(SplitColumnGuard(columns: [SplitColumnLayout.sidebar, SplitColumnLayout.list]))
                     .navigationSplitViewColumnWidth(min: SplitColumnLayout.detailMinimum, ideal: 640)
@@ -285,6 +281,7 @@ struct RootView: View {
         sidebar
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(MarkXWindowPolicy.mainWindowTitle)
+            .toolbar { libraryToolbar }
             .navigationSplitViewColumnWidth(
                 min: SplitColumnLayout.sidebar.min,
                 ideal: SplitColumnLayout.sidebar.ideal,
@@ -335,9 +332,7 @@ struct RootView: View {
         .frame(height: 44)
     }
 
-    /// Library-wide actions: download and sync, plus progress and stop while
-    /// a task runs. They act on the whole library, so they sit with the
-    /// sidebar rather than over one list.
+    /// Shown only while a task runs: open the progress window or stop.
     private var libraryFooterActions: some View {
         let isBusy = model.isRunning || model.hasActiveDownloadProgress
         return HStack(spacing: MarkXSpace.xxs) {
@@ -353,6 +348,17 @@ struct RootView: View {
                 }
                 .help("安全停止当前任务，已完成内容保留（⌘.）")
             }
+        }
+        .buttonStyle(.markxIcon)
+        .fixedSize()
+    }
+
+    /// Library-wide sync and download sit right of the sidebar toggle,
+    /// since they act on the whole library rather than one list.
+    @ToolbarContentBuilder
+    private var libraryToolbar: some ToolbarContent {
+        let isBusy = model.isRunning || model.hasActiveDownloadProgress
+        ToolbarItemGroup(placement: .primaryAction) {
             Button { model.requestSyncAll() } label: {
                 Label("同步博主", systemImage: SyncVisualStyle.symbolName)
             }
@@ -364,14 +370,25 @@ struct RootView: View {
             .disabled(isBusy)
             .help("输入博主主页或 X Article 链接开始下载（⌘N）")
         }
-        .buttonStyle(.markxIcon)
-        .fixedSize()
     }
 
     private var sidebarLibrary: some View {
         let statistics = model.sidebarStatistics
         return List(selection: $model.sidebarSelection) {
-            Section(isExpanded: $isLibraryExpanded) {
+            // One entry for all creators; the list itself opens in the
+            // middle column, so the sidebar stays short and fixed.
+            Section {
+                SidebarCountRow(
+                    title: "博主",
+                    systemImage: "person.2",
+                    count: model.enabledCreatorCount
+                )
+                .tag(AppViewModel.SidebarSelection.creators)
+                .markxSelectableRow(isSelected: isCreatorScope)
+                .help("显示全部博主，点击博主查看其文章")
+            }
+            .collapsible(false)
+            Section {
                 SidebarCountRow(
                     title: "全部文章",
                     systemImage: "doc.text",
@@ -465,22 +482,8 @@ struct RootView: View {
             } header: {
                 Text("资料库").padding(.top, MarkXSpace.m)
             }
+            .collapsible(false)
             collectionsSection
-            Section(isExpanded: $isCreatorsExpanded) {
-                    if !model.pinnedCreators.isEmpty {
-                        ForEach(model.pinnedCreators) { creator in
-                            creatorSidebarRow(creator, statistics: statistics)
-                        }
-                        .onMove { offsets, destination in
-                            model.movePinnedCreators(fromOffsets: offsets, toOffset: destination)
-                        }
-                    }
-                    ForEach(model.unpinnedCreators) { creator in
-                        creatorSidebarRow(creator, statistics: statistics)
-                    }
-            } header: {
-                creatorHeadingRow.padding(.top, MarkXSpace.m)
-            }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
@@ -488,7 +491,7 @@ struct RootView: View {
     }
 
     private var collectionsSection: some View {
-        Section(isExpanded: $isCollectionsExpanded) {
+        Section {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
                     let isConfirmed = collectionNotice?.collectionID == collection.id
@@ -540,6 +543,7 @@ struct RootView: View {
         } header: {
             Text("收藏夹").padding(.top, MarkXSpace.m)
         }
+        .collapsible(false)
     }
 
     private func sidebarMetricRow<Icon: View, Title: View, Value: View>(
@@ -548,18 +552,6 @@ struct RootView: View {
         @ViewBuilder value: () -> Value
     ) -> some View {
         SidebarMetricRow(icon: icon, title: title, value: value)
-    }
-
-    private var creatorHeadingRow: some View {
-        HStack(spacing: MarkXSpace.xs) {
-            Text("博主")
-            if model.enabledCreatorCount > 0 {
-                Text(model.enabledCreatorCount, format: .number.grouping(.never))
-                    .monospacedDigit()
-                    .foregroundStyle(MarkXInterface.text3)
-                    .accessibilityLabel("\(model.enabledCreatorCount) 位博主")
-            }
-        }
     }
 
     private func creatorArticleCountHelp(
@@ -580,7 +572,8 @@ struct RootView: View {
         return "已下载 \(downloaded) 篇；线上总数尚未获取；本地记录 \(localArticleCount) 篇"
     }
 
-    private func creatorSidebarRow(
+    /// One creator in the middle column, laid out like an article row.
+    private func creatorListRow(
         _ creator: Creator,
         statistics: ArchiveSidebarStatistics
     ) -> some View {
@@ -596,6 +589,7 @@ struct RootView: View {
         } title: {
             Text(creator.displayName)
                 .font(MarkXFont.body)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .help(creator.displayName + " · @" + creator.username)
         } value: {
@@ -623,7 +617,11 @@ struct RootView: View {
                 localArticleCount: localArticleCount
             ))
         }
-        .padding(.vertical, SidebarMetricBadge.rowPadding)
+        .padding(.vertical, MarkXSpace.m)
+        .padding(.trailing, MarkXSpace.l)
+        .padding(.leading, MarkXSpace.xs)
+        .contentShape(Rectangle())
+        .listRowSeparator(.hidden)
         .tag(AppViewModel.SidebarSelection.creator(creator.id))
         .markxSelectableRow(isSelected: model.sidebarSelection == AppViewModel.SidebarSelection.creator(creator.id))
         .contextMenu {
@@ -691,10 +689,60 @@ struct RootView: View {
         }
     }
 
+    /// The 博主 entry and a chosen creator both belong to the creator scope.
+    private var isCreatorScope: Bool {
+        if case .creator = model.sidebarSelection { return true }
+        return model.sidebarSelection == .creators
+    }
+
+    /// All creators, shown in the middle column from the sidebar's 博主
+    /// entry. Picking one switches the column to that creator's articles;
+    /// the 博主 entry brings the list back.
+    @ViewBuilder
+    private var creatorList: some View {
+        let statistics = model.sidebarStatistics
+        if model.creators.isEmpty {
+            ContentUnavailableView {
+                Label("还没有博主", systemImage: "person.2")
+            } description: {
+                Text("下载博主的 X Article 后，博主会出现在这里。")
+            } actions: {
+                Button("开始下载文章") { model.presentDownloadSheet() }
+                    .buttonStyle(.markxPillProminent)
+                    .disabled(model.isRunning || model.hasActiveDownloadProgress)
+            }
+        } else {
+            List(selection: Binding<AppViewModel.SidebarSelection?>(
+                get: { nil },
+                set: { picked in
+                    if case .creator = picked { model.sidebarSelection = picked }
+                }
+            )) {
+                if !model.pinnedCreators.isEmpty {
+                    ForEach(model.pinnedCreators) { creator in
+                        creatorListRow(creator, statistics: statistics)
+                    }
+                    .onMove { offsets, destination in
+                        model.movePinnedCreators(fromOffsets: offsets, toOffset: destination)
+                    }
+                }
+                ForEach(model.unpinnedCreators) { creator in
+                    creatorListRow(creator, statistics: statistics)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(MarkXInterface.listBackground)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+        }
+    }
+
     private var articleList: some View {
         VStack(spacing: 0) {
             Group {
-                if !model.filteredArticles.isEmpty {
+                if model.sidebarSelection == .creators {
+                    creatorList
+                } else if !model.filteredArticles.isEmpty {
                     let collectionID = model.selectedCollectionID
                     List(selection: $model.selectedArticleID) {
                         ForEach(Array(model.filteredArticles.enumerated()), id: \.element.id) { index, article in
@@ -708,7 +756,7 @@ struct RootView: View {
                                             model.selectedArticleID = article.id
                                             isArticleListFocused = true
                                         },
-                                        canDrag: { model.canEditCollections && isSidebarVisible && isCollectionsExpanded },
+                                        canDrag: { model.canEditCollections && isSidebarVisible },
                                         onTarget: { targetedCollectionID = $0 },
                                         onDrop: { addArticle(article.id, to: $0) }
                                     )
@@ -845,8 +893,7 @@ struct RootView: View {
                 DetailHeaderOverlay(
                     tracker: headerTracker,
                     title: article.title,
-                    titleSize: MarkXTypography.readingPointSize(22, scale: ArticleTypography(previewTextScale).scale),
-                    collapsedTitleSize: MarkXTypography.pointSize(14)
+                    titleFont: ArticleTypography(previewTextScale).titleFont
                 ) {
                     articleHeaderActions(article)
                 }
@@ -856,7 +903,13 @@ struct RootView: View {
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .background(MarkXInterface.reading)
         } else {
-            ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
+            Group {
+                if model.sidebarSelection == .creators {
+                    ContentUnavailableView("选择一位博主", systemImage: "person.2", description: Text("点击中间列表里的博主，查看其已归档的文章。"))
+                } else {
+                    ContentUnavailableView("选择一篇 X Article", systemImage: "doc.richtext", description: Text("这里会按文章排版展示完整正文、图片和视频。"))
+                }
+            }
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .background(MarkXInterface.reading)
         }
@@ -1002,29 +1055,6 @@ struct RootView: View {
             isBusy: model.isRunning || model.hasActiveDownloadProgress) {
                 model.restartProcessing(article)
             }
-    }
-
-    /// Article actions rest at the right of the status row and glide to the
-    /// far right of the window toolbar as the header collapses.
-    @ToolbarContentBuilder
-    private var detailToolbar: some ToolbarContent {
-        if let article = model.selectedArticle {
-            if #available(macOS 26.0, *) {
-                // Without a spacer the item joins the list column's leading edge.
-                ToolbarSpacer(.flexible)
-                ToolbarItem(placement: .primaryAction) { toolbarActions(article) }
-                    .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .primaryAction) { toolbarActions(article) }
-            }
-        }
-    }
-
-    /// The actions' final place once the header has collapsed.
-    private func toolbarActions(_ article: ArchivedArticle) -> some View {
-        DetailToolbarActions(tracker: headerTracker) {
-            articleHeaderActions(article)
-        }
     }
 
     /// Collect, open the original and more.
@@ -1657,7 +1687,7 @@ struct ArticleRow: View {
                 .frame(minWidth: 24, alignment: .trailing)
                 .fixedSize()
             Text(article.title)
-                .font(MarkXFont.headline)
+                .font(MarkXFont.body)
                 .foregroundStyle(.primary)
                 .lineSpacing(MarkXSpace.xxs)
                 .lineLimit(2)
