@@ -867,9 +867,13 @@ struct RootView: View {
             }
         }
         .clipped()
-        // Same empty band under the toolbar as the sidebar and reading pane;
-        // the list is clipped above it, so rows never scroll into it.
-        .padding(.top, Self.topBandExtra)
+        // The middle column runs up to the window top: its first row sits
+        // level with the sidebar's toolbar buttons, with the same margin
+        // above it. The margin and the back row are a top inset drawn over
+        // the list, so rows scroll under it and it stays clickable (a plain
+        // view above the list was covered by the list's scroll view).
+        .safeAreaInset(edge: .top, spacing: 0) { middleColumnHeader }
+        .ignoresSafeArea(.container, edges: .top)
         .background {
             // Two-finger swipe right (trackpad or Magic Mouse) goes back.
             HorizontalSwipeMonitor(isEnabled: selectedSidebarCreator != nil && !showsCreatorList) {
@@ -884,24 +888,36 @@ struct RootView: View {
                 highlightedCreatorID = nil
             }
         }
-        .toolbar { creatorBackToolbar }
     }
 
-    /// Back to the creator list, shown while a creator's articles are listed.
-    @ToolbarContentBuilder
-    private var creatorBackToolbar: some ToolbarContent {
-        if selectedSidebarCreator != nil, !showsCreatorList {
-            ToolbarItem(placement: .navigation) {
-                Button { returnToCreatorList() } label: {
-                    Label("返回", systemImage: "chevron.left")
-                        .labelStyle(.titleAndIcon)
-                        .font(MarkXFont.detail)
-                }
-                .controlSize(.small)
-                .keyboardShortcut("[", modifiers: .command)
-                .help("返回博主列表（⌘[，或双指向右轻扫）")
+    /// Margin above the middle column's first row, measured from the window
+    /// top like the sidebar's toolbar buttons.
+    private static let middleColumnTop: CGFloat = 12
+
+    private var middleColumnHeader: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: Self.middleColumnTop)
+            if selectedSidebarCreator != nil, !showsCreatorList {
+                creatorBackRow
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MarkXInterface.listGradient)
+    }
+
+    /// Back to the creator list, above a creator's article list.
+    private var creatorBackRow: some View {
+        HStack(spacing: 0) {
+            Button { returnToCreatorList() } label: {
+                Label("返回", systemImage: "chevron.left")
+            }
+            .buttonStyle(.markxCompact)
+            .keyboardShortcut("[", modifiers: .command)
+            .help("返回博主列表（⌘[，或双指向右轻扫）")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MarkXSpace.l)
+        .padding(.bottom, MarkXSpace.s)
     }
 
     private var articleListPane: some View {
@@ -1082,6 +1098,8 @@ struct RootView: View {
             }
             .coordinateSpace(.named(Self.detailScrollSpace))
             .clipped()
+            // No divider line under the top bar: text fades out instead.
+            .modifier(DetailScrollFade(state: detailTitleState))
             }
             .ignoresSafeArea(.container, edges: .top)
             }
@@ -1125,68 +1143,44 @@ struct RootView: View {
                     .textSelection(.enabled)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
             }
+            // Author and time on the left; 商单 (when marked) and the article
+            // actions on the right of the same line. No status chips.
             HStack(alignment: .center, spacing: MarkXSpace.l) {
-            MarkXFlowLayout(spacing: MarkXSpace.m) {
-                Button {
-                    model.openCreatorProfile(handle: article.authorHandle)
-                } label: {
-                    HStack(spacing: MarkXSpace.xs) {
-                        Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
-                            .font(MarkXFont.detailStrong)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
-                            .lineLimit(1)
-                        Image(systemName: "arrow.up.right")
-                            .font(MarkXFont.badge)
-                            .foregroundStyle(MarkXInterface.text3)
+                MarkXFlowLayout(spacing: MarkXSpace.m) {
+                    Button {
+                        model.openCreatorProfile(handle: article.authorHandle)
+                    } label: {
+                        HStack(spacing: MarkXSpace.xs) {
+                            Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
+                                .font(MarkXFont.detailStrong)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
+                                .lineLimit(1)
+                            Image(systemName: "arrow.up.right")
+                                .font(MarkXFont.badge)
+                                .foregroundStyle(MarkXInterface.text3)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .help("查看 @\(article.authorHandle) 的 X 主页")
+                    Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
+                        .foregroundStyle(MarkXInterface.text3)
+                        .monospacedDigit()
+                        .lineLimit(1)
                 }
-                .buttonStyle(.plain)
-                .help("查看 @\(article.authorHandle) 的 X 主页")
-                Text(article.publishedAt, format: .dateTime.year().month().day().hour().minute())
-                    .foregroundStyle(MarkXInterface.text3)
-                    .monospacedDigit()
-                    .lineLimit(1)
-            }
-            .font(MarkXFont.detail)
-            .foregroundStyle(MarkXInterface.text2)
-            .lineLimit(1)
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.top, MarkXSpace.l)
-            HStack(alignment: .center, spacing: MarkXSpace.l) {
-            MarkXFlowLayout(spacing: MarkXSpace.s) {
-                StatusPill(
-                    article.pipelineState.displayName,
-                    color: article.pipelineState == .committed
-                        ? .green
-                        : article.pipelineState == .subscriptionRequired ? .purple : .orange
-                )
+                .font(MarkXFont.detail)
+                .foregroundStyle(MarkXInterface.text2)
+                .lineLimit(1)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 if article.isPaidPartnership {
                     StatusPill("商单", color: .orange)
                         .help("X 官方 Paid partnership 商单内容标记")
                         .accessibilityLabel("商单内容，X 官方付费合作标记")
                 }
-                if article.imageCount > 0 {
-                    StatusPill("\(article.imageCount) 张图片", color: .blue)
-                }
-                if article.videoCount > 0 {
-                    StatusPill("\(article.videoCount) 个视频", color: .purple)
-                }
-                if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
-                    FixedReprocessButton(
-                        isDisabled: model.isRunning || model.hasActiveDownloadProgress,
-                        help: "重新打开原页并保存段落、列表、代码、引用和图片的真实顺序"
-                    ) {
-                        model.captureSelectedArticleExactly()
-                    }
-                }
-            }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 articleHeaderActions(article)
             }
-            .padding(.top, MarkXSpace.xl)
+            .padding(.top, MarkXSpace.m)
         }
         // Sits right under the fixed top bar.
         .padding(.top, MarkXSpace.l)
@@ -1302,6 +1296,11 @@ struct RootView: View {
         } else {
             Button("重新处理") { model.restartProcessing(article) }
                 .disabled(model.isRunning || model.hasActiveDownloadProgress)
+        }
+        if article.warnings.contains(where: { $0.contains("精确插入位置") || $0.contains("段落级富文本") }) {
+            Button("按原文顺序重新采集") { model.captureSelectedArticleExactly() }
+                .disabled(model.isRunning || model.hasActiveDownloadProgress)
+                .help("重新打开原页并保存段落、列表、代码、引用和图片的真实顺序")
         }
         if model.selectedCollectionID == nil {
             Divider()

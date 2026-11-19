@@ -17,7 +17,8 @@ final class DetailTitleState: ObservableObject {
 /// lower edge and never through it. Empty while the article header is on
 /// screen; once the header has scrolled away, the title and the article
 /// actions glide up into the bar (moving and shrinking into place, not just
-/// fading in) and a hairline appears below. Scrolling back reverses it.
+/// fading in). There is no divider line: `DetailScrollFade` softens the text
+/// edge under the bar instead. Scrolling back reverses it.
 struct DetailTopBar<Actions: View>: View {
     @ObservedObject var state: DetailTitleState
     let title: String
@@ -46,12 +47,28 @@ struct DetailTopBar<Actions: View>: View {
         .padding(.horizontal, MarkXSpace.pageSide)
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityHidden(!shown)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
-                .opacity(shown ? 1 : 0)
-        }
         .background(MarkXInterface.readingGradient)
         .clipped()
         .animation(.smooth(duration: 0.35), value: shown)
+    }
+}
+
+/// Once the article header has scrolled away, the text fades out over a short
+/// band right under the top bar instead of being cut by a line.
+struct DetailScrollFade: ViewModifier {
+    @ObservedObject var state: DetailTitleState
+
+    private static let band: CGFloat = 24
+
+    func body(content: Content) -> some View {
+        let fade = state.isScrolledAway ? Self.band : 0
+        content.mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: fade)
+                Color.black
+            }
+            .animation(.smooth(duration: 0.35), value: fade)
+        }
     }
 }
