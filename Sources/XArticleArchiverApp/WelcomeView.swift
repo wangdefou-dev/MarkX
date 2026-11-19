@@ -63,7 +63,6 @@ struct WelcomeView: View {
                 detail: model.archiveRoot?.path ?? "选择一个文件夹，用来保存文章、图片和 Markdown",
                 isReady: model.archiveRoot != nil
             )
-            Rectangle().fill(MarkXInterface.hairline).frame(height: 1).padding(.leading, MarkXSpace.xl + MarkXIcon.tile + MarkXSpace.l)
             WelcomeStepRow(
                 symbol: "person.badge.key",
                 title: "浏览器 X 登录",
@@ -75,7 +74,6 @@ struct WelcomeView: View {
                         .help("macOS 需要你确认一次，MarkX 才能读取 \(browser) 里的 X 登录记录")
                 }
             }
-            Rectangle().fill(MarkXInterface.hairline).frame(height: 1).padding(.leading, MarkXSpace.xl + MarkXIcon.tile + MarkXSpace.l)
             WelcomeStepRow(
                 symbol: "photo.on.rectangle",
                 title: "媒体存储",
@@ -84,7 +82,6 @@ struct WelcomeView: View {
             )
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: MarkXRadius.hero))
-        .overlay(RoundedRectangle(cornerRadius: MarkXRadius.hero).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.12), radius: 24, y: 12)
     }
 

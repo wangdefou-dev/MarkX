@@ -635,8 +635,10 @@ struct BrowserCreatorArticleDiscoveryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header strip set apart by tone, not a divider line.
             header.padding(MarkXSpace.xxl)
-            Divider()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(MarkXInterface.surface)
             statusCard.padding(.horizontal, MarkXSpace.xxl).padding(.vertical, MarkXSpace.xl)
             discoveredArticleList.padding(.horizontal, MarkXSpace.xxl).padding(.bottom, MarkXSpace.xl)
             footer
@@ -752,10 +754,6 @@ struct BrowserCreatorArticleDiscoveryView: View {
         .frame(minHeight: 200, maxHeight: .infinity)
         .background(MarkXInterface.surface)
         .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
-        .overlay {
-            RoundedRectangle(cornerRadius: MarkXRadius.card)
-                .strokeBorder(MarkXInterface.hairline, lineWidth: 1)
-        }
     }
 
     private var footer: some View {

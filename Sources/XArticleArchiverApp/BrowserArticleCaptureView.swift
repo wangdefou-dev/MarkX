@@ -1085,8 +1085,10 @@ struct BrowserArticleCaptureView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header strip set apart by tone, not a divider line.
             header.padding(MarkXSpace.xxl)
-            Divider()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(MarkXInterface.surface)
             summaryCard.padding(.horizontal, MarkXSpace.xxl).padding(.vertical, MarkXSpace.xl)
             downloadQueue.padding(.horizontal, MarkXSpace.xxl).padding(.bottom, MarkXSpace.xl)
             footer
@@ -1209,10 +1211,6 @@ struct BrowserArticleCaptureView: View {
         .frame(minHeight: 200, maxHeight: .infinity)
         .background(MarkXInterface.surface)
         .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
-        .overlay {
-            RoundedRectangle(cornerRadius: MarkXRadius.card)
-                .strokeBorder(MarkXInterface.hairline, lineWidth: 1)
-        }
         .overlay {
             if model.visibleBrowserCaptureRequests.isEmpty {
                 ContentUnavailableView("正在建立保存队列", systemImage: "tray.and.arrow.down",

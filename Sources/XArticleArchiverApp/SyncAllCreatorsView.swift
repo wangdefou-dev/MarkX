@@ -75,7 +75,6 @@ struct SyncAllCreatorsView: View {
                     MarkXInfoLine(symbol: "text.page", text: "扫描到每位博主的列表底部，不受 100 篇限制。")
                 } else {
                     limitRow($articleLimit)
-                    Divider()
                     Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
                         .font(MarkXFont.detail).help("完整扫描列表来刷新总数，下载范围仍为最近指定数量")
                     Text(resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数可以稍后单独刷新。")
@@ -101,7 +100,6 @@ struct SyncAllCreatorsView: View {
                     Toggle("自动同步", isOn: $scheduleEnabled)
                         .labelsHidden().toggleStyle(.switch).help("启用或关闭每日后台同步")
                 }
-                Divider()
                 HStack {
                     Text("执行时间")
                     Spacer()
@@ -114,7 +112,6 @@ struct SyncAllCreatorsView: View {
             MarkXSection(title: "最近执行") {
                 Text(lastScheduledRunDescription).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                Divider()
                 MarkXInfoLine(symbol: "moon", text: "睡眠期间错过的任务会在唤醒后补执行；关机时无法运行。")
             }
         }

@@ -34,7 +34,8 @@ struct DownloadProgressRootView: View {
                 .labelsHidden().pickerStyle(.segmented)
                 .padding(.horizontal, MarkXSpace.xxl).padding(.vertical, MarkXSpace.l)
                 .help("切换查看进度，两个阶段仍在后台同时运行")
-                Divider()
+                .frame(maxWidth: .infinity)
+                .background(MarkXInterface.surface)
             }
             ZStack {
                 // Opacity switches the presentation without unmounting either

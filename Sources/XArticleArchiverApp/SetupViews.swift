@@ -121,7 +121,6 @@ struct AddCreatorsView: View {
                                    ok: !parsedArticleLinks.isEmpty && parsedArticleLinks.count <= 500,
                                    warning: parsedArticleLinks.count > 500)
                 }
-                MarkXRowDivider()
                 MarkXRow(title: "重新获取已归档文章",
                          detail: refreshExistingLinks ? "校验成功后更新本地归档，手工修改的正文不会被直接覆盖。"
                                                       : "默认跳过已经完整归档的文章。") {
@@ -184,7 +183,6 @@ struct AddCreatorsView: View {
                             .padding(.leading, MarkXSpace.xs)
                         }
                     }
-                    MarkXRowDivider()
                     MarkXRow(title: "同时刷新线上文章总数",
                              detail: resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数也可稍后单独刷新。") {
                         Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
@@ -417,7 +415,6 @@ private struct BrowserConnectionConfiguration: View {
                 .labelsHidden().fixedSize()
                 .disabled(isChecking)
             }
-            MarkXRowDivider()
             MarkXRow(title: model.hasBrowserSessionData ? "已找到 X 登录" : "未找到 X 登录",
                      detail: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
                      symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
@@ -428,7 +425,6 @@ private struct BrowserConnectionConfiguration: View {
                     .help("重新检查全部受支持的浏览器与配置")
             }
             if let browser = model.browserNameNeedingAccess {
-                MarkXRowDivider()
                 MarkXRow(title: "授权读取 \(browser)",
                          detail: "macOS 默认不允许其他应用读取 \(browser) 的数据。点按钮后在弹出的窗口里选择「允许读取」，只需授权一次。",
                          symbol: "key", symbolColor: .orange) {
@@ -437,7 +433,6 @@ private struct BrowserConnectionConfiguration: View {
                         .disabled(isChecking)
                 }
             }
-            MarkXRowDivider()
             MarkXRow(title: "验证会话读取",
                      detail: model.browserSessionCheckMessage ?? "仅在本机解密并验证 X 登录数据，不发起下载，也不修改浏览器。",
                      symbol: "checkmark.shield") {
@@ -449,19 +444,16 @@ private struct BrowserConnectionConfiguration: View {
                 .disabled(isChecking || model.isRefreshingBrowserStatus)
             }
             .textSelection(.enabled)
-            MarkXRowDivider()
             MarkXRow(title: "其他数据目录", detail: "为自定义目录或 macOS 读取受限的目录保存访问授权。", symbol: "folder") {
                 Button("选择…") { model.chooseBrowserDataDirectory() }
                     .buttonStyle(.markxCompact)
                     .disabled(isChecking)
             }
-            MarkXRowDivider()
             MarkXRow(title: "登录 X", detail: "还没登录时，先在浏览器里打开 X 完成登录。", symbol: "person.crop.circle") {
                 Button("打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
                     .buttonStyle(.markxCompact)
             }
             if !model.browserSessionProbe.profiles.isEmpty {
-                MarkXRowDivider()
                 MarkXRowContent {
                     DisclosureGroup("检测到的配置（\(model.browserSessionProbe.profiles.count)）") {
                         VStack(alignment: .leading, spacing: MarkXSpace.s) {
@@ -551,7 +543,6 @@ struct MediaStorageConfiguration: View {
             case .local:
                 EmptyView()
             case .uPic:
-                MarkXRowDivider()
                 MarkXRow(title: model.upicCapability.isAvailable ? "已找到 uPic" : "未找到 uPic",
                          detail: model.upicCapability.detail + " 验证会上传一张无隐私测试图片；本应用不读取 uPic 密钥。",
                          symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
@@ -565,10 +556,8 @@ struct MediaStorageConfiguration: View {
                     .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
                 }
             case .s3:
-                MarkXRowDivider()
                 MarkXRowContent { s3Fields }
             }
-            MarkXRowDivider()
             HStack(spacing: MarkXSpace.m) {
                 if isTesting { ProgressView().controlSize(.mini) }
                 else { StatusDot(color: model.imageHostVerified ? .green : .orange) }
@@ -687,7 +676,6 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             navigation
-            Rectangle().fill(MarkXInterface.hairline).frame(width: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXSpace.x3) {
                     VStack(alignment: .leading, spacing: MarkXSpace.s) {
@@ -735,7 +723,9 @@ struct SettingsView: View {
         .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
         .padding(.top, MarkXSpace.l)
         .frame(width: 196)
-        .background(.bar)
+        // Darker than the content pane, like the main window's sidebar;
+        // the two panes are told apart by tone, not a divider line.
+        .background(MarkXInterface.sidebarGradient)
     }
 
     @ViewBuilder private var content: some View {
@@ -778,9 +768,7 @@ struct SettingsView: View {
             }
             MarkXGroup(title: "隐私") {
                 MarkXRow(title: "本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
-                MarkXRowDivider()
                 MarkXRow(title: "会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
-                MarkXRowDivider()
                 MarkXRow(title: "外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
             }
         }

@@ -71,7 +71,9 @@ enum MarkXInterface {
 
     // Calm neutral palette (the same slate scale as Fog's reading view):
     // low saturation, hairline borders, soft washes instead of strong fills.
-    static let canvas = dynamic(light: 0xF9F9FB, dark: 0x18191B)
+    /// Sheet and window background. A step darker than `surface` in light
+    /// mode so white cards stand apart by tone alone, without borders.
+    static let canvas = dynamic(light: 0xF1F2F5, dark: 0x18191B)
     static let surface = dynamic(light: 0xFFFFFF, dark: 0x212225)
     /// Flat reading background behind article text. With `listBackground`
     /// and the sidebar material it forms three tones that separate the main
@@ -215,7 +217,6 @@ struct MarkXFooter<Actions: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(MarkXInterface.hairline).frame(height: 1)
             HStack(spacing: MarkXSpace.m) {
                 Text(note).font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -258,9 +259,8 @@ struct MarkXIconTile: View {
 
 extension View {
     func markxSurface() -> some View {
+        // Set apart from the canvas by tone only, no border line.
         background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXRadius.card))
-            .overlay(RoundedRectangle(cornerRadius: MarkXRadius.card)
-                .strokeBorder(MarkXInterface.hairline, lineWidth: 1))
     }
 
     /// Fog's filled input: wash background, no border, 6pt corners.
@@ -273,8 +273,8 @@ extension View {
 }
 
 /// Settings group (macOS System Settings layout in Fog's palette): a small
-/// grey heading, a card of rows separated by inset hairlines, a grey footnote.
-/// Put `MarkXRowDivider()` between rows.
+/// grey heading, a card of rows (no divider lines between them), a grey
+/// footnote.
 struct MarkXGroup<Content: View>: View {
     var title: String? = nil
     var footer: String? = nil
@@ -353,12 +353,6 @@ struct MarkXRowContent<Content: View>: View {
     }
 }
 
-struct MarkXRowDivider: View {
-    var body: some View {
-        Rectangle().fill(MarkXInterface.hairline).frame(height: 1).padding(.leading, MarkXSpace.xl)
-    }
-}
-
 /// A selectable option card (source and range pickers in sheets): icon,
 /// title, one grey line; the selected card gets an accent outline and tint.
 struct MarkXChoiceCard: View {
@@ -398,8 +392,10 @@ struct MarkXChoiceCard: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: MarkXRadius.card)
-                    .strokeBorder(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.7)) : AnyShapeStyle(MarkXInterface.hairline),
-                                  lineWidth: isSelected ? 1.5 : 1)
+                    // Only the selected card gets an outline; others are set
+                    // apart from the canvas by tone.
+                    .strokeBorder(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.7)) : AnyShapeStyle(Color.clear),
+                                  lineWidth: 1.5)
             )
             .contentShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
         }

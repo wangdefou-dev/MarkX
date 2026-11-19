@@ -383,8 +383,15 @@ struct RootView: View {
         // menu at the window's far right when the sidebar was narrow.
         ToolbarItem(placement: .primaryAction) {
             Button { model.presentDownloadSheet() } label: {
-                Label("下载文章", systemImage: "square.and.arrow.down")
+                // Accent-coloured so new users spot it next to grey sync.
+                Label {
+                    Text("下载文章")
+                } icon: {
+                    Image(systemName: "square.and.arrow.down")
+                        .foregroundStyle(Color.accentColor)
+                }
             }
+            .tint(.accentColor)
             .disabled(isBusy)
             .help("输入博主主页或 X Article 链接开始下载（⌘N）")
         }
@@ -1079,11 +1086,6 @@ struct RootView: View {
                             )
                             .padding(.top, MarkXSpace.x3)
                         }
-                        // Separates the title, metadata and status from the text.
-                        Rectangle()
-                            .fill(MarkXInterface.hairline)
-                            .frame(height: 1)
-                            .padding(.top, MarkXSpace.x3)
                     }
                     // Flips once everything above the text has scrolled away.
                     .onGeometryChange(for: Bool.self) { proxy in
@@ -1792,7 +1794,6 @@ private struct ArticleBlockView: View {
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
-                .overlay(RoundedRectangle(cornerRadius: MarkXRadius.card).stroke(MarkXInterface.hairline))
 
                 if let altText = media.altText, !altText.isEmpty {
                     Text(altText)
@@ -1819,7 +1820,6 @@ private struct ArchivedVideoPlayer: View {
                 .frame(maxWidth: .infinity)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: MarkXRadius.card))
-                .overlay(RoundedRectangle(cornerRadius: MarkXRadius.card).stroke(MarkXInterface.hairline))
             Link(destination: url) {
                 Label("在默认播放器中打开视频", systemImage: "arrow.up.right.square")
             }
@@ -2159,7 +2159,7 @@ private struct ArticleProcessingPanel: View {
     }
 }
 
-/// Fog chip: 6pt corners, hairline border, a small coloured square marker.
+/// Fog chip: 6pt corners on a soft wash (no border), a small coloured square marker.
 private struct CommercialContentBadge: View {
     var body: some View {
         HStack(spacing: MarkXSpace.xs) {
@@ -2170,7 +2170,7 @@ private struct CommercialContentBadge: View {
         .foregroundStyle(MarkXInterface.text2)
         .padding(.horizontal, MarkXSpace.s)
         .frame(height: 18)
-        .overlay(RoundedRectangle(cornerRadius: MarkXRadius.control - 2).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
+        .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control - 2))
         .fixedSize()
         .accessibilityLabel("商单内容，X 官方付费合作标记")
     }
@@ -2205,8 +2205,8 @@ private struct StatusPill: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, MarkXSpace.m)
         .frame(height: 24)
-        .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
-        .overlay(RoundedRectangle(cornerRadius: MarkXRadius.control).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
+        // Set apart by a soft wash rather than a border line.
+        .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
     }
 }
 

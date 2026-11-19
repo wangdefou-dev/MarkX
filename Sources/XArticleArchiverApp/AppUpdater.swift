@@ -327,7 +327,6 @@ struct SoftwareUpdateView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXRadius.panel))
-                    .overlay(RoundedRectangle(cornerRadius: MarkXRadius.panel).strokeBorder(MarkXInterface.hairline, lineWidth: 1))
                 }
             } else if manifest != nil {
                 Text("更新内容可在官网查看。").font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
@@ -384,7 +383,6 @@ struct SoftwareUpdateSettingsSection: View {
                 Toggle("自动检查更新", isOn: $automaticChecks)
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
-            MarkXRowDivider()
             MarkXRow(title: "当前版本 \(updater.currentVersion)（\(updater.currentBuild)）",
                      detail: updater.lastChecked.map { "上次检查：\($0.formatted(date: .abbreviated, time: .shortened))" } ?? "尚未检查",
                      symbol: "shippingbox") {
