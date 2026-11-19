@@ -1165,11 +1165,10 @@ struct RootView: View {
                         model.openCreatorProfile(handle: article.authorHandle)
                     } label: {
                         HStack(spacing: MarkXSpace.xs) {
+                            // Nickname only; the @ID stays in the tooltip.
                             Text(selectedArticleCreator?.displayName ?? "@\(article.authorHandle)")
                                 .font(MarkXFont.detailStrong)
                                 .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            Text("@\(selectedArticleCreator?.username ?? article.authorHandle)")
                                 .lineLimit(1)
                             Image(systemName: "arrow.up.right")
                                 .font(MarkXFont.badge)
@@ -1976,10 +1975,14 @@ private struct SidebarSectionHeader: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(isHovered ? MarkXInterface.text2 : MarkXInterface.text3)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    // The right-pointing arrow is narrower; nudge it so its
+                    // tip still ends on the badge digits' right edge.
+                    .offset(x: isExpanded ? 0 : 2)
             }
             .padding(.top, followsOpenGroup ? MarkXSpace.x3 : MarkXSpace.l)
-            // Arrow right-aligned with the rows' count badges.
-            .padding(.trailing, 0)
+            // Arrow's right edge lines up with the last digit of the rows'
+            // count badges (measured: badge text ends 8pt inside its row).
+            .padding(.trailing, MarkXSpace.m)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
