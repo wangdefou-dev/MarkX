@@ -1890,9 +1890,7 @@ struct ArticleRow: View {
                 .font(MarkXFont.body)
                 .foregroundStyle(.primary)
                 .lineSpacing(MarkXSpace.xxs)
-                // Every row is two lines tall, so short and long titles
-                // line up in an even rhythm.
-                .lineLimit(2, reservesSpace: true)
+                .lineLimit(2)
                 .truncationMode(.tail)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
