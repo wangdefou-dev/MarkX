@@ -14,6 +14,10 @@ struct RootView: View {
     @StateObject private var detailTitleState = DetailTitleState()
     /// True while the creator's article list slides back to the creator list.
     @State private var isReturningToCreators = false
+    /// Sidebar sections fold from their whole header row; remembered.
+    @AppStorage("sidebar.creatorsExpanded") private var creatorsSectionExpanded = true
+    @AppStorage("sidebar.libraryExpanded") private var librarySectionExpanded = true
+    @AppStorage("sidebar.collectionsExpanded") private var collectionsSectionExpanded = true
     /// The creator highlighted in the creator list: the first one by
     /// default, the last opened one after coming back.
     @State private var highlightedCreatorID: UUID?
@@ -418,6 +422,7 @@ struct RootView: View {
             // A section like 资料库 and 收藏夹: one entry for the full creator
             // list (opened in the middle column), then the pinned creators.
             Section {
+                if creatorsSectionExpanded {
                 SidebarCountRow(
                     title: "全部博主",
                     systemImage: "person.2",
@@ -439,11 +444,13 @@ struct RootView: View {
                     .markxSelectableRow(isSelected: model.sidebarSelection == .creator(creator.id))
                     .contextMenu { creatorMenuItems(creator) }
                 }
+                }
             } header: {
-                SidebarSectionHeader(title: "博主列表")
+                SidebarSectionHeader(title: "博主列表", isExpanded: $creatorsSectionExpanded)
             }
             .collapsible(false)
             Section {
+                if librarySectionExpanded {
                 SidebarCountRow(
                     title: "全部文章",
                     systemImage: "doc.text",
@@ -534,8 +541,9 @@ struct RootView: View {
                     }
                     .disabled(model.pendingExactCaptureCount == 0)
                 }
+                }
             } header: {
-                SidebarSectionHeader(title: "资料库")
+                SidebarSectionHeader(title: "资料库", isExpanded: $librarySectionExpanded)
             }
             .collapsible(false)
             collectionsSection
@@ -550,6 +558,7 @@ struct RootView: View {
 
     private var collectionsSection: some View {
         Section {
+            if collectionsSectionExpanded {
                 ForEach(model.collections) { collection in
                     let isTargeted = targetedCollectionID == collection.id
                     let isConfirmed = collectionNotice?.collectionID == collection.id
@@ -598,8 +607,9 @@ struct RootView: View {
                 .buttonStyle(.plain)
                 .disabled(!model.canEditCollections)
                 .markxSelectableRow(isSelected: false)
+            }
         } header: {
-            SidebarSectionHeader(title: "收藏夹")
+            SidebarSectionHeader(title: "收藏夹", isExpanded: $collectionsSectionExpanded)
         }
         .collapsible(false)
     }
@@ -1942,12 +1952,37 @@ private struct SidebarFooterLabelStyle: LabelStyle {
 /// otherwise came out brighter and heavier than the others.
 private struct SidebarSectionHeader: View {
     let title: String
+    @Binding var isExpanded: Bool
+    @State private var isHovered = false
 
+    /// The whole header row is the click target (the system's disclosure
+    /// arrow was small and only appeared on hover), and the groups get more
+    /// air between them.
     var body: some View {
-        Text(title)
-            .font(MarkXFont.metaStrong)
-            .foregroundStyle(MarkXInterface.text3)
-            .padding(.top, MarkXSpace.m)
+        Button {
+            withAnimation(.snappy(duration: 0.22)) { isExpanded.toggle() }
+        } label: {
+            HStack(spacing: MarkXSpace.xs) {
+                Text(title)
+                    .font(MarkXFont.metaStrong)
+                    .foregroundStyle(isHovered ? MarkXInterface.text2 : MarkXInterface.text3)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(isHovered ? MarkXInterface.text2 : MarkXInterface.text3)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .padding(.top, MarkXSpace.xxl)
+            .padding(.bottom, MarkXSpace.xs)
+            // Arrow sits in the same column as the rows' count badges.
+            .padding(.trailing, MarkXSpace.xl + MarkXSpace.xxs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(isExpanded ? "折叠\(title)" : "展开\(title)")
+        .accessibilityLabel(title)
+        .accessibilityValue(isExpanded ? "已展开" : "已折叠")
     }
 }
 
