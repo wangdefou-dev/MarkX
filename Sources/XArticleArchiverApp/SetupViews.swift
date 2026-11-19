@@ -11,8 +11,9 @@ struct AddCreatorsView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
-    @State private var mode: ArchiveMode = .recentWindow
-    @State private var entryMode: EntryMode = .single
+    // Nothing is preselected: the user picks a source and a range first.
+    @State private var mode: ArchiveMode?
+    @State private var entryMode: EntryMode?
     @State private var articleLimit = 10
     @State private var refreshExistingLinks = false
     @State private var resolveTotalCount = false
@@ -21,12 +22,17 @@ struct AddCreatorsView: View {
     private var parsedArticleLinks: [XArticleLink] { XArticleURLParser.parse(input) }
     private var canDownload: Bool {
         if !parsedArticleLinks.isEmpty { return parsedArticleLinks.count <= 500 }
+        guard mode != nil else { return false }
         return entryMode == .single ? parsedHandles.count == 1 : entryMode == .batch && !parsedHandles.isEmpty
     }
     private var downloadTitle: String {
         if entryMode == .articleLinks && parsedArticleLinks.isEmpty { return "下载文章" }
         if !parsedArticleLinks.isEmpty { return "下载 \(parsedArticleLinks.count) 篇文章" }
-        return mode == .recentWindow ? "下载最近 \(articleLimit) 篇" : "下载全部文章"
+        switch mode {
+        case .recentWindow: return "下载最近 \(articleLimit) 篇"
+        case .fullArchive: return "下载全部文章"
+        default: return "下载文章"
+        }
     }
 
     var body: some View {
@@ -37,7 +43,7 @@ struct AddCreatorsView: View {
                 VStack(alignment: .leading, spacing: MarkXSpace.x3) {
                     sourceSection
                     inputSection
-                    if entryMode != .articleLinks { rangeSection }
+                    if entryMode == .single || entryMode == .batch { rangeSection }
                     MarkXInfoLine(symbol: "checkmark.shield", text: "仅下载 X Article，保留正文排版、图片与视频。")
                         .padding(.horizontal, MarkXSpace.xs)
                 }
@@ -58,7 +64,13 @@ struct AddCreatorsView: View {
         .frame(width: 660, height: MarkXInterface.sheetHeight(660))
         .onAppear {
             input = model.downloadSheetPrefill
-            entryMode = model.downloadSheetUsesArticleLinks ? .articleLinks : .single
+            // A prefilled sheet (re-pull a creator, pasted links) already
+            // implies its source; a fresh one starts with nothing chosen.
+            if model.downloadSheetUsesArticleLinks {
+                entryMode = .articleLinks
+            } else if !model.downloadSheetPrefill.isEmpty {
+                entryMode = .single
+            }
         }
         .onChange(of: input) { _, value in
             if !XArticleURLParser.parse(value).isEmpty { entryMode = .articleLinks }
@@ -92,6 +104,8 @@ struct AddCreatorsView: View {
 
     @ViewBuilder private var inputSection: some View {
         switch entryMode {
+        case nil:
+            EmptyView()
         case .single:
             MarkXGroup(title: "博主主页", footer: "输入用户名或 X 主页链接，只接受一行。") {
                 MarkXRowContent {
@@ -198,6 +212,7 @@ struct AddCreatorsView: View {
         if !parsedArticleLinks.isEmpty {
             model.archiveArticleLinks(input: input, refreshExisting: refreshExistingLinks)
         } else {
+            guard let mode else { return }
             model.addAndArchiveCreators(input: input, mode: mode, articleLimit: articleLimit, resolveTotalCount: resolveTotalCount)
         }
     }

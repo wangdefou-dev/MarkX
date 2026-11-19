@@ -1255,12 +1255,18 @@ struct RootView: View {
             Menu {
                 collectionMenuItems(for: article)
             } label: {
-                Label("收藏", systemImage: isCollected ? "star.fill" : "star")
+                Label {
+                    Text("收藏")
+                } icon: {
+                    // Set on the image itself: the icon button style greys
+                    // its whole label, which hid an outer orange.
+                    Image(systemName: isCollected ? "star.fill" : "star")
+                        .foregroundStyle(isCollected ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.foreground))
+                }
             }
             .menuIndicator(.hidden)
             .menuStyle(.button)
             .buttonStyle(.markxIcon)
-            .foregroundStyle(isCollected ? Color.orange : MarkXInterface.text2)
             .disabled(!model.canEditCollections)
             .help("加入或移出收藏夹")
 
@@ -1884,7 +1890,9 @@ struct ArticleRow: View {
                 .font(MarkXFont.body)
                 .foregroundStyle(.primary)
                 .lineSpacing(MarkXSpace.xxs)
-                .lineLimit(2)
+                // Every row is two lines tall, so short and long titles
+                // line up in an even rhythm.
+                .lineLimit(2, reservesSpace: true)
                 .truncationMode(.tail)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
