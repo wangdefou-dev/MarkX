@@ -162,6 +162,15 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - [ ] 旧版 App 已移入废纸篓，失败环节和残留产物已如实记录。
 
 
+## 8.1 日志、诊断报告与数据库容错（0.3.90）
+
+- 日志统一用 `MarkXLog`（`XArticleArchiverCore/MarkXLog.swift`）：同时写入系统日志（subsystem `ai.defou.markx`，可在“控制台”按此过滤）和 `~/Library/Logs/MarkX/MarkX.log`，单文件 2MB 轮转、保留 4 份旧文件。启动时记录版本、系统、机型；`errorMessage`、`statusMessage` 和进度阶段变化自动记录；数据库打开、日志模式与磁盘错误恢复都有记录。禁止记录 Cookie、Token、图床密钥和文章正文。
+- 诊断报告（`DiagnosticReport`）入口：帮助菜单“反馈问题… / 导出诊断报告… / 在 Finder 中显示日志”、设置“通用 → 诊断与反馈”、错误弹窗“导出诊断报告…”。zip 内含 `概要.txt`（版本、系统、归档目录及其磁盘类型、数据库文件大小与日志模式、文章状态统计、连接状态）、`未完成文章.txt`（最近 50 篇未完成或出错文章的状态、错误和处理记录）、`logs/` 和最近 30 天的 `crashes/`。报告只保存到用户选择的位置，不自动上传；“反馈问题…”导出后打开 GitHub 新建 Issue 页面并预填版本和系统。
+- 用户反馈 bug 时，先要诊断报告：看 `概要.txt` 的“目录所在磁盘”和“日志模式”，再按时间在 `logs/MarkX.log` 中找 `[ERROR]` 行。
+- `ArchiveDatabase` 打开时用 `StorageLocationInfo` 检查归档目录：iCloud（含开启同步的“文稿/桌面”）、`~/Library/CloudStorage` 下的网盘、非本地卷和非 APFS/HFS+ 文件系统（exFAT、FAT、SMB 等）使用 `journal_mode=DELETE`，其余保持 WAL；WAL 打开失败时也回退到 DELETE。所有公开数据库操作经 `recovering` 包装：遇到 `SQLITE_IOERR*`、`SQLITE_CANTOPEN` 或 `SQLITE_READONLY_DBMOVED` 时关闭连接、以 DELETE 模式重新打开并重试一次（事务内的嵌套调用不单独重试），仍失败时抛出 `ArchiveDatabaseError.io`，错误文案带扩展错误码并建议把归档目录换到本机磁盘。
+
+- 设置“X 登录 → 登录 X → 打开 X”（`openBrowserXLogin`）固定用 `NSWorkspace.urlForApplication(toOpen:)` 得到的系统默认浏览器打开 `https://x.com`，不使用 `preferredSessionBrowser` 推断；默认浏览器不在 `BrowserSessionDefinition.supported` 中（如 Safari），或与非“自动查找”的读取来源不一致时，用 `browserSessionCheckMessage` 提示。订阅页等需要复用会话的链接仍按 `openInSessionBrowser` 在会话对应的浏览器打开。
+
 ## 9. 界面布局与视觉验收（0.3.46）
 
 - 侧边栏只负责导航（HIG Sidebars）：不放下载等操作按钮，底部不放目录选择入口，运行时仅展示任务摘要。

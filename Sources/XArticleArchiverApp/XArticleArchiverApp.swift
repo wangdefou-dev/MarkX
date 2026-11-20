@@ -56,6 +56,11 @@ struct XArticleArchiverApp: App {
                     .keyboardShortcut("0", modifiers: .command)
                     .disabled(articleTextScale == 1.0)
             }
+            CommandGroup(replacing: .help) {
+                Button("反馈问题…") { Task { await DiagnosticReport.reportProblem(model: model) } }
+                Button("导出诊断报告…") { Task { await DiagnosticReport.export(model: model) } }
+                Button("在 Finder 中显示日志") { DiagnosticReport.revealLogs() }
+            }
             CommandMenu("文章") {
                 let article = model.selectedArticle
                 Button("在浏览器中打开原文") { model.openSource() }

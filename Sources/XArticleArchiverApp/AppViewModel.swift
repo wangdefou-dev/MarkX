@@ -87,9 +87,19 @@ final class AppViewModel: ObservableObject {
     }
     @Published var archiveRoot: URL?
     @Published var isRunning = false
-    @Published var statusMessage = "准备就绪"
-    @Published var errorMessage: String?
-    @Published var progress = SyncProgress()
+    @Published var statusMessage = "准备就绪" {
+        didSet { if statusMessage != oldValue { MarkXLog.info("status", statusMessage) } }
+    }
+    @Published var errorMessage: String? {
+        didSet {
+            if let errorMessage, errorMessage != oldValue { MarkXLog.error("app", "向用户显示错误：\(errorMessage)") }
+        }
+    }
+    @Published var progress = SyncProgress() {
+        didSet {
+            if progress.stage != oldValue.stage, !progress.stage.isEmpty { MarkXLog.debug("progress", progress.stage) }
+        }
+    }
     @Published var upicCapability = ImageHostCapability(name: "uPic 图床", version: nil, isAvailable: false, detail: "正在检测")
     @Published var imageHostChoice: ImageHostChoice = .local
     @Published var imageHostVerified = true
@@ -173,6 +183,7 @@ final class AppViewModel: ObservableObject {
     private static let maximumPinnedCreators = 5
 
     init() {
+        DiagnosticReport.logLaunch()
         #if DEBUG
         if InterfacePreviewGallery.isEnabled {
             let previewRoot = FileManager.default.temporaryDirectory.appending(path: "markx-preview-\(UUID())")
@@ -635,8 +646,31 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Always the Mac's default browser, never a guess from detected
+    /// profiles; warns when MarkX cannot read that browser's login.
     func openBrowserXLogin() {
-        openInSessionBrowser(URL(string: "https://x.com")!, successMessage: "已在浏览器打开 X，已登录时无需重复登录")
+        let url = URL(string: "https://x.com")!
+        let workspace = NSWorkspace.shared
+        guard let browserURL = workspace.urlForApplication(toOpen: url) else {
+            workspace.open(url)
+            statusMessage = "已在默认浏览器打开 X"
+            return
+        }
+        let bundleID = Bundle(url: browserURL)?.bundleIdentifier ?? ""
+        let browserName = (FileManager.default.displayName(atPath: browserURL.path) as NSString).deletingPathExtension
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        workspace.open([url], withApplicationAt: browserURL, configuration: configuration, completionHandler: nil)
+        MarkXLog.info("browser", "在默认浏览器 \(browserName)（\(bundleID)）打开 X 登录页；读取来源设置为 \(preferredBrowserID)")
+        statusMessage = "已在默认浏览器 \(browserName) 打开 X，已登录时无需重复登录"
+        let supported = BrowserSessionDefinition.supported.first { $0.bundleIdentifier == bundleID }
+        if supported == nil {
+            browserSessionCheckMessage = "已在默认浏览器 \(browserName) 打开 X。MarkX 暂时无法读取 \(browserName) 的登录，请在 Chrome、Edge、Arc、Firefox 等浏览器登录 X，或把它设为默认浏览器。"
+        } else if let supported, preferredBrowserID != "automatic", preferredBrowserID != supported.id {
+            browserSessionCheckMessage = "已在默认浏览器 \(browserName) 打开 X。上方“使用浏览器”不是 \(browserName)，登录后请改为“\(browserName)”或“自动查找”，MarkX 才能读取到登录。"
+        } else {
+            browserSessionCheckMessage = "已在默认浏览器 \(browserName) 打开 X。登录完成后点下方“验证”确认 MarkX 能读取。"
+        }
     }
 
     func verifyBrowserSession() async {
@@ -3333,6 +3367,24 @@ final class AppViewModel: ObservableObject {
             let upgraded = MarkdownRenderer.addingExportChecksum(to: rendered)
             guard upgraded != current else { continue }
             try? Data(upgraded.utf8).write(to: markdownURL, options: .atomic)
+        }
+    }
+
+    /// Facts for the diagnostic report that need the private database.
+    func diagnosticDatabaseSnapshot() async -> DiagnosticDatabaseSnapshot {
+        guard let database else {
+            return DiagnosticDatabaseSnapshot(databasePath: nil, journalMode: nil, location: nil, problemArticles: [], loadError: nil)
+        }
+        let mode = await database.journalMode
+        do {
+            let problems = try await database.loadArticles()
+                .filter { $0.pipelineState != .committed || $0.lastError != nil }
+                .sorted { $0.lastSyncedAt > $1.lastSyncedAt }
+            return DiagnosticDatabaseSnapshot(databasePath: database.url.path, journalMode: mode, location: database.location,
+                                              problemArticles: Array(problems.prefix(50)), loadError: nil)
+        } catch {
+            return DiagnosticDatabaseSnapshot(databasePath: database.url.path, journalMode: mode, location: database.location,
+                                              problemArticles: [], loadError: error.localizedDescription)
         }
     }
 

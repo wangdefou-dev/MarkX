@@ -166,6 +166,10 @@ struct RootView: View {
         )) {
             Button("知道了", role: .cancel) { model.errorMessage = nil }
                 .help("关闭这条错误提示")
+            Button("导出诊断报告…") {
+                Task { await DiagnosticReport.export(model: model) }
+            }
+            .help("打包日志和系统信息，方便发给开发者定位问题")
         } message: {
             Text(model.errorMessage ?? "")
         }

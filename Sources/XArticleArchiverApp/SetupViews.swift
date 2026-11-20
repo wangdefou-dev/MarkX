@@ -464,7 +464,7 @@ private struct BrowserConnectionConfiguration: View {
                     .buttonStyle(.markxCompact)
                     .disabled(isChecking)
             }
-            MarkXRow(title: "登录 X", detail: "还没登录时，先在浏览器里打开 X 完成登录。", symbol: "person.crop.circle") {
+            MarkXRow(title: "登录 X", detail: "还没登录时，在系统默认浏览器里打开 X 完成登录。", symbol: "person.crop.circle") {
                 Button("打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
                     .buttonStyle(.markxCompact)
             }
@@ -668,7 +668,7 @@ struct SettingsView: View {
 
         var subtitle: String {
             switch self {
-            case .general: "软件更新。"
+            case .general: "软件更新，诊断与问题反馈。"
             case .x: "MarkX 通过你本机浏览器里的 X 登录来下载文章。"
             case .storage: "资料库位置、图片和视频的保存方式，以及缓存整理。"
             case .about: "MarkX 如何处理你的数据。"
@@ -747,6 +747,21 @@ struct SettingsView: View {
         switch pane {
         case .general:
             SoftwareUpdateSettingsSection()
+            MarkXGroup(title: "诊断与反馈",
+                       footer: "日志只保存在本机（~/Library/Logs/MarkX），不会自动上传。遇到问题时导出诊断报告，发给开发者即可定位；报告不含 X 登录信息、图床密钥和文章正文。") {
+                MarkXRow(title: "导出诊断报告", detail: "打包最近的日志、系统信息、资料库统计和崩溃记录。", symbol: "stethoscope") {
+                    Button("导出…") { Task { await DiagnosticReport.export(model: model) } }
+                        .buttonStyle(.markxCompact)
+                }
+                MarkXRow(title: "反馈问题", detail: "导出诊断报告后打开反馈页面，把报告拖进去提交。", symbol: "exclamationmark.bubble") {
+                    Button("反馈…") { Task { await DiagnosticReport.reportProblem(model: model) } }
+                        .buttonStyle(.markxCompact)
+                }
+                MarkXRow(title: "运行日志", detail: "在 Finder 中查看日志文件。", symbol: "doc.text.magnifyingglass") {
+                    Button("显示") { DiagnosticReport.revealLogs() }
+                        .buttonStyle(.markxCompact)
+                }
+            }
         case .x:
             BrowserConnectionConfiguration()
         case .storage:
@@ -782,7 +797,7 @@ struct SettingsView: View {
                 .padding(MarkXSpace.xl)
             }
             MarkXGroup(title: "隐私") {
-                MarkXRow(title: "本机转换", detail: "正文在本机解析与保存，不交给 AI，也不上传诊断日志。", symbol: "desktopcomputer")
+                MarkXRow(title: "本机转换", detail: "正文在本机解析与保存，不交给 AI；诊断日志只存在本机，只有你主动导出时才会离开这台 Mac。", symbol: "desktopcomputer")
                 MarkXRow(title: "会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
                 MarkXRow(title: "外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
             }
