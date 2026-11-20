@@ -57,13 +57,9 @@ struct RootView: View {
                     model.createCollection(name: newCollectionName, articleID: newCollectionArticleID)
                 }
                 .disabled(newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canEditCollections)
-            } message: {
-                if newCollectionArticleID != nil {
-                    Text("创建后，当前文章会加入这个收藏夹。")
-                }
             }
             .confirmationDialog(
-                "删除收藏夹？",
+                collectionPendingDeletion.map { "删除收藏夹「\($0.name)」？" } ?? "删除收藏夹？",
                 isPresented: Binding(
                     get: { collectionPendingDeletion != nil },
                     set: { if !$0 { collectionPendingDeletion = nil } }
@@ -73,8 +69,8 @@ struct RootView: View {
             ) { collection in
                 Button("删除收藏夹", role: .destructive) { model.deleteCollection(collection) }
                 Button("取消", role: .cancel) {}
-            } message: { collection in
-                Text("删除「\(collection.name)」及其中的收藏关系。文章和归档文件会保留。")
+            } message: { _ in
+                Text("文章会保留。")
             }
     }
 
@@ -195,8 +191,6 @@ struct RootView: View {
                 .help("删除这篇文章的本地文件、快照和资料库记录")
             Button("取消", role: .cancel) { model.articlePendingDeletion = nil }
                 .help("取消删除，保留这篇文章")
-        } message: {
-            Text("会删除本地 Markdown、全文快照和资料库记录，但不会删除远程图片或视频。本地文件可从废纸篓恢复。")
         }
         .confirmationDialog(
             model.exactCaptureTaskPendingDeletion.map { "删除《\($0.title)》的精确采集任务？" } ?? "删除精确采集任务？",
@@ -211,10 +205,10 @@ struct RootView: View {
             Button("取消", role: .cancel) { model.exactCaptureTaskPendingDeletion = nil }
                 .help("取消删除，保留该采集任务")
         } message: {
-            Text("已有 Markdown 归档会完整保留，只取消后续精确采集；尚未产生归档的临时记录会从资料库删除。")
+            Text("已有归档会保留。")
         }
         .confirmationDialog(
-            "删除全部待精确采集任务？",
+            "删除全部 \(model.pendingExactCaptureCount) 个待精确采集任务？",
             isPresented: $model.showingDeleteAllExactCaptureTasksConfirmation,
             titleVisibility: .visible
         ) {
@@ -223,7 +217,7 @@ struct RootView: View {
             Button("取消", role: .cancel) { model.showingDeleteAllExactCaptureTasksConfirmation = false }
                 .help("取消清空，保留全部采集任务")
         } message: {
-            Text("将清理 \(model.pendingExactCaptureCount) 个任务。已存在的 Markdown、全文快照和媒体不会被删除；只会删除未归档的临时记录。")
+            Text("已有归档会保留。")
         }
         .confirmationDialog(
             model.creatorPendingDeletion.map { "删除博主 @\($0.username)？" } ?? "删除博主？",
@@ -238,7 +232,7 @@ struct RootView: View {
             Button("取消", role: .cancel) { model.creatorPendingDeletion = nil }
                 .help("取消删除，继续跟踪该博主")
         } message: {
-            Text("只会停止跟踪并从侧边栏移除该博主。已经下载的文章、本地媒体缓存和远程图片/视频全部保留；以后再次添加该博主即可继续拉取。")
+            Text("已下载的文章会保留。")
         }
     }
 
@@ -1418,12 +1412,9 @@ struct DownloadResultView: View {
     private var hasDanger: Bool { notice.metrics.contains { $0.tone == .danger } }
     private var hasWarning: Bool { notice.metrics.contains { $0.tone == .warning } }
     private var statusColor: Color { hasDanger ? .red : hasWarning ? .orange : .green }
-    private var subtitle: String {
-        hasDanger ? "部分文章处理失败，已保存的内容会保留。" : hasWarning ? "部分文章仍需处理，可以稍后继续。" : "本次任务已结束，下面是处理结果。"
-    }
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: notice.title, subtitle: subtitle,
+            MarkXPaneHeader(title: notice.title,
                 symbol: hasDanger || hasWarning ? "exclamationmark.circle" : "checkmark.circle", symbolColor: statusColor)
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
@@ -1432,10 +1423,11 @@ struct DownloadResultView: View {
                             ForEach(notice.metrics, id: \.id) { DownloadResultMetricText(metric: $0) }
                         }
                     }
-                    MarkXSection(title: "结果说明") {
+                    if !notice.message.isEmpty {
                         Text(notice.message).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                             .lineSpacing(4).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, MarkXSpace.xs)
                     }
                 }
                 .padding(MarkXInterface.inset)

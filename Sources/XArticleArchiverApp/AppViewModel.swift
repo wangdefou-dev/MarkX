@@ -953,8 +953,10 @@ final class AppViewModel: ObservableObject {
     ) {
         if scheduledRunActive {
             scheduledRunActive = false
-            let compact = message.replacingOccurrences(of: "\n", with: " ")
-            recordScheduledSyncResult(at: Date(), message: "\(title)：\(compact)")
+            let counts = metrics.map { "\($0.label) \($0.value)" }.joined(separator: "，")
+            let compact = [counts, message.replacingOccurrences(of: "\n", with: " ")]
+                .filter { !$0.isEmpty }.joined(separator: "；")
+            recordScheduledSyncResult(at: Date(), message: compact.isEmpty ? title : "\(title)：\(compact)")
         } else {
             syncResultNotice = DownloadResultNotice(title: title, message: message, metrics: metrics)
         }
@@ -1012,7 +1014,7 @@ final class AppViewModel: ObservableObject {
         guard !isRunning, !hasActiveDownloadProgress, let root = archiveRoot else { return }
         let alert = NSAlert()
         alert.messageText = "整理重复媒体缓存？"
-        alert.informativeText = "将逐字节核对隐藏缓存与 media 备份，只移除内容完全相同的隐藏缓存副本。文章、media 备份和没有匹配备份的缓存都会保留。过程中可以安全停止。"
+        alert.informativeText = "只移除与 media 备份完全相同的缓存。"
         alert.addButton(withTitle: "核对并整理")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1565,7 +1567,7 @@ final class AppViewModel: ObservableObject {
             statusMessage = incomplete ? "部分博主的列表未读到底，原有总数保留，可重新刷新" : "已刷新 \(creatorCount) 位博主的线上文章总数；本次没有下载文章，X API 调用为 0"
             downloadResultNotice = DownloadResultNotice(
                 title: incomplete ? "线上文章总数刷新未完成" : "线上文章总数已刷新",
-                message: "已检查 \(creatorCount) 位博主的 Articles 列表；只有读到底的列表才更新线上总数。本次没有下载文章，X API 调用为 0。\(creatorDiscoveryFailureNote)",
+                message: creatorDiscoveryFailureNote.trimmingCharacters(in: .whitespacesAndNewlines),
                 metrics: [
                     DownloadResultMetric(id: "creators", label: "刷新博主", value: "\(creatorCount)", systemImage: "person.2.fill", tone: .accent),
                     DownloadResultMetric(id: "status", label: "总数状态", value: incomplete ? "未完成" : "已更新", systemImage: "number.circle.fill", tone: incomplete ? .warning : .positive),
@@ -1919,7 +1921,7 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "Articles 专属列表中没有发现文章；X API 调用为 0"
                 downloadResultNotice = DownloadResultNotice(
                     title: "没有发现文章",
-                    message: "目标博主的 Articles 专属列表中没有找到可下载的 X Article。",
+                    message: "",
                     metrics: [
                         DownloadResultMetric(id: "checked", label: "检查文章", value: "0", systemImage: "doc.text.magnifyingglass", tone: .neutral),
                         DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive)
@@ -1950,7 +1952,8 @@ final class AppViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(220))
                 self?.publishSyncResult(
                     title: hasUnfinishedWork ? "本次同步结束，仍有未完成文章" : "全部博主同步完成",
-                    message: "已检查 \(creatorCount) 位博主，每位检查\(range)；共识别 \(checked) 篇 X Article。新增或补全保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；保存或复用 \(images) 张图片、\(videos) 个视频。\n\n本次同步的 X API 调用为 0。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)\(discoveryFailureNote)",
+                    message: "\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)\(discoveryFailureNote)"
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
                     metrics: metrics
                 )
             }
@@ -1973,7 +1976,8 @@ final class AppViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(220))
                 self?.downloadResultNotice = DownloadResultNotice(
                     title: hasUnfinishedWork ? "本次队列结束，仍有未完成文章" : "文章下载完成",
-                    message: "本次进入下载队列 \(queuedTotal) 篇，成功保存 \(completed) 篇，已有完整归档跳过 \(skipped) 篇，需订阅 \(subscriptionRequired) 篇，失败 \(failed) 篇；成功保存或复用 \(images) 张图片、\(videos) 个视频。\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)\(discoveryFailureNote)",
+                    message: "\(failureNote)\(unaccountedNote)\(skippedSubscriptionNote)\(outstandingNote)\(discoveryFailureNote)"
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
                     metrics: metrics
                 )
             }
@@ -2745,7 +2749,7 @@ final class AppViewModel: ObservableObject {
                         statusMessage = "\(localHits) 篇文章已有完整排版；本次 X API 调用为 0"
                         downloadResultNotice = DownloadResultNotice(
                             title: "不需要重复下载",
-                            message: "识别到的 \(localHits) 篇文章都已经完整保存在本地，本次没有重复下载或存储媒体。",
+                            message: "\(localHits) 篇文章都已保存在本地。",
                             metrics: [
                                 DownloadResultMetric(id: "checked", label: "检查文章", value: "\(localHits)", systemImage: "doc.text.magnifyingglass", tone: .accent),
                                 DownloadResultMetric(id: "saved", label: "新增保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive),
@@ -3004,7 +3008,7 @@ final class AppViewModel: ObservableObject {
         statusMessage = "有 \(count) 篇文章需要订阅才能访问，本次已跳过"
         downloadResultNotice = DownloadResultNotice(
             title: "有 \(count) 篇需要订阅才能访问",
-            message: "「需要处理」里有 \(count) 篇已经确认需要订阅才能访问，本次重新处理已直接跳过，不会再次打开页面。订阅对应博主后，可在文章详情中单独重新处理。",
+            message: "订阅对应博主后，可在文章详情中重新处理。",
             metrics: [
                 DownloadResultMetric(id: "queued", label: "进入队列", value: "0", systemImage: "tray.and.arrow.down.fill", tone: .accent),
                 DownloadResultMetric(id: "saved", label: "成功保存", value: "0", systemImage: "checkmark.circle.fill", tone: .positive),

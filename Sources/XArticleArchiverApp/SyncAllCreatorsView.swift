@@ -25,7 +25,7 @@ struct SyncAllCreatorsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: "同步博主文章", subtitle: "为所有已跟踪博主检查更新，已有完整归档自动跳过。")
+            MarkXPaneHeader(title: "同步博主文章", onClose: { if !isSavingSchedule { dismiss() } })
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
                     Picker("同步方式", selection: $mode) {
@@ -38,12 +38,12 @@ struct SyncAllCreatorsView: View {
                 }
                 .padding(MarkXInterface.inset)
             }
-            MarkXFooter(note: mode == .now ? "当前跟踪 \(model.enabledCreatorCount) 位博主" : "按这台 Mac 的本地时间执行") {
+            MarkXFooter {
                 Button("取消", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction).disabled(isSavingSchedule)
                     .help("关闭窗口，不启动任务或更改设置")
                 if mode == .now {
-                    Button("开始同步") {
+                    Button("同步 \(model.enabledCreatorCount) 位博主") {
                         model.startSyncAll(articleLimit: downloadAllArticles ? nil : articleLimit,
                             resolveTotalCount: downloadAllArticles || resolveTotalCount)
                     }
@@ -65,25 +65,17 @@ struct SyncAllCreatorsView: View {
 
     private var immediateContent: some View {
         Group {
-            MarkXSection(title: "同步范围", detail: "全部 \(model.enabledCreatorCount) 位博主都会进入同步队列。") {
+            MarkXSection(title: "同步范围") {
                 Picker("文章范围", selection: $downloadAllArticles) {
                     Text("最近文章").tag(false)
                     Text("全部文章").tag(true)
                 }
                 .labelsHidden().pickerStyle(.segmented).help("检查最近文章，或完整扫描所有可见文章")
-                if downloadAllArticles {
-                    MarkXInfoLine(symbol: "text.page", text: "扫描到每位博主的列表底部，不受 100 篇限制。")
-                } else {
+                if !downloadAllArticles {
                     limitRow($articleLimit)
                     Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
                         .font(MarkXFont.detail).help("完整扫描列表来刷新总数，下载范围仍为最近指定数量")
-                    Text(resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数可以稍后单独刷新。")
-                        .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
                 }
-            }
-            MarkXSection(title: "执行方式") {
-                MarkXInfoLine(symbol: "checkmark.circle", text: "跳过已有完整归档，只保存新文章和未完成文章。")
-                MarkXInfoLine(symbol: "rectangle.on.rectangle", text: "在后台运行，关闭进度窗口后任务仍会继续。")
             }
         }
     }
@@ -92,10 +84,7 @@ struct SyncAllCreatorsView: View {
         Group {
             MarkXSection(title: "每日同步") {
                 HStack {
-                    VStack(alignment: .leading, spacing: MarkXSpace.xs) {
-                        Text("自动同步").font(MarkXFont.headline)
-                        Text("每天为所有已跟踪博主检查更新").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-                    }
+                    Text("自动同步").font(MarkXFont.headline)
                     Spacer()
                     Toggle("自动同步", isOn: $scheduleEnabled)
                         .labelsHidden().toggleStyle(.switch).help("启用或关闭每日后台同步")
@@ -112,7 +101,6 @@ struct SyncAllCreatorsView: View {
             MarkXSection(title: "最近执行") {
                 Text(lastScheduledRunDescription).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                MarkXInfoLine(symbol: "moon", text: "睡眠期间错过的任务会在唤醒后补执行；关机时无法运行。")
             }
         }
     }
@@ -135,9 +123,7 @@ struct SyncAllCreatorsView: View {
     }
 
     @ViewBuilder private var readinessRow: some View {
-        if readinessWarning.isEmpty {
-            MarkXInfoLine(symbol: "checkmark.circle", text: "归档位置与媒体存储已就绪", color: .green)
-        } else {
+        if !readinessWarning.isEmpty {
             Button {
                 dismiss()
                 Task { @MainActor in
@@ -160,8 +146,8 @@ struct SyncAllCreatorsView: View {
     }
 
     private var readinessWarning: String {
-        if model.archiveRoot == nil { return "本地归档目录未配置，点击前往设置" }
-        if !model.imageHostVerified { return "媒体存储未就绪，点击前往配置" }
+        if model.archiveRoot == nil { return "未选择归档目录" }
+        if !model.imageHostVerified { return "媒体存储未就绪" }
         if model.enabledCreatorCount == 0 { return "还没有已跟踪博主" }
         return ""
     }

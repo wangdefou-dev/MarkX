@@ -142,9 +142,12 @@ enum MarkXInterface {
 /// and one grey line. A status symbol is shown only when it carries meaning.
 struct MarkXPaneHeader: View {
     let title: String
-    let subtitle: String
+    var subtitle: String? = nil
     var symbol: String? = nil
     var symbolColor: Color = .secondary
+    /// Shows a close button in the sheet's top-left corner, where a window's
+    /// close button would be.
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: MarkXSpace.s) {
@@ -157,16 +160,44 @@ struct MarkXPaneHeader: View {
                 Text(title)
             }
             .font(MarkXFont.title)
-            Text(subtitle)
-                .font(MarkXFont.detail)
-                .foregroundStyle(MarkXInterface.text2)
-                .lineSpacing(MarkXSpace.xxs)
-                .fixedSize(horizontal: false, vertical: true)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(MarkXFont.detail)
+                    .foregroundStyle(MarkXInterface.text2)
+                    .lineSpacing(MarkXSpace.xxs)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, MarkXInterface.inset)
-        .padding(.top, MarkXSpace.x4)
+        .padding(.top, onClose == nil ? MarkXSpace.x4 : MarkXSpace.x4 + MarkXSpace.xl)
         .padding(.bottom, MarkXSpace.xxl)
+        .overlay(alignment: .topLeading) {
+            if let onClose { MarkXSheetCloseButton(action: onClose) }
+        }
+    }
+}
+
+/// Round grey close button for sheets, which have no window controls.
+struct MarkXSheetCloseButton: View {
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(isHovered ? Color.primary : MarkXInterface.text2)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(isHovered ? MarkXInterface.hover : MarkXInterface.wash))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .padding(.leading, MarkXSpace.l)
+        .padding(.top, MarkXSpace.l)
+        .help("关闭")
+        .accessibilityLabel("关闭")
     }
 }
 
@@ -357,7 +388,7 @@ struct MarkXRowContent<Content: View>: View {
 /// title, one grey line; the selected card gets an accent outline and tint.
 struct MarkXChoiceCard: View {
     let title: String
-    let detail: String
+    var detail: String? = nil
     let systemImage: String
     let isSelected: Bool
     let action: () -> Void
@@ -376,12 +407,14 @@ struct MarkXChoiceCard: View {
                         .font(MarkXFont.body)
                         .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(MarkXInterface.text3))
                 }
-                Text(detail)
-                    .font(MarkXFont.meta)
-                    .foregroundStyle(MarkXInterface.text2)
-                    .lineSpacing(MarkXSpace.xxs)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(MarkXFont.meta)
+                        .foregroundStyle(MarkXInterface.text2)
+                        .lineSpacing(MarkXSpace.xxs)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(MarkXSpace.l)

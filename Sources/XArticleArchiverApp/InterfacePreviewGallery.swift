@@ -70,7 +70,7 @@ struct InterfacePreviewGallery: View {
     }
 
     private var previewNotice: DownloadResultNotice {
-        DownloadResultNotice(title: "本次同步结束，仍有未完成文章", message: "已检查 38 位博主，共识别 120 篇文章。新增保存 18 篇，已有完整归档跳过 96 篇，需订阅 4 篇，失败 2 篇。\n\n已保存的正文、图片和视频会保留。你可以在「需要处理」中查看原因并重新处理。", metrics: [
+        DownloadResultNotice(title: "本次同步结束，仍有未完成文章", message: "失败的 2 篇可在「需要处理」中重新处理。", metrics: [
             .init(id: "creators", label: "博主", value: "38", systemImage: "person.2", tone: .accent),
             .init(id: "checked", label: "检查文章", value: "120", systemImage: "doc.text.magnifyingglass", tone: .neutral),
             .init(id: "saved", label: "新增保存", value: "18", systemImage: "checkmark.circle", tone: .positive),

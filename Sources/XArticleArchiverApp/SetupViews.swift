@@ -37,20 +37,18 @@ struct AddCreatorsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: model.downloadSheetPrefill.isEmpty ? "开始下载文章" : "重新拉取文章",
-                subtitle: "选择来源与下载范围，完整文章会保存在你的 Mac。")
+            MarkXPaneHeader(title: model.downloadSheetPrefill.isEmpty ? "下载文章" : "重新拉取文章",
+                            onClose: { dismiss() })
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXSpace.x3) {
                     sourceSection
                     inputSection
                     if entryMode == .single || entryMode == .batch { rangeSection }
-                    MarkXInfoLine(symbol: "checkmark.shield", text: "仅下载 X Article，保留正文排版、图片与视频。")
-                        .padding(.horizontal, MarkXSpace.xs)
                 }
                 .padding(.horizontal, MarkXInterface.inset)
                 .padding(.bottom, MarkXInterface.inset)
             }
-            MarkXFooter(note: "已有完整归档默认跳过") {
+            MarkXFooter {
                 Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                     .help("关闭窗口，不创建下载任务")
                 Button(downloadTitle, action: startDownload)
@@ -91,12 +89,12 @@ struct AddCreatorsView: View {
         VStack(alignment: .leading, spacing: MarkXSpace.m) {
             sectionLabel("下载来源")
             HStack(alignment: .top, spacing: MarkXSpace.m) {
-                MarkXChoiceCard(title: "单个博主", detail: "下载一位博主的 X Article。",
-                                systemImage: "person", isSelected: entryMode == .single) { entryMode = .single }
-                MarkXChoiceCard(title: "批量博主", detail: "每行一位，一次加入多位博主。",
-                                systemImage: "person.2", isSelected: entryMode == .batch) { entryMode = .batch }
-                MarkXChoiceCard(title: "文章链接", detail: "粘贴一条或多条文章链接。",
-                                systemImage: "link", isSelected: entryMode == .articleLinks) { entryMode = .articleLinks }
+                MarkXChoiceCard(title: "单个博主", systemImage: "person",
+                                isSelected: entryMode == .single) { entryMode = .single }
+                MarkXChoiceCard(title: "批量博主", systemImage: "person.2",
+                                isSelected: entryMode == .batch) { entryMode = .batch }
+                MarkXChoiceCard(title: "文章链接", systemImage: "link",
+                                isSelected: entryMode == .articleLinks) { entryMode = .articleLinks }
             }
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -107,7 +105,7 @@ struct AddCreatorsView: View {
         case nil:
             EmptyView()
         case .single:
-            MarkXGroup(title: "博主主页", footer: "输入用户名或 X 主页链接，只接受一行。") {
+            MarkXGroup(title: "博主主页") {
                 MarkXRowContent {
                     StrictSingleLineTextField(text: Binding(get: { input }, set: { input = SingleCreatorInputPolicy.sanitize($0) }),
                         placeholder: "@username 或 https://x.com/username")
@@ -121,23 +119,21 @@ struct AddCreatorsView: View {
                 }
             }
         case .batch:
-            MarkXGroup(title: "博主列表", footer: "每行一位，支持 @用户名或主页链接。") {
+            MarkXGroup(title: "博主列表（每行一位）") {
                 MarkXRowContent {
                     multilineInput(placeholder: "@username\nhttps://x.com/another_creator")
                     recognizedLine("已识别 \(parsedHandles.count) 位博主", ok: !parsedHandles.isEmpty)
                 }
             }
         case .articleLinks:
-            MarkXGroup(title: "X Article 链接", footer: "每行一条，最多 500 条；重复链接会自动合并。") {
+            MarkXGroup(title: "文章链接（每行一条，最多 500 条）") {
                 MarkXRowContent {
                     multilineInput(placeholder: "https://x.com/username/status/…")
                     recognizedLine("已识别 \(parsedArticleLinks.count) 条链接",
                                    ok: !parsedArticleLinks.isEmpty && parsedArticleLinks.count <= 500,
                                    warning: parsedArticleLinks.count > 500)
                 }
-                MarkXRow(title: "重新获取已归档文章",
-                         detail: refreshExistingLinks ? "校验成功后更新本地归档，手工修改的正文不会被直接覆盖。"
-                                                      : "默认跳过已经完整归档的文章。") {
+                MarkXRow(title: "重新获取已归档文章") {
                     Toggle("重新获取已归档文章", isOn: $refreshExistingLinks)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
@@ -174,15 +170,15 @@ struct AddCreatorsView: View {
         VStack(alignment: .leading, spacing: MarkXSpace.m) {
             sectionLabel("下载范围")
             HStack(alignment: .top, spacing: MarkXSpace.m) {
-                MarkXChoiceCard(title: "最近文章", detail: "每位博主下载最近发布的若干篇，速度最快。",
-                                systemImage: "clock", isSelected: mode == .recentWindow) { mode = .recentWindow }
-                MarkXChoiceCard(title: "全部文章", detail: "扫描到列表底部，下载全部可见文章。",
-                                systemImage: "square.stack", isSelected: mode == .fullArchive) { mode = .fullArchive }
+                MarkXChoiceCard(title: "最近文章", systemImage: "clock",
+                                isSelected: mode == .recentWindow) { mode = .recentWindow }
+                MarkXChoiceCard(title: "全部文章", systemImage: "square.stack",
+                                isSelected: mode == .fullArchive) { mode = .fullArchive }
             }
             .fixedSize(horizontal: false, vertical: true)
             if mode == .recentWindow {
                 MarkXGroup {
-                    MarkXRow(title: "每位博主", detail: "最多 100 篇") {
+                    MarkXRow(title: "每位博主") {
                         HStack(spacing: MarkXSpace.s) {
                             ForEach([5, 10, 20, 50, 100], id: \.self) { value in
                                 Button("\(value)") { articleLimit = value }
@@ -197,8 +193,7 @@ struct AddCreatorsView: View {
                             .padding(.leading, MarkXSpace.xs)
                         }
                     }
-                    MarkXRow(title: "同时刷新线上文章总数",
-                             detail: resolveTotalCount ? "将额外扫描完整列表，所需时间更长。" : "优先读取最近文章；总数也可稍后单独刷新。") {
+                    MarkXRow(title: "同时刷新线上文章总数") {
                         Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
                             .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     }
@@ -370,17 +365,15 @@ struct ConnectionSetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarkXPaneHeader(title: "连接与存储", subtitle: "管理浏览器会话、归档位置，以及图片和视频的保存方式。")
+            MarkXPaneHeader(title: "连接与存储")
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: MarkXSpace.x3) {
-                        MarkXGroup(title: "归档位置", footer: "Markdown、原图、视频与资料库会一起保存。") {
+                        MarkXGroup(title: "归档位置") {
                             ArchiveFolderRow()
                         }.id("archive-directory")
                         BrowserConnectionConfiguration().id("browser-session")
                         MediaStorageConfiguration().id("image-host")
-                        MarkXInfoLine(symbol: "lock.shield", text: "正文在本机转换，访问密钥仅保存在 macOS 钥匙串。")
-                            .padding(.horizontal, MarkXSpace.xs)
                     }
                     .padding(.horizontal, MarkXInterface.inset)
                     .padding(.bottom, MarkXInterface.inset)
@@ -399,7 +392,7 @@ struct ConnectionSetupView: View {
                     }
                 }
             }
-            MarkXFooter(note: "配置保存在这台 Mac") {
+            MarkXFooter {
                 Button("完成") { dismiss() }
                     .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                     .help("关闭连接与存储配置")
@@ -610,8 +603,6 @@ struct MediaStorageConfiguration: View {
         .confirmationDialog("移除已保存的 S3 / R2 密钥？", isPresented: $confirmsRemovingKeys, titleVisibility: .visible) {
             Button("移除密钥", role: .destructive) { model.removeS3Credentials() }
             Button("取消", role: .cancel) { }
-        } message: {
-            Text("之后需要重新填写密钥才能上传。已有文章、本地媒体和远程文件会保留。")
         }
     }
 
@@ -689,15 +680,6 @@ struct SettingsView: View {
             }
         }
 
-        var subtitle: String {
-            switch self {
-            case .general: "软件更新，诊断与问题反馈。"
-            case .x: "MarkX 通过你本机浏览器里的 X 登录来下载文章。"
-            case .storage: "资料库位置、图片和视频的保存方式，以及缓存整理。"
-            case .about: "MarkX 如何处理你的数据。"
-            }
-        }
-
         var symbol: String {
             switch self {
             case .general: "gearshape"
@@ -716,11 +698,6 @@ struct SettingsView: View {
             navigation
             ScrollView {
                 VStack(alignment: .leading, spacing: MarkXSpace.x3) {
-                    VStack(alignment: .leading, spacing: MarkXSpace.s) {
-                        Text(pane.title).font(MarkXFont.title)
-                        Text(pane.subtitle).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                    }
-                    .padding(.horizontal, MarkXSpace.xs)
                     content
                 }
                 .padding(.horizontal, MarkXSpace.x4)
