@@ -23,7 +23,7 @@ final class AppUpdater: ObservableObject {
     private static let lastCheckKey = "lastUpdateCheck"
     private static let checkInterval: TimeInterval = 6 * 60 * 60
 
-    @Published private(set) var phase: Phase = .idle
+    @Published internal(set) var phase: Phase = .idle
     @Published private(set) var lastChecked: Date?
     /// Set by the app so installing never interrupts an archive task.
     var isBusy: () -> Bool = { false }
@@ -129,6 +129,9 @@ final class AppUpdater: ObservableObject {
                 }.value
                 phase = .ready(manifest, stagedApp: staged)
                 showWindow()
+                // Downloaded and verified: install and relaunch right away,
+                // unless a download task would be interrupted.
+                if !isBusy() { installAndRelaunch() }
             } catch is CancellationError {
                 phase = .available(manifest)
             } catch {
@@ -197,12 +200,14 @@ final class AppUpdater: ObservableObject {
     func showWindow() {
         if window == nil {
             let hosting = NSHostingController(rootView: SoftwareUpdateView().environmentObject(self))
+            // The window follows the dialog's height as the phase changes.
+            hosting.sizingOptions = [.preferredContentSize]
             let window = NSWindow(contentViewController: hosting)
             window.title = "软件更新"
             window.styleMask = [.titled, .closable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 520, height: 420))
+            window.setContentSize(NSSize(width: 360, height: 200))
             window.center()
             self.window = window
         }
@@ -234,112 +239,70 @@ private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelega
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
 }
 
+/// One short dialog: there is a new version, download it, it installs and
+/// relaunches by itself.
 struct SoftwareUpdateView: View {
     @EnvironmentObject private var updater: AppUpdater
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: MarkXSpace.xl) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 56, height: 56)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: MarkXSpace.s) {
-                    Text(title).font(MarkXFont.title)
-                    Text(subtitle)
+        VStack(spacing: MarkXSpace.xl) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 56, height: 56)
+                .accessibilityHidden(true)
+            VStack(spacing: MarkXSpace.s) {
+                Text(title).font(MarkXFont.headline)
+                if let detail {
+                    Text(detail)
                         .font(MarkXFont.detail)
                         .foregroundStyle(MarkXInterface.text2)
+                        .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, MarkXSpace.x4)
-            .padding(.top, MarkXSpace.x5)
-            .padding(.bottom, MarkXSpace.xxl)
-
-            VStack(alignment: .leading, spacing: 0) { content }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, MarkXSpace.x4)
-                .padding(.bottom, MarkXSpace.xxl)
-
-            MarkXFooter(note: footerNote) { actions }
+            progress
+            HStack(spacing: MarkXSpace.m) { actions }
+                .buttonStyle(.markxPill)
+                .controlSize(.regular)
         }
-        .frame(width: 520, height: 420)
+        .padding(.horizontal, MarkXSpace.x4)
+        .padding(.top, MarkXSpace.x5)
+        .padding(.bottom, MarkXSpace.x3)
+        .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
         .background(MarkXInterface.canvas)
-    }
-
-    private var manifest: ReleaseManifest? {
-        switch updater.phase {
-        case .available(let m), .downloading(let m, _), .ready(let m, _), .installing(let m): m
-        default: nil
-        }
     }
 
     private var title: String {
         switch updater.phase {
         case .idle, .checking: "正在检查更新…"
-        case .upToDate: "MarkX 已是最新版本"
-        case .available: "MarkX 有新版本可用"
-        case .downloading: "正在下载新版本…"
-        case .ready: "新版本已准备好"
-        case .installing: "正在安装…"
+        case .upToDate: "已是最新版本"
+        case .available(let m): "有新版本 \(m.version)"
+        case .downloading: "正在下载…"
+        case .ready: "下载完成"
+        case .installing: "正在安装，即将重启…"
         case .failed: "更新未完成"
         }
     }
 
-    private var subtitle: String {
-        let current = "当前版本 \(updater.currentVersion)（\(updater.currentBuild)）"
-        if let manifest {
-            return "MarkX \(manifest.version)（\(manifest.build)）可用，\(current)。"
+    private var detail: String? {
+        switch updater.phase {
+        case .failed(let message): message
+        case .ready where updater.isBusy(): "下载任务结束后即可安装。"
+        default: nil
         }
-        if case .failed(let message) = updater.phase { return message }
-        return current + "。"
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var progress: some View {
         switch updater.phase {
-        case .checking, .idle:
+        case .checking, .idle, .installing:
             ProgressView().controlSize(.small)
-        case .downloading(_, let progress):
-            VStack(alignment: .leading, spacing: MarkXSpace.m) {
-                ProgressView(value: progress)
-                Text("\(Int(progress * 100))%").font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-                    .monospacedDigit()
-            }
-            .padding(.top, MarkXSpace.m)
+        case .downloading(_, let fraction):
+            ProgressView(value: fraction).frame(width: 220)
         default:
-            if let notes = manifest?.notes, !notes.isEmpty {
-                VStack(alignment: .leading, spacing: MarkXSpace.m) {
-                    Text("更新内容").font(MarkXFont.detailStrong)
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: MarkXSpace.m) {
-                            ForEach(notes, id: \.self) { note in
-                                HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
-                                    Circle().fill(.tint).frame(width: 5, height: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] + 1 }
-                                    Text(note).font(MarkXFont.detail).lineSpacing(3)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                        .padding(MarkXSpace.l)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .background(MarkXInterface.surface, in: RoundedRectangle(cornerRadius: MarkXRadius.panel))
-                }
-            } else if manifest != nil {
-                Text("更新内容可在官网查看。").font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-            }
-        }
-    }
-
-    private var footerNote: String {
-        switch updater.phase {
-        case .ready where updater.isBusy(): "当前有下载任务，完成后再重新启动。"
-        case .ready: "安装时旧版会移到废纸篓，MarkX 将自动重新打开。"
-        case .available: "下载后先核对校验值与签名。"
-        default: ""
+            EmptyView()
         }
     }
 
@@ -347,21 +310,18 @@ struct SoftwareUpdateView: View {
     private var actions: some View {
         switch updater.phase {
         case .available:
-            Button("跳过此版本") { updater.skip() }
             Button("稍后") { updater.closeWindow() }.keyboardShortcut(.cancelAction)
-            Button("下载并安装") { updater.download() }
+            Button("下载更新") { updater.download() }
                 .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
         case .downloading:
             Button("取消") { updater.cancel() }.keyboardShortcut(.cancelAction)
         case .ready:
-            Button("稍后") { updater.closeWindow() }.keyboardShortcut(.cancelAction)
-            Button("重新启动并安装") { updater.installAndRelaunch() }
+            Button("安装并重启") { updater.installAndRelaunch() }
                 .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                 .disabled(updater.isBusy())
         case .installing, .checking, .idle:
             EmptyView()
         case .failed:
-            Button("前往官网下载") { updater.openDownloadPage() }
             Button("重试") { updater.check(userInitiated: true) }
                 .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
         case .upToDate:
@@ -370,7 +330,6 @@ struct SoftwareUpdateView: View {
         }
     }
 }
-
 /// Settings group for the 通用 pane.
 struct SoftwareUpdateSettingsSection: View {
     @ObservedObject private var updater = AppUpdater.shared

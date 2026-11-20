@@ -342,6 +342,8 @@ struct RootView: View {
         }
         .padding(.horizontal, MarkXSpace.m + Self.sidebarInset)
         .frame(height: 44)
+        // Sits a little above the window's bottom edge.
+        .padding(.bottom, MarkXSpace.m)
     }
 
     /// Shown only while a task runs: open the progress window or stop.

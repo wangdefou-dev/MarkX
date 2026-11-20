@@ -410,87 +410,41 @@ struct ConnectionSetupView: View {
 private struct BrowserConnectionConfiguration: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isChecking = false
+
+    private var probe: BrowserSessionProbe { model.browserSessionProbe }
+    /// A switch menu only when there is something to switch between.
+    private var showsSwitchMenu: Bool {
+        probe.loggedInProfiles.count > 1
+            || (!BrowserSessionSelection(model.preferredBrowserID).isAutomatic && !probe.loggedInProfiles.isEmpty)
+    }
 
     var body: some View {
-        MarkXGroup(title: "浏览器与 X 登录",
-                   footer: "支持 Chrome、Edge、Arc、Brave、Firefox 等，暂不支持 Safari。") {
-            MarkXRow(title: "使用浏览器", symbol: "globe") {
-                Picker("使用浏览器", selection: $model.preferredBrowserID) {
-                    Text("自动查找（最近使用的登录）").tag(BrowserSessionSelection.automaticID)
-                    let logins = model.browserSessionProbe.loggedInProfiles
-                    if !logins.isEmpty {
-                        Section("检测到的 X 登录") {
-                            ForEach(logins) { Text($0.description).tag($0.selectionID) }
-                        }
-                    }
-                    if let missing = missingSelectionLabel(logins: logins) {
-                        Text(missing).tag(model.preferredBrowserID)
-                    }
-                    let browsers = detectedBrowsers
-                    if !browsers.isEmpty {
-                        Section("按浏览器") {
-                            ForEach(browsers, id: \.id) { Text($0.name).tag($0.id) }
-                        }
+        MarkXGroup(title: "X 登录") {
+            if let current = probe.selectedProfiles.first {
+                MarkXRow(title: "已登录", detail: current.description,
+                         symbol: "checkmark.circle", symbolColor: .green) {
+                    if showsSwitchMenu { switchMenu }
+                }
+            } else if model.isRefreshingBrowserStatus && probe.profiles.isEmpty && probe.issues.isEmpty {
+                MarkXRow(title: "正在检查…", symbol: "person.crop.circle") {
+                    ProgressView().controlSize(.small)
+                }
+            } else {
+                MarkXRow(title: "未登录",
+                         detail: model.browserSessionCheckMessage ?? notLoggedInDetail,
+                         symbol: "exclamationmark.circle", symbolColor: .orange) {
+                    HStack(spacing: MarkXSpace.s) {
+                        if showsSwitchMenu { switchMenu }
+                        Button("打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
+                            .buttonStyle(.markxCompactProminent)
+                            .help("在默认浏览器中打开 X 登录")
                     }
                 }
-                .labelsHidden().fixedSize()
-                .disabled(isChecking)
-            }
-            MarkXRow(title: model.hasBrowserSessionData ? "已找到 X 登录" : "未找到 X 登录",
-                     detail: model.isRefreshingBrowserStatus ? "正在检查本机浏览器的 X 登录记录…" : model.browserSessionProbe.summary,
-                     symbol: model.hasBrowserSessionData ? "checkmark.circle" : "exclamationmark.circle",
-                     symbolColor: model.hasBrowserSessionData ? .green : .orange) {
-                Button("刷新", systemImage: "arrow.clockwise") { model.refreshBrowserStatus() }
-                    .buttonStyle(.markxCompact)
-                    .disabled(model.isRefreshingBrowserStatus || isChecking)
-                    .help("重新检查全部受支持的浏览器与配置")
-            }
-            if let browser = model.browserNameNeedingAccess {
-                MarkXRow(title: "授权读取 \(browser)",
-                         detail: "在弹出窗口中选择「允许读取」，只需一次。",
-                         symbol: "key", symbolColor: .orange) {
-                    Button("授权…") { model.chooseBrowserDataDirectory() }
-                        .buttonStyle(.markxCompactProminent)
-                        .disabled(isChecking)
-                }
-            }
-            MarkXRow(title: "验证会话读取",
-                     detail: model.browserSessionCheckMessage,
-                     symbol: "checkmark.shield") {
-                Button(isChecking ? "正在验证…" : "验证") {
-                    isChecking = true
-                    Task { await model.verifyBrowserSession(); isChecking = false }
-                }
-                .buttonStyle(.markxCompact)
-                .disabled(isChecking || model.isRefreshingBrowserStatus)
-            }
-            .textSelection(.enabled)
-            MarkXRow(title: "其他数据目录", symbol: "folder") {
-                Button("选择…") { model.chooseBrowserDataDirectory() }
-                    .buttonStyle(.markxCompact)
-                    .disabled(isChecking)
-            }
-            MarkXRow(title: "登录 X", symbol: "person.crop.circle") {
-                Button("打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
-                    .buttonStyle(.markxCompact)
-            }
-            if !model.browserSessionProbe.profiles.isEmpty {
-                MarkXRowContent {
-                    DisclosureGroup("检测到的配置（\(model.browserSessionProbe.profiles.count)）") {
-                        VStack(alignment: .leading, spacing: MarkXSpace.s) {
-                            ForEach(model.browserSessionProbe.profiles) { profile in
-                                HStack(spacing: MarkXSpace.s) {
-                                    StatusDot(color: profile.hasLoginCookies ? .green : MarkXInterface.text3)
-                                    Text(profile.description + (profile.hasLoginCookies ? " · 有 X 登录数据" : " · 未检测到 X 登录数据"))
-                                }
-                                .font(MarkXFont.meta).foregroundStyle(MarkXInterface.text2)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, MarkXSpace.m)
+                if let browser = model.browserNameNeedingAccess {
+                    MarkXRow(title: "授权读取 \(browser)", symbol: "key", symbolColor: .orange) {
+                        Button("授权…") { model.chooseBrowserDataDirectory() }
+                            .buttonStyle(.markxCompact)
                     }
-                    .font(MarkXFont.detail)
                 }
             }
         }
@@ -498,20 +452,36 @@ private struct BrowserConnectionConfiguration: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshBrowserStatus() }
         }
+        // After “打开 X”, notice the new login without any extra click.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                if !model.hasBrowserSessionData && !model.isRefreshingBrowserStatus { model.refreshBrowserStatus() }
+            }
+        }
     }
 
-    /// Browsers found on this Mac, plus the chosen one if it is not found.
-    private var detectedBrowsers: [BrowserSessionDefinition] {
-        var result: [BrowserSessionDefinition] = []
-        for profile in model.browserSessionProbe.profiles where !result.contains(where: { $0.id == profile.browser.id }) {
-            result.append(profile.browser)
+    private var notLoggedInDetail: String {
+        if !probe.loggedInProfiles.isEmpty { return "所选浏览器没有登录，可切换到其他登录" }
+        return "在 Chrome、Edge、Arc、Firefox 等浏览器登录后会自动识别，暂不支持 Safari"
+    }
+
+    private var switchMenu: some View {
+        Menu("切换") {
+            Picker("使用的登录", selection: $model.preferredBrowserID) {
+                Text("自动（最近使用的）").tag(BrowserSessionSelection.automaticID)
+                ForEach(probe.loggedInProfiles) { Text($0.description).tag($0.selectionID) }
+                if let missing = missingSelectionLabel(logins: probe.loggedInProfiles) {
+                    Text(missing).tag(model.preferredBrowserID)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
         }
-        let selection = BrowserSessionSelection(model.preferredBrowserID)
-        if let id = selection.browserID, !result.contains(where: { $0.id == id }),
-           let chosen = BrowserSessionDefinition.supported.first(where: { $0.id == id }) {
-            result.append(chosen)
-        }
-        return result
+        .menuStyle(.button)
+        .buttonStyle(.markxCompact)
+        .fixedSize()
+        .help("选择使用哪个浏览器的 X 登录")
     }
 
     /// A pinned profile that no longer has a login still needs a menu item,
@@ -764,25 +734,34 @@ struct SettingsView: View {
     }
 
     @EnvironmentObject private var model: AppViewModel
-    @State private var pane: Pane = .general
+    @State private var pane: Pane
 
+    init(initialPane: Pane = .general) {
+        _pane = State(initialValue: initialPane)
+    }
+
+    /// The window is as tall as the current pane needs (never a fixed
+    /// height with empty space below).
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             navigation
-            ScrollView {
-                VStack(alignment: .leading, spacing: MarkXSpace.x3) {
-                    content
-                }
-                .padding(.horizontal, MarkXSpace.x3)
-                .padding(.top, MarkXSpace.x3)
-                .padding(.bottom, MarkXSpace.x3)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: MarkXSpace.x3) {
+                content
             }
+            .padding(MarkXSpace.x3)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .id(pane)
-            .background(MarkXInterface.canvas)
+        }
+        .frame(width: 680)
+        .frame(minHeight: 230)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(alignment: .leading) {
+            HStack(spacing: 0) {
+                MarkXInterface.sidebarGradient.frame(width: 168)
+                MarkXInterface.canvas
+            }
         }
         .font(MarkXFont.body)
-        .frame(width: 680, height: 500)
         .navigationTitle(pane.title)
     }
 
@@ -810,10 +789,10 @@ struct SettingsView: View {
         }
         .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
         .padding(.top, MarkXSpace.l)
+        .padding(.bottom, MarkXSpace.l)
+        // Darker than the content pane, like the main window's sidebar (drawn
+        // behind the whole window); the panes are told apart by tone.
         .frame(width: 168)
-        // Darker than the content pane, like the main window's sidebar;
-        // the two panes are told apart by tone, not a divider line.
-        .background(MarkXInterface.sidebarGradient)
     }
 
     @ViewBuilder private var content: some View {
