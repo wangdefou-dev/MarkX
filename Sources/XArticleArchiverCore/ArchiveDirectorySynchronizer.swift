@@ -162,6 +162,42 @@ public enum ArchiveDirectorySynchronizer {
         )
     }
 
+    /// Finishes a move: after the destination has been verified and the app
+    /// has switched to it, every item left in the old archive root goes to
+    /// the Trash (recoverable), and the emptied root folder is removed.
+    /// Returns how many top-level items were moved out.
+    @discardableResult
+    public static func removeSourceAfterMove(
+        _ source: URL,
+        destination: URL,
+        fileManager: FileManager = .default,
+        discard: ((URL) throws -> Void)? = nil
+    ) throws -> Int {
+        let sourceRoot = source.standardizedFileURL.resolvingSymlinksInPath()
+        let destinationRoot = destination.standardizedFileURL.resolvingSymlinksInPath()
+        guard sourceRoot.path != destinationRoot.path,
+              !isDescendant(destinationRoot, of: sourceRoot),
+              !isDescendant(sourceRoot, of: destinationRoot) else {
+            throw ArchiveDirectorySyncError.nestedDirectory
+        }
+        guard isDirectory(sourceRoot, fileManager: fileManager) else { return 0 }
+        let discard = discard ?? { try fileManager.trashItem(at: $0, resultingItemURL: nil) }
+        let children = try fileManager.contentsOfDirectory(at: sourceRoot, includingPropertiesForKeys: nil, options: [])
+        var removed = 0
+        for child in children {
+            if child.lastPathComponent == ".DS_Store" {
+                try? fileManager.removeItem(at: child)
+                continue
+            }
+            try discard(child)
+            removed += 1
+        }
+        if (try? fileManager.contentsOfDirectory(atPath: sourceRoot.path))?.isEmpty == true {
+            try? fileManager.removeItem(at: sourceRoot)
+        }
+        return removed
+    }
+
     public static func rebasedPath(_ path: String, from source: URL, to destination: URL) -> String? {
         guard let relativePath = relativePath(for: path, under: source) else { return nil }
         return destination.standardizedFileURL.appending(path: relativePath).path

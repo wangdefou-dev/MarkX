@@ -369,11 +369,11 @@ struct ConnectionSetupView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: MarkXSpace.x3) {
-                        MarkXGroup(title: "归档位置") {
+                        MediaStorageConfiguration().id("image-host")
+                        MarkXGroup(title: "本地文件夹") {
                             ArchiveFolderRow()
                         }.id("archive-directory")
                         BrowserConnectionConfiguration().id("browser-session")
-                        MediaStorageConfiguration().id("image-host")
                     }
                     .padding(.horizontal, MarkXInterface.inset)
                     .padding(.bottom, MarkXInterface.inset)
@@ -414,10 +414,8 @@ private struct BrowserConnectionConfiguration: View {
 
     var body: some View {
         MarkXGroup(title: "浏览器与 X 登录",
-                   footer: "兼容 Chrome、Edge、Brave、Arc、Vivaldi、Opera、Chromium、夸克、豆包及 Firefox。仅读取 X 会话，不保存密码或 Cookie。Safari 暂不支持自动导入。") {
-            MarkXRow(title: "使用浏览器",
-                     detail: "在多个浏览器或配置登录过 X 时，可在这里指定用哪一个；“自动查找”优先用最近使用的登录。",
-                     symbol: "globe") {
+                   footer: "支持 Chrome、Edge、Arc、Firefox 等，暂不支持 Safari。") {
+            MarkXRow(title: "使用浏览器", symbol: "globe") {
                 Picker("使用浏览器", selection: $model.preferredBrowserID) {
                     Text("自动查找（最近使用的登录）").tag(BrowserSessionSelection.automaticID)
                     let logins = model.browserSessionProbe.loggedInProfiles
@@ -447,7 +445,7 @@ private struct BrowserConnectionConfiguration: View {
             }
             if let browser = model.browserNameNeedingAccess {
                 MarkXRow(title: "授权读取 \(browser)",
-                         detail: "macOS 默认不允许其他应用读取 \(browser) 的数据。点按钮后在弹出的窗口里选择「允许读取」，只需授权一次。",
+                         detail: "在弹出窗口中选择「允许读取」，只需一次。",
                          symbol: "key", symbolColor: .orange) {
                     Button("授权…") { model.chooseBrowserDataDirectory() }
                         .buttonStyle(.markxCompactProminent)
@@ -455,7 +453,7 @@ private struct BrowserConnectionConfiguration: View {
                 }
             }
             MarkXRow(title: "验证会话读取",
-                     detail: model.browserSessionCheckMessage ?? "仅在本机解密并验证 X 登录数据，不发起下载，也不修改浏览器。",
+                     detail: model.browserSessionCheckMessage,
                      symbol: "checkmark.shield") {
                 Button(isChecking ? "正在验证…" : "验证") {
                     isChecking = true
@@ -465,12 +463,12 @@ private struct BrowserConnectionConfiguration: View {
                 .disabled(isChecking || model.isRefreshingBrowserStatus)
             }
             .textSelection(.enabled)
-            MarkXRow(title: "其他数据目录", detail: "为自定义目录或 macOS 读取受限的目录保存访问授权。", symbol: "folder") {
+            MarkXRow(title: "其他数据目录", symbol: "folder") {
                 Button("选择…") { model.chooseBrowserDataDirectory() }
                     .buttonStyle(.markxCompact)
                     .disabled(isChecking)
             }
-            MarkXRow(title: "登录 X", detail: "还没登录时，在系统默认浏览器里打开 X 完成登录。", symbol: "person.crop.circle") {
+            MarkXRow(title: "登录 X", symbol: "person.crop.circle") {
                 Button("打开 X", systemImage: "arrow.up.right") { model.openBrowserXLogin() }
                     .buttonStyle(.markxCompact)
             }
@@ -516,9 +514,9 @@ private struct ArchiveFolderRow: View {
         HStack(alignment: .center, spacing: MarkXSpace.l) {
             MarkXIconTile(systemImage: "folder")
             VStack(alignment: .leading, spacing: MarkXSpace.xxs + 1) {
-                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择归档目录").font(MarkXFont.body)
+                Text(model.archiveRoot?.lastPathComponent ?? "尚未选择").font(MarkXFont.body)
                     .lineLimit(1).truncationMode(.middle)
-                Text(model.archiveRoot.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "选择一个你方便管理和备份的文件夹")
+                Text(model.archiveRoot.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "—")
                     .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
                     .lineLimit(1).truncationMode(.middle)
             }
@@ -529,10 +527,10 @@ private struct ArchiveFolderRow: View {
                     Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([root]) }
                         .buttonStyle(.markxCompact)
                 }
-                Button(model.archiveRoot == nil ? "选择目录…" : "更换…") { model.chooseArchiveFolder() }
+                Button(model.archiveRoot == nil ? "选择…" : "移动…") { model.chooseArchiveFolder() }
                     .buttonStyle(.markxCompact)
                     .disabled(model.isRunning || model.hasActiveDownloadProgress)
-                    .help("同步现有资料后切换归档位置，旧目录保留")
+                    .help(model.archiveRoot == nil ? "选择保存文章的文件夹" : "把资料移动到另一个文件夹")
             }
         }
         .padding(.horizontal, MarkXSpace.xl)
@@ -549,33 +547,37 @@ struct MediaStorageConfiguration: View {
     @State private var isTestingS3 = false
     @State private var showsAdvanced = false
     @State private var confirmsRemovingKeys = false
+    /// A different storage method waiting for the user's confirmation.
+    @State private var pendingChoice: AppViewModel.ImageHostChoice?
     private var isTesting: Bool { isTestingUPic || isTestingS3 }
 
-    private var choiceDetail: String {
-        switch model.imageHostChoice {
-        case .local: "原图和视频保存在归档目录内，整个目录可以一起移动或备份。"
-        case .uPic: "使用 uPic 当前的默认图床，原图和视频仍保留本地备份。"
-        case .s3: "上传到你的 S3 兼容存储（如 Cloudflare R2），本地仍保留备份。"
+    private static func name(_ choice: AppViewModel.ImageHostChoice) -> String {
+        switch choice {
+        case .local: "本地"
+        case .uPic: "uPic"
+        case .s3: "S3 / R2"
         }
     }
 
     var body: some View {
-        MarkXGroup(title: "媒体存储") {
-            MarkXRow(title: "存储方式", detail: choiceDetail, symbol: "photo.on.rectangle") {
-                Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { model.selectImageHost($0) })) {
+        MarkXGroup(title: "存储方式") {
+            MarkXRow(title: "图片和视频", symbol: "photo.on.rectangle") {
+                Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { choice in
+                    if choice != model.imageHostChoice { pendingChoice = choice }
+                })) {
                     Text("本地").tag(AppViewModel.ImageHostChoice.local)
                     Text("uPic").tag(AppViewModel.ImageHostChoice.uPic)
-                    Text("S3 / R2").tag(AppViewModel.ImageHostChoice.s3)
+                    Text("S3/R2").tag(AppViewModel.ImageHostChoice.s3)
                 }
                 .labelsHidden().pickerStyle(.segmented).fixedSize().disabled(isTesting)
-                .help("选择本地保存，或同时使用外部媒体存储")
+                .help("切换前会先确认")
             }
             switch model.imageHostChoice {
             case .local:
                 EmptyView()
             case .uPic:
                 MarkXRow(title: model.upicCapability.isAvailable ? "已找到 uPic" : "未找到 uPic",
-                         detail: model.upicCapability.detail + " 验证会上传一张无隐私测试图片；本应用不读取 uPic 密钥。",
+                         detail: model.upicCapability.isAvailable ? nil : model.upicCapability.detail,
                          symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
                          symbolColor: model.upicCapability.isAvailable ? .green : .orange) {
                     Button(isTestingUPic ? "正在验证…" : "验证连接") {
@@ -599,6 +601,17 @@ struct MediaStorageConfiguration: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, MarkXSpace.xl)
             .padding(.vertical, MarkXSpace.l)
+        }
+        .confirmationDialog(
+            pendingChoice.map { $0 == .local ? "改为本地存储？" : "改用 \(Self.name($0)) 存储？" } ?? "",
+            isPresented: Binding(get: { pendingChoice != nil }, set: { if !$0 { pendingChoice = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingChoice
+        ) { choice in
+            Button("切换") { model.selectImageHost(choice); pendingChoice = nil }
+            Button("取消", role: .cancel) { pendingChoice = nil }
+        } message: { _ in
+            Text("之后的新文章按新方式保存，已保存的不变。")
         }
         .confirmationDialog("移除已保存的 S3 / R2 密钥？", isPresented: $confirmsRemovingKeys, titleVisibility: .visible) {
             Button("移除密钥", role: .destructive) { model.removeS3Credentials() }
@@ -700,16 +713,16 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: MarkXSpace.x3) {
                     content
                 }
-                .padding(.horizontal, MarkXSpace.x4)
+                .padding(.horizontal, MarkXSpace.x3)
                 .padding(.top, MarkXSpace.x3)
-                .padding(.bottom, MarkXSpace.x4)
+                .padding(.bottom, MarkXSpace.x3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .id(pane)
             .background(MarkXInterface.canvas)
         }
         .font(MarkXFont.body)
-        .frame(width: 780, height: 580)
+        .frame(width: 680, height: 500)
         .navigationTitle(pane.title)
     }
 
@@ -737,7 +750,7 @@ struct SettingsView: View {
         }
         .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
         .padding(.top, MarkXSpace.l)
-        .frame(width: 196)
+        .frame(width: 168)
         // Darker than the content pane, like the main window's sidebar;
         // the two panes are told apart by tone, not a divider line.
         .background(MarkXInterface.sidebarGradient)
@@ -747,17 +760,16 @@ struct SettingsView: View {
         switch pane {
         case .general:
             SoftwareUpdateSettingsSection()
-            MarkXGroup(title: "诊断与反馈",
-                       footer: "日志只保存在本机（~/Library/Logs/MarkX），不会自动上传。遇到问题时导出诊断报告，发给开发者即可定位；报告不含 X 登录信息、图床密钥和文章正文。") {
-                MarkXRow(title: "导出诊断报告", detail: "打包最近的日志、系统信息、资料库统计和崩溃记录。", symbol: "stethoscope") {
+            MarkXGroup(title: "诊断与反馈", footer: "日志只存在本机；报告不含登录信息、密钥和正文。") {
+                MarkXRow(title: "导出诊断报告", symbol: "stethoscope") {
                     Button("导出…") { Task { await DiagnosticReport.export(model: model) } }
                         .buttonStyle(.markxCompact)
                 }
-                MarkXRow(title: "反馈问题", detail: "导出诊断报告后打开反馈页面，把报告拖进去提交。", symbol: "exclamationmark.bubble") {
+                MarkXRow(title: "反馈问题", symbol: "exclamationmark.bubble") {
                     Button("反馈…") { Task { await DiagnosticReport.reportProblem(model: model) } }
                         .buttonStyle(.markxCompact)
                 }
-                MarkXRow(title: "运行日志", detail: "在 Finder 中查看日志文件。", symbol: "doc.text.magnifyingglass") {
+                MarkXRow(title: "运行日志", symbol: "doc.text.magnifyingglass") {
                     Button("显示") { DiagnosticReport.revealLogs() }
                         .buttonStyle(.markxCompact)
                 }
@@ -765,14 +777,12 @@ struct SettingsView: View {
         case .x:
             BrowserConnectionConfiguration()
         case .storage:
-            MarkXGroup(title: "本地资料库", footer: "Markdown、原图、视频与资料库数据库都保存在这个文件夹。") {
+            MediaStorageConfiguration()
+            MarkXGroup(title: "本地文件夹") {
                 ArchiveFolderRow()
             }
-            MediaStorageConfiguration()
-            MarkXGroup(title: "缓存管理") {
-                MarkXRow(title: "重复媒体缓存",
-                         detail: "保留完整媒体备份，只移除已经重复保存的隐藏缓存。",
-                         symbol: "trash") {
+            MarkXGroup(title: "缓存") {
+                MarkXRow(title: "整理重复媒体缓存", symbol: "trash") {
                     Button("整理…") { model.cleanVerifiedMediaCache() }
                         .buttonStyle(.markxCompact)
                         .disabled(model.isRunning || model.hasActiveDownloadProgress || model.archiveRoot == nil)
@@ -797,9 +807,9 @@ struct SettingsView: View {
                 .padding(MarkXSpace.xl)
             }
             MarkXGroup(title: "隐私") {
-                MarkXRow(title: "本机转换", detail: "正文在本机解析与保存，不交给 AI；诊断日志只存在本机，只有你主动导出时才会离开这台 Mac。", symbol: "desktopcomputer")
-                MarkXRow(title: "会话仅在内存使用", detail: "仅读取所选浏览器中必需的 X 会话，不读取其他网站的登录信息。", symbol: "key")
-                MarkXRow(title: "外部存储由你选择", detail: "只有选择并验证图床后，图片与视频才会发送到对应存储。", symbol: "externaldrive.badge.checkmark")
+                MarkXRow(title: "本机转换", detail: "正文不交给 AI，日志不自动上传。", symbol: "desktopcomputer")
+                MarkXRow(title: "会话仅在内存使用", detail: "只读取 X 的登录信息。", symbol: "key")
+                MarkXRow(title: "外部存储由你选择", detail: "验证图床后才会上传。", symbol: "externaldrive.badge.checkmark")
             }
         }
     }

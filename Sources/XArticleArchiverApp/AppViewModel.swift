@@ -985,11 +985,9 @@ final class AppViewModel: ObservableObject {
     func chooseArchiveFolder() {
         guard !isRunning, !isEditingCollections else { return }
         let panel = NSOpenPanel()
-        panel.title = archiveRoot == nil ? "选择 X 长文归档目录" : "同步并切换 X 长文归档目录"
-        panel.message = archiveRoot == nil
-            ? "文章、图片缓存和资料库会保存在这个目录中。"
-            : "当前资料库会完整复制到新目录；确认复制和校验成功后，应用才会切换。旧目录将保留。"
-        panel.prompt = archiveRoot == nil ? "使用此目录" : "同步并切换"
+        panel.title = archiveRoot == nil ? "选择本地文件夹" : "移动到新文件夹"
+        panel.message = archiveRoot == nil ? "" : "资料会移动到所选文件夹，原位置的文件移到废纸篓。"
+        panel.prompt = archiveRoot == nil ? "使用此文件夹" : "移动到这里"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
@@ -1046,7 +1044,7 @@ final class AppViewModel: ObservableObject {
         isRunning = true
         runningTask = Task {
             errorMessage = nil
-            progress = SyncProgress(stage: "正在准备同步现有资料库")
+            progress = SyncProgress(stage: "正在准备移动资料")
             defer {
                 isSwitchingArchiveFolder = false
                 isRunning = false
@@ -1061,7 +1059,7 @@ final class AppViewModel: ObservableObject {
                     from: source,
                     to: destination
                 )
-                progress.stage = "正在复制文章、图片缓存和来源快照"
+                progress.stage = "正在复制到新文件夹"
                 statusMessage = progress.stage
 
                 let copyTask = Task.detached(priority: .userInitiated) {
@@ -1078,7 +1076,7 @@ final class AppViewModel: ObservableObject {
                 }
                 try Task.checkCancellation()
 
-                progress.stage = "正在校验新目录并更新文章路径"
+                progress.stage = "正在校验并更新文章路径"
                 try ArchiveLayout.migrateLegacyLayout(in: destination)
                 let destinationDatabase = try ArchiveDatabase(url: Self.databaseURL(for: destination))
                 let copiedArticles = try await destinationDatabase.loadArticles()
@@ -1111,14 +1109,26 @@ final class AppViewModel: ObservableObject {
                     fromByteCount: result.copiedByteCount,
                     countStyle: .file
                 )
-                progress.stage = "目录切换完成"
-                statusMessage = "已同步 \(articles.count) 篇文章、\(result.copiedFileCount) 个文件（\(size)）"
+                MarkXLog.info("archive", "资料库已移动到 \(destination.path)：\(articles.count) 篇文章、\(result.copiedFileCount) 个文件（\(size)）；清理原位置 \(source.path)")
+                progress.stage = "正在清理原位置"
+                do {
+                    try await Task.detached(priority: .utility) {
+                        try ArchiveDirectorySynchronizer.removeSourceAfterMove(source, destination: destination)
+                    }.value
+                    progress.stage = "移动完成"
+                    statusMessage = "已移动 \(articles.count) 篇文章到 \(destination.lastPathComponent)，原位置的文件已移到废纸篓"
+                } catch {
+                    MarkXLog.error("archive", "清理原位置失败：\(error.localizedDescription)")
+                    progress.stage = "移动完成"
+                    statusMessage = "已移动到 \(destination.lastPathComponent)"
+                    errorMessage = "资料已移动到新文件夹，但原位置有文件未能移到废纸篓，可手动删除：\(source.path)"
+                }
             } catch is CancellationError {
-                progress.stage = "目录切换已停止"
-                statusMessage = "仍在使用原归档目录；新目录中的已复制文件可在下次同步时复用"
+                progress.stage = "移动已停止"
+                statusMessage = "仍在使用原文件夹，原文件未改动"
             } catch {
-                progress.stage = "目录切换失败"
-                statusMessage = "仍在使用原归档目录"
+                progress.stage = "移动失败"
+                statusMessage = "仍在使用原文件夹，原文件未改动"
                 errorMessage = error.localizedDescription
             }
         }

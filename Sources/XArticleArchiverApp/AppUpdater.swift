@@ -377,9 +377,8 @@ struct SoftwareUpdateSettingsSection: View {
     @AppStorage(AppUpdater.automaticChecksKey) private var automaticChecks = true
 
     var body: some View {
-        MarkXGroup(title: "软件更新",
-                   footer: "开启后 MarkX 会定期查看官网是否有新版本，发现后提醒你在应用内一键安装。") {
-            MarkXRow(title: "自动检查更新", detail: "有新版本时在应用内提醒。", symbol: "arrow.triangle.2.circlepath") {
+        MarkXGroup(title: "软件更新") {
+            MarkXRow(title: "自动检查更新", symbol: "arrow.triangle.2.circlepath") {
                 Toggle("自动检查更新", isOn: $automaticChecks)
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
