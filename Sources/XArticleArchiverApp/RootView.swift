@@ -871,6 +871,13 @@ struct RootView: View {
     }
 
     private var articleList: some View {
+        GeometryReader { proxy in
+            articleListBody(toolbarBand: max(proxy.safeAreaInsets.top, 52))
+        }
+        .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func articleListBody(toolbarBand: CGFloat) -> some View {
         ZStack {
             if showsCreatorList {
                 creatorList
@@ -891,7 +898,14 @@ struct RootView: View {
         // above it. The margin and the back row are a top inset drawn over
         // the list, so rows scroll under it and it stays clickable (a plain
         // view above the list was covered by the list's scroll view).
-        .safeAreaInset(edge: .top, spacing: 0) { middleColumnHeader }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // With the sidebar collapsed, the traffic lights and the sidebar's
+            // toolbar buttons move over this column, so the first row drops
+            // below the toolbar band, level with the detail column's text.
+            middleColumnHeader(topMargin: isSidebarVisible
+                ? Self.middleColumnTop
+                : toolbarBand + Self.topBandExtra)
+        }
         .ignoresSafeArea(.container, edges: .top)
         .background {
             // Two-finger swipe right (trackpad or Magic Mouse) goes back.
@@ -913,9 +927,9 @@ struct RootView: View {
     /// top like the sidebar's toolbar buttons.
     private static let middleColumnTop: CGFloat = 12
 
-    private var middleColumnHeader: some View {
+    private func middleColumnHeader(topMargin: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: Self.middleColumnTop)
+            Color.clear.frame(height: topMargin)
             if selectedSidebarCreator != nil, !showsCreatorList {
                 creatorBackRow
             }
