@@ -738,13 +738,34 @@ final class AppViewModel: ObservableObject {
         // orderOut stops the hidden WKWebView from painting. X then renders an
         // empty Articles shell, and the scan records no cards. Keep the window
         // in the window list, behind the library window, so the list still loads.
+        // Never make it click-through: a window that later comes back to the
+        // front by any route (Dock, Window menu, the main window moving or
+        // minimizing) must stay usable. Tuck it fully behind the library
+        // window instead, so it is out of sight but still rendering.
         if let window = downloadProgressWindowController?.window {
-            window.ignoresMouseEvents = true
+            window.ignoresMouseEvents = false
             window.alphaValue = 1
-            window.orderBack(nil)
+            let anchor = resolveDownloadProgressAnchorWindow(excluding: window)
+            if let anchor {
+                centerDownloadProgressWindow(window, over: anchor)
+                window.order(.below, relativeTo: anchor.windowNumber)
+                anchor.makeKeyAndOrderFront(nil)
+            } else {
+                window.orderBack(nil)
+            }
         }
         isDownloadProgressWindowVisible = false
-        statusMessage = "下载继续在后台执行；进度窗口藏在主窗口后面，Articles 列表仍在加载。可点击「显示下载进度」重新打开"
+        statusMessage = "下载在后台继续，可点「下载进度」重新打开"
+    }
+
+    /// The progress window came to the front some other way than “显示下载进度”;
+    /// treat it as shown again.
+    func downloadProgressWindowDidBecomeKey(_ window: NSWindow) {
+        window.ignoresMouseEvents = false
+        window.alphaValue = 1
+        guard hasActiveDownloadProgress else { return }
+        downloadProgressWindowHiddenByUser = false
+        isDownloadProgressWindowVisible = true
     }
 
     private func beginDownloadProgressSession() {

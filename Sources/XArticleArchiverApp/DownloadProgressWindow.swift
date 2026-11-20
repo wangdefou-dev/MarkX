@@ -14,6 +14,16 @@ final class DownloadProgressWindowDelegate: NSObject, NSWindowDelegate {
         return false
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        model?.downloadProgressWindowDidBecomeKey(window)
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        model?.downloadProgressWindowDidBecomeKey(window)
+    }
+
 }
 
 struct DownloadProgressRootView: View {

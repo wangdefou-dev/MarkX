@@ -186,6 +186,11 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - “使用浏览器”菜单的“按浏览器”只列出探测到配置的浏览器，当前选择若不在其中也保留一项。
 - 存储方式：`isImageHostConfigured`（`imageHostChoiceConfirmed`，已有资料库的老用户视为已设置）为假时，存储方式分组显示本地 / uPic / S3·R2 三张选项卡片，点选即生效；已设置时只显示当前方式一行和“更换…”，展开选项后切换到其他方式需确认，确认或“取消”后收起。
 
+## 8.4 下载进度窗口隐藏（0.3.94）
+
+- “隐藏到后台”或关闭进度窗口时不关闭窗口（WKWebView 需继续渲染 X 列表），而是居中到主窗口并 `order(.below, relativeTo:)` 放在主窗口正后方；禁止设置 `ignoresMouseEvents = true`——窗口可能经程序坞、窗口菜单、主窗口移动或最小化回到前面，点击穿透会让它无法操作。
+- `DownloadProgressWindowDelegate` 在 `windowDidBecomeKey` / `windowDidDeminiaturize` 时调用 `downloadProgressWindowDidBecomeKey`，恢复可点击并把状态记为已显示。
+
 ## 9. 界面布局与视觉验收（0.3.46）
 
 - 侧边栏只负责导航（HIG Sidebars）：不放下载等操作按钮，底部不放目录选择入口，运行时仅展示任务摘要。
