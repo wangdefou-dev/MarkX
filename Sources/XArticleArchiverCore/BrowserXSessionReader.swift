@@ -11,21 +11,75 @@ public struct BrowserSessionDefinition: Sendable, Equatable {
     public var account: String
     public var service: String
     public var engine: Engine = .chromium
+    /// Other Keychain service names the same browser has used.
+    public var alternateServices: [String] = []
+    /// Found by scanning Application Support rather than listed here.
+    public var isDiscovered = false
+    public var keychainServices: [String] { ([service] + alternateServices).filter { !$0.isEmpty } }
+
     public static let chrome = BrowserSessionDefinition(id: "chrome", name: "Chrome", bundleIdentifier: "com.google.Chrome", relativeRoot: "Google/Chrome", account: "Chrome", service: "Chrome Safe Storage")
+    private static func firefoxFamily(_ id: String, _ name: String, _ bundle: String, _ root: String) -> Self {
+        .init(id: id, name: name, bundleIdentifier: bundle, relativeRoot: root, account: "", service: "", engine: .firefox)
+    }
     public static let supported: [Self] = [
         .chrome,
+        .init(id: "chrome-beta", name: "Chrome Beta", bundleIdentifier: "com.google.Chrome.beta", relativeRoot: "Google/Chrome Beta", account: "Chrome", service: "Chrome Safe Storage"),
+        .init(id: "chrome-dev", name: "Chrome Dev", bundleIdentifier: "com.google.Chrome.dev", relativeRoot: "Google/Chrome Dev", account: "Chrome", service: "Chrome Safe Storage"),
+        .init(id: "canary", name: "Chrome Canary", bundleIdentifier: "com.google.Chrome.canary", relativeRoot: "Google/Chrome Canary", account: "Chrome", service: "Chrome Safe Storage"),
         .init(id: "edge", name: "Edge", bundleIdentifier: "com.microsoft.edgemac", relativeRoot: "Microsoft Edge", account: "Microsoft Edge", service: "Microsoft Edge Safe Storage"),
-        .init(id: "brave", name: "Brave", bundleIdentifier: "com.brave.Browser", relativeRoot: "BraveSoftware/Brave-Browser", account: "Brave", service: "Brave Safe Storage"),
+        .init(id: "edge-beta", name: "Edge Beta", bundleIdentifier: "com.microsoft.edgemac.Beta", relativeRoot: "Microsoft Edge Beta", account: "Microsoft Edge", service: "Microsoft Edge Safe Storage"),
+        .init(id: "edge-dev", name: "Edge Dev", bundleIdentifier: "com.microsoft.edgemac.Dev", relativeRoot: "Microsoft Edge Dev", account: "Microsoft Edge", service: "Microsoft Edge Safe Storage"),
+        .init(id: "edge-canary", name: "Edge Canary", bundleIdentifier: "com.microsoft.edgemac.Canary", relativeRoot: "Microsoft Edge Canary", account: "Microsoft Edge", service: "Microsoft Edge Safe Storage"),
+        .init(id: "brave", name: "Brave", bundleIdentifier: "com.brave.Browser", relativeRoot: "BraveSoftware/Brave-Browser", account: "Brave", service: "Brave Safe Storage", alternateServices: ["Brave Browser Safe Storage"]),
+        .init(id: "brave-beta", name: "Brave Beta", bundleIdentifier: "com.brave.Browser.beta", relativeRoot: "BraveSoftware/Brave-Browser-Beta", account: "Brave", service: "Brave Safe Storage", alternateServices: ["Brave Browser Safe Storage"]),
+        .init(id: "brave-nightly", name: "Brave Nightly", bundleIdentifier: "com.brave.Browser.nightly", relativeRoot: "BraveSoftware/Brave-Browser-Nightly", account: "Brave", service: "Brave Safe Storage", alternateServices: ["Brave Browser Safe Storage"]),
         .init(id: "arc", name: "Arc", bundleIdentifier: "company.thebrowser.Browser", relativeRoot: "Arc/User Data", account: "Arc", service: "Arc Safe Storage"),
+        .init(id: "dia", name: "Dia", bundleIdentifier: "company.thebrowser.dia", relativeRoot: "Dia/User Data", account: "Dia", service: "Dia Safe Storage"),
+        .init(id: "comet", name: "Comet", bundleIdentifier: "ai.perplexity.comet", relativeRoot: "Comet", account: "Comet", service: "Comet Safe Storage"),
         .init(id: "vivaldi", name: "Vivaldi", bundleIdentifier: "com.vivaldi.Vivaldi", relativeRoot: "Vivaldi", account: "Vivaldi", service: "Vivaldi Safe Storage"),
         .init(id: "opera", name: "Opera", bundleIdentifier: "com.operasoftware.Opera", relativeRoot: "com.operasoftware.Opera", account: "Opera", service: "Opera Safe Storage"),
+        .init(id: "opera-gx", name: "Opera GX", bundleIdentifier: "com.operasoftware.OperaGX", relativeRoot: "com.operasoftware.OperaGX", account: "Opera", service: "Opera Safe Storage", alternateServices: ["Opera GX Safe Storage"]),
+        .init(id: "yandex", name: "Yandex", bundleIdentifier: "ru.yandex.desktop.yandex-browser", relativeRoot: "Yandex/YandexBrowser", account: "Yandex", service: "Yandex Safe Storage"),
         .init(id: "chromium", name: "Chromium", bundleIdentifier: "org.chromium.Chromium", relativeRoot: "Chromium", account: "Chromium", service: "Chromium Safe Storage"),
-        .init(id: "canary", name: "Chrome Canary", bundleIdentifier: "com.google.Chrome.canary", relativeRoot: "Google/Chrome Canary", account: "Chrome", service: "Chrome Safe Storage"),
+        .init(id: "thorium", name: "Thorium", bundleIdentifier: "org.chromium.Thorium", relativeRoot: "Thorium", account: "Thorium", service: "Thorium Safe Storage", alternateServices: ["Chromium Safe Storage"]),
         .init(id: "quark", name: "夸克", bundleIdentifier: "com.quark.desktop", relativeRoot: "Quark", account: "Quark Key", service: "Quark Safe Storage"),
         .init(id: "doubao", name: "豆包浏览器", bundleIdentifier: "com.bot.pc.doubao.browser", relativeRoot: "Doubao", account: "Doubao Browser", service: "Doubao Browser Safe Storage"),
-        .init(id: "firefox", name: "Firefox", bundleIdentifier: "org.mozilla.firefox", relativeRoot: "Firefox", account: "", service: "", engine: .firefox)
+        firefoxFamily("firefox", "Firefox", "org.mozilla.firefox", "Firefox"),
+        firefoxFamily("zen", "Zen", "app.zen-browser.zen", "zen"),
+        firefoxFamily("librewolf", "LibreWolf", "org.mozilla.librewolf", "librewolf"),
+        firefoxFamily("waterfox", "Waterfox", "net.waterfox.waterfox", "Waterfox"),
+        firefoxFamily("floorp", "Floorp", "one.ablaze.floorp", "Floorp")
     ]
     public func root(home: URL) -> URL { home.appending(path: "Library/Application Support/" + relativeRoot) }
+
+    /// Supported browsers plus any other Chromium browser found in
+    /// Application Support (a folder with a `Local State` file).
+    public static func all(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [Self] {
+        supported + discoveredChromium(home: home)
+    }
+
+    static func discoveredChromium(home: URL) -> [Self] {
+        let fileManager = FileManager.default
+        let support = home.appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        let known = Set(supported.map { $0.relativeRoot.lowercased() })
+        func directories(_ url: URL) -> [URL] {
+            ((try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)) ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        }
+        var found: [Self] = []
+        for first in directories(support) {
+            for candidate in [first] + directories(first) {
+                guard fileManager.fileExists(atPath: candidate.appending(path: "Local State").path) else { continue }
+                let relative = String(candidate.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))
+                guard !known.contains(relative.lowercased()), !found.contains(where: { $0.relativeRoot == relative }) else { continue }
+                let name = candidate.lastPathComponent == "User Data" ? candidate.deletingLastPathComponent().lastPathComponent : candidate.lastPathComponent
+                var definition = Self(id: "auto:" + relative, name: name, bundleIdentifier: "", relativeRoot: relative, account: name, service: "\(name) Safe Storage")
+                definition.isDiscovered = true
+                found.append(definition)
+            }
+        }
+        return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
 }
 
 public struct BrowserSessionProfile: Sendable, Identifiable {
@@ -149,13 +203,17 @@ public enum BrowserXSessionReader {
                         do {
                             guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
                             let hasLogin = try hasAuthentication(databaseURL: url, engine: browser.engine)
+                            // Electron apps also keep Chromium data; list them only with an X login.
+                            if browser.isDiscovered && !hasLogin { continue }
                             result.profiles.append(.init(browser: browser, name: name, databaseURL: url, hasLoginCookies: hasLogin,
                                                          directoryName: directoryName, lastActivity: lastActivity(of: url)))
                         } catch where isMissing(error) { continue }
+                        catch where browser.isDiscovered { continue }
                         catch { result.issues.append(issue(for: browser, root: root, error: error)) }
                     }
                 }
             } catch where isMissing(error) { continue }
+            catch where browser.isDiscovered { continue }
             catch { result.issues.append(issue(for: browser, root: root, error: error)) }
         }
         return result
@@ -209,10 +267,25 @@ public enum BrowserXSessionReader {
     static func profileDirectories(root: URL, engine: BrowserSessionDefinition.Engine) throws -> [(URL, String)] {
         if engine == .firefox {
             if FileManager.default.fileExists(atPath: root.appending(path: "cookies.sqlite").path) { return [(root, root.lastPathComponent)] }
+            var result: [(URL, String)] = []
+            var seen = Set<String>()
+            // profiles.ini can point at profiles outside Profiles/.
+            for (directory, name) in firefoxIniProfiles(root: root) where seen.insert(directory.standardizedFileURL.path).inserted {
+                result.append((directory, name))
+            }
             let profilesRoot = root.appending(path: "Profiles")
-            let contents = try FileManager.default.contentsOfDirectory(at: profilesRoot, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)
-            return contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }.map { ($0, $0.lastPathComponent) }
+            let contents: [URL]
+            do {
+                contents = try FileManager.default.contentsOfDirectory(at: profilesRoot, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)
+            } catch where isMissing(error) && !result.isEmpty {
+                contents = []
+            }
+            for directory in contents.filter({ (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true })
+                .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+                where seen.insert(directory.standardizedFileURL.path).inserted {
+                result.append((directory, directory.lastPathComponent))
+            }
+            return result
         }
         var order: [String] = []
         var displayNames: [String: String] = [:]
@@ -233,6 +306,34 @@ public enum BrowserXSessionReader {
         var seen = Set<String>()
         var result = order.filter { seen.insert($0).inserted }.map { (root.appending(path: $0), displayNames[$0] ?? $0) }
         result.append((root, "默认配置")) // Opera and manually selected profile directories.
+        return result
+    }
+
+    static func firefoxIniProfiles(root: URL) -> [(URL, String)] {
+        guard let text = try? String(contentsOf: root.appending(path: "profiles.ini"), encoding: .utf8) else { return [] }
+        var result: [(URL, String)] = []
+        var name: String?, path: String?, relative = true
+        func flush() {
+            defer { name = nil; path = nil; relative = true }
+            guard let path, !path.isEmpty else { return }
+            let url = relative ? root.appending(path: path) : URL(fileURLWithPath: path)
+            // A relative path must stay inside the browser root.
+            if relative, !url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path + "/") { return }
+            result.append((url, name ?? url.lastPathComponent))
+        }
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") { flush(); continue }
+            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            switch parts[0] {
+            case "Name": name = parts[1]
+            case "Path": path = parts[1]
+            case "IsRelative": relative = parts[1] != "0"
+            default: break
+            }
+        }
+        flush()
         return result
     }
 
@@ -294,11 +395,19 @@ public enum BrowserXSessionReader {
         }
     }
 
+    /// Looks the key up by service name only: the account name differs
+    /// between browser versions and channels.
     static func safeStoragePassword(_ browser: BrowserSessionDefinition) throws -> Data {
-        guard let value = try KeychainStore.read(account: browser.account, service: browser.service), !value.isEmpty else {
-            throw BrowserSessionError.unavailable("未能读取 \(browser.name) 的系统钥匙串密钥")
+        var lastError: Error?
+        for service in browser.keychainServices {
+            do {
+                if let value = try KeychainStore.read(account: nil, service: service), !value.isEmpty {
+                    return Data(value.utf8)
+                }
+            } catch { lastError = error }
         }
-        return Data(value.utf8)
+        if let lastError { throw BrowserSessionError.unavailable("未能读取 \(browser.name) 的钥匙串密钥：\(lastError.localizedDescription)") }
+        throw BrowserSessionError.unavailable("未能读取 \(browser.name) 的钥匙串密钥（\(browser.keychainServices.joined(separator: " / "))）")
     }
 
     /// Reads a private copy of the cookie database. A running Chromium

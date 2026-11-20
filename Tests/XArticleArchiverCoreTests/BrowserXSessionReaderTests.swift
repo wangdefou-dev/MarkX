@@ -237,6 +237,48 @@ final class BrowserXSessionReaderTests: XCTestCase {
         XCTAssertEqual(pinned.profileDirectory, "Profile 3")
     }
 
+    func testDiscoversUnlistedChromiumBrowsersWithAnXLoginOnly() throws {
+        let home = directory.appending(path: "home")
+        let support = home.appending(path: "Library/Application Support")
+        // A browser MarkX does not list by name, logged in to X.
+        try login(chromium(support.appending(path: "NewBrowser/User Data/Default/Cookies")), auth: "new-browser-account")
+        try Data("{}".utf8).write(to: support.appending(path: "NewBrowser/User Data/Local State"))
+        // An Electron app with Chromium data but no X login.
+        _ = try chromium(support.appending(path: "SomeChatApp/Cookies"))
+        try Data("{}".utf8).write(to: support.appending(path: "SomeChatApp/Local State"))
+
+        let all = BrowserSessionDefinition.all(home: home)
+        let discovered = all.filter(\.isDiscovered)
+        XCTAssertEqual(Set(discovered.map(\.name)), ["NewBrowser", "SomeChatApp"])
+        XCTAssertEqual(discovered.first { $0.name == "NewBrowser" }?.service, "NewBrowser Safe Storage")
+
+        let probe = BrowserXSessionReader.probe(home: home, browsers: all)
+        XCTAssertEqual(probe.profiles.map(\.browser.name), ["NewBrowser"], "apps without an X login stay hidden")
+        let session = try BrowserXSessionReader.readActiveSession(home: home, browsers: all, password: { _ in Data() })
+        XCTAssertEqual(session.browserName, "NewBrowser")
+        XCTAssertEqual(session.cookies.first(where: { $0.name == "auth_token" })?.value, "new-browser-account")
+    }
+
+    func testFirefoxProfilesListedInProfilesIniAreFound() throws {
+        let root = directory.appending(path: "Firefox")
+        let elsewhere = directory.appending(path: "Elsewhere/work-profile")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try execute(elsewhere.appending(path: "cookies.sqlite"), "CREATE TABLE moz_cookies(host TEXT,name TEXT,value TEXT,path TEXT DEFAULT '/',expiry INTEGER DEFAULT 0,isSecure INTEGER DEFAULT 1,isHttpOnly INTEGER DEFAULT 1); INSERT INTO moz_cookies(host,name,value) VALUES('.x.com','auth_token','ini-account'),('.x.com','ct0','csrf')")
+        try "[Profile0]\nName=Work\nIsRelative=0\nPath=\(elsewhere.path)\n".write(to: root.appending(path: "profiles.ini"), atomically: true, encoding: .utf8)
+        let firefox = BrowserSessionDefinition.supported.first { $0.id == "firefox" }!
+        let probe = BrowserXSessionReader.probe(browsers: [firefox], customRoots: ["firefox": root])
+        XCTAssertEqual(probe.loggedInProfiles.map(\.name), ["Work"])
+        XCTAssertTrue(probe.issues.isEmpty)
+    }
+
+    func testKeychainLookupTriesEveryKnownServiceName() {
+        let brave = BrowserSessionDefinition.supported.first { $0.id == "brave" }!
+        XCTAssertEqual(brave.keychainServices, ["Brave Safe Storage", "Brave Browser Safe Storage"])
+        XCTAssertTrue(BrowserSessionDefinition.supported.first { $0.id == "firefox" }!.keychainServices.isEmpty)
+        XCTAssertEqual(Set(BrowserSessionDefinition.supported.map(\.id)).count, BrowserSessionDefinition.supported.count)
+    }
+
     private func read(_ root: URL) throws -> ChromeXSession {
         try BrowserXSessionReader.readActiveSession(browsers: [.chrome], customRoots: ["chrome": root], password: { _ in Data() })
     }

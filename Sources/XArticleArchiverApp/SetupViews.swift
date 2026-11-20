@@ -414,7 +414,7 @@ private struct BrowserConnectionConfiguration: View {
 
     var body: some View {
         MarkXGroup(title: "浏览器与 X 登录",
-                   footer: "支持 Chrome、Edge、Arc、Firefox 等，暂不支持 Safari。") {
+                   footer: "支持 Chrome、Edge、Arc、Brave、Firefox 等，暂不支持 Safari。") {
             MarkXRow(title: "使用浏览器", symbol: "globe") {
                 Picker("使用浏览器", selection: $model.preferredBrowserID) {
                     Text("自动查找（最近使用的登录）").tag(BrowserSessionSelection.automaticID)
@@ -427,8 +427,11 @@ private struct BrowserConnectionConfiguration: View {
                     if let missing = missingSelectionLabel(logins: logins) {
                         Text(missing).tag(model.preferredBrowserID)
                     }
-                    Section("按浏览器") {
-                        ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
+                    let browsers = detectedBrowsers
+                    if !browsers.isEmpty {
+                        Section("按浏览器") {
+                            ForEach(browsers, id: \.id) { Text($0.name).tag($0.id) }
+                        }
                     }
                 }
                 .labelsHidden().fixedSize()
@@ -497,6 +500,20 @@ private struct BrowserConnectionConfiguration: View {
         }
     }
 
+    /// Browsers found on this Mac, plus the chosen one if it is not found.
+    private var detectedBrowsers: [BrowserSessionDefinition] {
+        var result: [BrowserSessionDefinition] = []
+        for profile in model.browserSessionProbe.profiles where !result.contains(where: { $0.id == profile.browser.id }) {
+            result.append(profile.browser)
+        }
+        let selection = BrowserSessionSelection(model.preferredBrowserID)
+        if let id = selection.browserID, !result.contains(where: { $0.id == id }),
+           let chosen = BrowserSessionDefinition.supported.first(where: { $0.id == id }) {
+            result.append(chosen)
+        }
+        return result
+    }
+
     /// A pinned profile that no longer has a login still needs a menu item,
     /// or the picker would show an empty selection.
     private func missingSelectionLabel(logins: [BrowserSessionProfile]) -> String? {
@@ -549,6 +566,9 @@ struct MediaStorageConfiguration: View {
     @State private var confirmsRemovingKeys = false
     /// A different storage method waiting for the user's confirmation.
     @State private var pendingChoice: AppViewModel.ImageHostChoice?
+    /// The choices are open after “更换…”.
+    @State private var isChoosing = false
+    private static let choices: [AppViewModel.ImageHostChoice] = [.local, .uPic, .s3]
     private var isTesting: Bool { isTestingUPic || isTestingS3 }
 
     private static func name(_ choice: AppViewModel.ImageHostChoice) -> String {
@@ -559,48 +579,56 @@ struct MediaStorageConfiguration: View {
         }
     }
 
+    private static func symbol(_ choice: AppViewModel.ImageHostChoice) -> String {
+        switch choice {
+        case .local: "internaldrive"
+        case .uPic: "icloud.and.arrow.up"
+        case .s3: "server.rack"
+        }
+    }
+
+    private func pick(_ choice: AppViewModel.ImageHostChoice) {
+        if !model.isImageHostConfigured {
+            model.selectImageHost(choice)
+        } else if choice == model.imageHostChoice {
+            isChoosing = false
+        } else {
+            pendingChoice = choice
+        }
+    }
+
+    private var choiceCards: some View {
+        MarkXRowContent {
+            HStack(alignment: .top, spacing: MarkXSpace.m) {
+                ForEach(Self.choices, id: \.self) { choice in
+                    MarkXChoiceCard(title: Self.name(choice), systemImage: Self.symbol(choice),
+                                    isSelected: model.isImageHostConfigured && model.imageHostChoice == choice) { pick(choice) }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .disabled(isTesting)
+            if isChoosing {
+                Button("取消") { isChoosing = false }
+                    .buttonStyle(.markxText)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
     var body: some View {
         MarkXGroup(title: "存储方式") {
-            MarkXRow(title: "图片和视频", symbol: "photo.on.rectangle") {
-                Picker("存储方式", selection: Binding(get: { model.imageHostChoice }, set: { choice in
-                    if choice != model.imageHostChoice { pendingChoice = choice }
-                })) {
-                    Text("本地").tag(AppViewModel.ImageHostChoice.local)
-                    Text("uPic").tag(AppViewModel.ImageHostChoice.uPic)
-                    Text("S3/R2").tag(AppViewModel.ImageHostChoice.s3)
+            if !model.isImageHostConfigured || isChoosing {
+                choiceCards
+            } else {
+                MarkXRow(title: Self.name(model.imageHostChoice), symbol: Self.symbol(model.imageHostChoice)) {
+                    Button("更换…") { isChoosing = true }
+                        .buttonStyle(.markxCompact)
+                        .disabled(isTesting)
                 }
-                .labelsHidden().pickerStyle(.segmented).fixedSize().disabled(isTesting)
-                .help("切换前会先确认")
             }
-            switch model.imageHostChoice {
-            case .local:
-                EmptyView()
-            case .uPic:
-                MarkXRow(title: model.upicCapability.isAvailable ? "已找到 uPic" : "未找到 uPic",
-                         detail: model.upicCapability.isAvailable ? nil : model.upicCapability.detail,
-                         symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
-                         symbolColor: model.upicCapability.isAvailable ? .green : .orange) {
-                    Button(isTestingUPic ? "正在验证…" : "验证连接") {
-                        isTestingUPic = true
-                        Task { _ = await model.testUPic(); isTestingUPic = false }
-                    }
-                    .buttonStyle(.markxCompact)
-                    .disabled(!model.upicCapability.isAvailable || isTesting)
-                    .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
-                }
-            case .s3:
-                MarkXRowContent { s3Fields }
+            if model.isImageHostConfigured && !isChoosing {
+                configuration
             }
-            HStack(spacing: MarkXSpace.m) {
-                if isTesting { ProgressView().controlSize(.mini) }
-                else { StatusDot(color: model.imageHostVerified ? .green : .orange) }
-                Text(isTesting ? "正在检查媒体上传与公开访问…" : model.imageHostDetail)
-                    .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, MarkXSpace.xl)
-            .padding(.vertical, MarkXSpace.l)
         }
         .confirmationDialog(
             pendingChoice.map { $0 == .local ? "改为本地存储？" : "改用 \(Self.name($0)) 存储？" } ?? "",
@@ -608,7 +636,7 @@ struct MediaStorageConfiguration: View {
             titleVisibility: .visible,
             presenting: pendingChoice
         ) { choice in
-            Button("切换") { model.selectImageHost(choice); pendingChoice = nil }
+            Button("切换") { model.selectImageHost(choice); pendingChoice = nil; isChoosing = false }
             Button("取消", role: .cancel) { pendingChoice = nil }
         } message: { _ in
             Text("之后的新文章按新方式保存，已保存的不变。")
@@ -617,6 +645,38 @@ struct MediaStorageConfiguration: View {
             Button("移除密钥", role: .destructive) { model.removeS3Credentials() }
             Button("取消", role: .cancel) { }
         }
+    }
+
+    @ViewBuilder private var configuration: some View {
+        switch model.imageHostChoice {
+        case .local:
+            EmptyView()
+        case .uPic:
+            MarkXRow(title: model.upicCapability.isAvailable ? "已找到 uPic" : "未找到 uPic",
+                     detail: model.upicCapability.isAvailable ? nil : model.upicCapability.detail,
+                     symbol: model.upicCapability.isAvailable ? "checkmark.circle" : "exclamationmark.circle",
+                     symbolColor: model.upicCapability.isAvailable ? .green : .orange) {
+                Button(isTestingUPic ? "正在验证…" : "验证连接") {
+                    isTestingUPic = true
+                    Task { _ = await model.testUPic(); isTestingUPic = false }
+                }
+                .buttonStyle(.markxCompact)
+                .disabled(!model.upicCapability.isAvailable || isTesting)
+                .help("上传一张无隐私测试图片，并检查返回的 HTTPS 地址")
+            }
+        case .s3:
+            MarkXRowContent { s3Fields }
+        }
+        HStack(spacing: MarkXSpace.m) {
+            if isTesting { ProgressView().controlSize(.mini) }
+            else { StatusDot(color: model.imageHostVerified ? .green : .orange) }
+            Text(isTesting ? "正在检查媒体上传与公开访问…" : model.imageHostDetail)
+                .font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, MarkXSpace.xl)
+        .padding(.vertical, MarkXSpace.l)
     }
 
     private var s3Fields: some View {

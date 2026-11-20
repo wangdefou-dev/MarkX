@@ -11,7 +11,7 @@ enum BrowserSessionAccess {
     static func probe() -> BrowserSessionProbe {
         withDirectories { roots in
             // Every browser is probed so settings can list all logins.
-            var result = BrowserXSessionReader.probe(customRoots: roots)
+            var result = BrowserXSessionReader.probe(browsers: BrowserSessionDefinition.all(), customRoots: roots)
             result.selection = BrowserSessionSelection(UserDefaults.standard.string(forKey: preferredBrowserKey))
             return result
         }
@@ -27,7 +27,8 @@ enum BrowserSessionAccess {
     static func readActiveSession() throws -> ChromeXSession {
         try withDirectories { roots in
             let selected = UserDefaults.standard.string(forKey: preferredBrowserKey)
-            let session = try BrowserXSessionReader.readActiveSession(customRoots: roots, preferredBrowserID: selected == "automatic" ? nil : selected)
+            let session = try BrowserXSessionReader.readActiveSession(browsers: BrowserSessionDefinition.all(), customRoots: roots,
+                                                                      preferredBrowserID: selected == "automatic" ? nil : selected)
             MarkXLog.info("browser", "已读取 \(session.sourceDescription) 的 X 登录（来源设置 \(selected ?? "automatic")）")
             return session
         }

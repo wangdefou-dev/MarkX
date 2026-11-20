@@ -178,6 +178,14 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - 读取 Cookie 数据库（Chromium 与 Firefox）一律先复制主文件及 `-wal`/`-journal` 到临时目录再打开副本，避免浏览器运行时的独占锁导致 “database is locked”；只有权限被拒时才直接报错。
 - 导入会话到 WebView 用 `BrowserSessionAccess.install`：先删除已有的 x.com / twitter.com Cookie 再写入，防止切换账号时新旧 Cookie 混用。
 
+## 8.3 浏览器发现与存储方式显示（0.3.93）
+
+- 浏览器来源为 `BrowserSessionDefinition.all()`：固定列表 `supported`（Chrome 各通道、Edge 各通道、Brave 各通道、Arc、Dia、Comet、Vivaldi、Opera / Opera GX、Yandex、Chromium、Thorium、夸克、豆包，及 Firefox / Zen / LibreWolf / Waterfox / Floorp）加上自动发现：扫描 `~/Library/Application Support` 下两层目录中含 `Local State` 的 Chromium 数据目录（`isDiscovered`，ID 为 `auto:相对路径`，钥匙串服务名猜测为 `<名称> Safe Storage`）。自动发现的浏览器只在有 X 登录时列出，读取错误也不报为问题，避免把 Electron 应用当成浏览器提示。
+- 钥匙串密钥按服务名读取（`security find-generic-password -s`，不带 `-a`），依次尝试 `keychainServices`（`service` + `alternateServices`）。
+- Firefox 系配置目录 = `profiles.ini` 中的 `Path`（相对路径必须位于浏览器根目录内）∪ `Profiles/*`。
+- “使用浏览器”菜单的“按浏览器”只列出探测到配置的浏览器，当前选择若不在其中也保留一项。
+- 存储方式：`isImageHostConfigured`（`imageHostChoiceConfirmed`，已有资料库的老用户视为已设置）为假时，存储方式分组显示本地 / uPic / S3·R2 三张选项卡片，点选即生效；已设置时只显示当前方式一行和“更换…”，展开选项后切换到其他方式需确认，确认或“取消”后收起。
+
 ## 9. 界面布局与视觉验收（0.3.46）
 
 - 侧边栏只负责导航（HIG Sidebars）：不放下载等操作按钮，底部不放目录选择入口，运行时仅展示任务摘要。

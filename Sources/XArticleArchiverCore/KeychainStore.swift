@@ -41,7 +41,8 @@ public enum KeychainStore {
         guard addStatus == errSecSuccess else { throw KeychainStoreError.unexpectedStatus(addStatus) }
     }
 
-    public static func read(account: String, service: String = service) throws -> String? {
+    /// `account: nil` matches the first item with this service name.
+    public static func read(account: String?, service: String = service) throws -> String? {
         // An ad-hoc signed local app can wait indefinitely inside
         // SecItemCopyMatching when another app owns the item's ACL (notably
         // Chrome Safe Storage). Apple's signed `security` helper is permitted
@@ -52,7 +53,7 @@ public enum KeychainStore {
         let stderr = Pipe()
         let finished = DispatchSemaphore(value: 0)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-w", "-s", service, "-a", account]
+        process.arguments = ["find-generic-password", "-w", "-s", service] + (account.map { ["-a", $0] } ?? [])
         process.standardOutput = stdout
         process.standardError = stderr
         process.terminationHandler = { _ in finished.signal() }

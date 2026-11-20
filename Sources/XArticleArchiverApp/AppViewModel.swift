@@ -102,6 +102,10 @@ final class AppViewModel: ObservableObject {
     }
     @Published var upicCapability = ImageHostCapability(name: "uPic 图床", version: nil, isAvailable: false, detail: "正在检测")
     @Published var imageHostChoice: ImageHostChoice = .local
+    /// False until the user picks a storage method; settings then show the
+    /// choices instead of the current method.
+    @Published private(set) var isImageHostConfigured = true
+    private static let imageHostConfiguredKey = "imageHostChoiceConfirmed"
     @Published var imageHostVerified = true
     @Published var hasS3Credentials = false
     @Published var s3Endpoint = ""
@@ -235,6 +239,11 @@ final class AppViewModel: ObservableObject {
             defaults.set(true, forKey: localDefaultMigrationKey)
         }
         imageHostVerified = imageHostChoice == .local || defaults.bool(forKey: "imageHostVerified")
+        if defaults.object(forKey: Self.imageHostConfiguredKey) == nil {
+            // Existing libraries already chose (or accepted) a method.
+            defaults.set(archiveRoot != nil, forKey: Self.imageHostConfiguredKey)
+        }
+        isImageHostConfigured = defaults.bool(forKey: Self.imageHostConfiguredKey)
         scheduledSyncEnabled = defaults.bool(forKey: "scheduledSyncEnabled")
         scheduledSyncHour = defaults.object(forKey: "scheduledSyncHour") as? Int ?? 2
         scheduledSyncMinute = defaults.object(forKey: "scheduledSyncMinute") as? Int ?? 0
@@ -1283,6 +1292,7 @@ final class AppViewModel: ObservableObject {
             defaults.set(try JSONEncoder().encode(configuration), forKey: "s3Configuration")
             imageHostChoice = .s3
             defaults.set(ImageHostChoice.s3.rawValue, forKey: "imageHostChoice")
+            markImageHostConfigured()
             hasS3Credentials = true
             setImageHostVerified(true)
             statusMessage = "S3/R2 图床测试通过：\(remote.host ?? "远程图床")"
@@ -1295,8 +1305,16 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func markImageHostConfigured() {
+        guard !isImageHostConfigured else { return }
+        isImageHostConfigured = true
+        defaults.set(true, forKey: Self.imageHostConfiguredKey)
+    }
+
     func selectImageHost(_ choice: ImageHostChoice) {
+        markImageHostConfigured()
         guard imageHostChoice != choice else { return }
+        MarkXLog.info("storage", "存储方式改为 \(choice.rawValue)")
         imageHostChoice = choice
         defaults.set(choice.rawValue, forKey: "imageHostChoice")
         if choice == .local {
