@@ -150,30 +150,39 @@ struct MarkXPaneHeader: View {
     var onClose: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MarkXSpace.s) {
-            HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
-                if let symbol {
-                    Image(systemName: symbol)
-                        .foregroundStyle(symbolColor)
-                        .accessibilityHidden(true)
+        if let onClose {
+            // Sheets with a close button read like a compact window title bar.
+            HStack(spacing: MarkXSpace.m) {
+                MarkXSheetCloseButton(action: onClose)
+                Text(title).font(MarkXFont.headline)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, MarkXSpace.l)
+            .padding(.top, MarkXSpace.l)
+            .padding(.bottom, MarkXSpace.xl)
+        } else {
+            VStack(alignment: .leading, spacing: MarkXSpace.s) {
+                HStack(alignment: .firstTextBaseline, spacing: MarkXSpace.m) {
+                    if let symbol {
+                        Image(systemName: symbol)
+                            .foregroundStyle(symbolColor)
+                            .accessibilityHidden(true)
+                    }
+                    Text(title)
                 }
-                Text(title)
+                .font(MarkXFont.title)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(MarkXFont.detail)
+                        .foregroundStyle(MarkXInterface.text2)
+                        .lineSpacing(MarkXSpace.xxs)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .font(MarkXFont.title)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(MarkXFont.detail)
-                    .foregroundStyle(MarkXInterface.text2)
-                    .lineSpacing(MarkXSpace.xxs)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, MarkXInterface.inset)
-        .padding(.top, onClose == nil ? MarkXSpace.x4 : MarkXSpace.x4 + MarkXSpace.xl)
-        .padding(.bottom, MarkXSpace.xxl)
-        .overlay(alignment: .topLeading) {
-            if let onClose { MarkXSheetCloseButton(action: onClose) }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, MarkXInterface.inset)
+            .padding(.top, MarkXSpace.x4)
+            .padding(.bottom, MarkXSpace.xxl)
         }
     }
 }
@@ -194,8 +203,6 @@ struct MarkXSheetCloseButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .padding(.leading, MarkXSpace.l)
-        .padding(.top, MarkXSpace.l)
         .help("关闭")
         .accessibilityLabel("关闭")
     }

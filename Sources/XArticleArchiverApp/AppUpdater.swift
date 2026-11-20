@@ -21,7 +21,8 @@ final class AppUpdater: ObservableObject {
     static let automaticChecksKey = "automaticallyChecksForUpdates"
     private static let skippedVersionKey = "skippedUpdateVersion"
     private static let lastCheckKey = "lastUpdateCheck"
-    private static let checkInterval: TimeInterval = 6 * 60 * 60
+    /// Frequent enough that a pushed release shows its “更新” button soon.
+    private static let checkInterval: TimeInterval = 30 * 60
 
     @Published internal(set) var phase: Phase = .idle
     @Published private(set) var lastChecked: Date?
@@ -36,6 +37,14 @@ final class AppUpdater: ObservableObject {
     private var timer: Timer?
     private var task: Task<Void, Never>?
     private var window: NSWindow?
+
+    /// A newer version is known: the main window shows its “更新” button.
+    var hasUpdate: Bool {
+        switch phase {
+        case .available, .downloading, .ready, .installing: true
+        default: false
+        }
+    }
 
     /// Updating only makes sense for a real app bundle (not `swift run`).
     var isSupported: Bool { Bundle.main.bundleURL.pathExtension == "app" && Bundle.main.bundleIdentifier != nil }
@@ -56,13 +65,13 @@ final class AppUpdater: ObservableObject {
         guard isManifestOverridden else { return }
         #endif
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.automaticCheck() }
-        timer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: Self.checkInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.automaticCheck() }
         }
     }
 
     private func automaticCheck() {
-        guard UserDefaults.standard.bool(forKey: Self.automaticChecksKey) else { return }
+        guard UserDefaults.standard.bool(forKey: Self.automaticChecksKey), !hasUpdate else { return }
         if let lastChecked, Date().timeIntervalSince(lastChecked) < Self.checkInterval, !isManifestOverridden { return }
         check(userInitiated: false)
     }
@@ -94,15 +103,16 @@ final class AppUpdater: ObservableObject {
                 UserDefaults.standard.set(lastChecked, forKey: Self.lastCheckKey)
                 if AppUpdatePolicy.isNewer(manifest, thanVersion: currentVersion, build: currentBuild) {
                     phase = .available(manifest)
-                    let skipped = UserDefaults.standard.string(forKey: Self.skippedVersionKey)
-                    if userInitiated || skipped != manifest.version { showWindow() }
+                    // Automatic checks only light up the “更新” button.
+                    if userInitiated { showWindow() }
                 } else {
                     phase = .upToDate
                 }
             } catch is CancellationError {
                 phase = .idle
             } catch {
-                phase = .failed("无法检查更新：\(error.localizedDescription)")
+                // A quiet background failure leaves no error state behind.
+                phase = userInitiated ? .failed("无法检查更新：\(error.localizedDescription)") : .idle
             }
         }
     }

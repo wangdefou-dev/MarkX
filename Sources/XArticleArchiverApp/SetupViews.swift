@@ -3,17 +3,17 @@ import SwiftUI
 import XArticleArchiverCore
 
 struct AddCreatorsView: View {
-    private enum EntryMode: String, CaseIterable {
+    private enum EntryMode: String, CaseIterable, Identifiable {
         case single = "单个博主"
         case batch = "批量博主"
         case articleLinks = "文章链接"
+        var id: Self { self }
     }
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
-    // Nothing is preselected: the user picks a source and a range first.
-    @State private var mode: ArchiveMode?
-    @State private var entryMode: EntryMode?
+    @State private var mode: ArchiveMode = .recentWindow
+    @State private var entryMode: EntryMode = .single
     @State private var articleLimit = 10
     @State private var refreshExistingLinks = false
     @State private var resolveTotalCount = false
@@ -21,54 +21,46 @@ struct AddCreatorsView: View {
     private var parsedHandles: [String] { HandleParser.parse(input) }
     private var parsedArticleLinks: [XArticleLink] { XArticleURLParser.parse(input) }
     private var canDownload: Bool {
-        if !parsedArticleLinks.isEmpty { return parsedArticleLinks.count <= 500 }
-        guard mode != nil else { return false }
-        return entryMode == .single ? parsedHandles.count == 1 : entryMode == .batch && !parsedHandles.isEmpty
+        switch entryMode {
+        case .articleLinks: return !parsedArticleLinks.isEmpty && parsedArticleLinks.count <= 500
+        case .single: return parsedHandles.count == 1
+        case .batch: return !parsedHandles.isEmpty
+        }
     }
     private var downloadTitle: String {
-        if entryMode == .articleLinks && parsedArticleLinks.isEmpty { return "下载文章" }
-        if !parsedArticleLinks.isEmpty { return "下载 \(parsedArticleLinks.count) 篇文章" }
-        switch mode {
-        case .recentWindow: return "下载最近 \(articleLimit) 篇"
-        case .fullArchive: return "下载全部文章"
-        default: return "下载文章"
+        if entryMode == .articleLinks {
+            return parsedArticleLinks.isEmpty ? "下载" : "下载 \(parsedArticleLinks.count) 篇"
         }
+        return mode == .fullArchive ? "下载全部" : "下载最近 \(articleLimit) 篇"
     }
 
     var body: some View {
         VStack(spacing: 0) {
             MarkXPaneHeader(title: model.downloadSheetPrefill.isEmpty ? "下载文章" : "重新拉取文章",
                             onClose: { dismiss() })
-            ScrollView {
-                VStack(alignment: .leading, spacing: MarkXSpace.x3) {
-                    sourceSection
-                    inputSection
-                    if entryMode == .single || entryMode == .batch { rangeSection }
+            VStack(alignment: .leading, spacing: MarkXSpace.xl) {
+                Picker("来源", selection: $entryMode) {
+                    ForEach(EntryMode.allCases) { Text($0.rawValue).tag($0) }
                 }
-                .padding(.horizontal, MarkXInterface.inset)
-                .padding(.bottom, MarkXInterface.inset)
+                .labelsHidden().pickerStyle(.segmented)
+                inputGroup
+                if entryMode != .articleLinks { rangeGroup }
             }
+            .padding(.horizontal, MarkXInterface.inset)
             MarkXFooter {
                 Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                    .help("关闭窗口，不创建下载任务")
                 Button(downloadTitle, action: startDownload)
                     .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
-                    .disabled(!canDownload).frame(minWidth: 120)
-                    .help("按所选范围加入后台下载队列")
+                    .disabled(!canDownload)
             }
         }
         .background(MarkXInterface.canvas)
         .font(MarkXFont.body)
-        .frame(width: 660, height: MarkXInterface.sheetHeight(660))
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             input = model.downloadSheetPrefill
-            // A prefilled sheet (re-pull a creator, pasted links) already
-            // implies its source; a fresh one starts with nothing chosen.
-            if model.downloadSheetUsesArticleLinks {
-                entryMode = .articleLinks
-            } else if !model.downloadSheetPrefill.isEmpty {
-                entryMode = .single
-            }
+            if model.downloadSheetUsesArticleLinks { entryMode = .articleLinks }
         }
         .onChange(of: input) { _, value in
             if !XArticleURLParser.parse(value).isEmpty { entryMode = .articleLinks }
@@ -78,66 +70,54 @@ struct AddCreatorsView: View {
         }
     }
 
-    private func sectionLabel(_ title: String) -> some View {
-        Text(title)
-            .font(MarkXFont.detailStrong)
-            .foregroundStyle(MarkXInterface.text2)
-            .padding(.horizontal, MarkXSpace.xs)
-    }
-
-    private var sourceSection: some View {
-        VStack(alignment: .leading, spacing: MarkXSpace.m) {
-            sectionLabel("下载来源")
-            HStack(alignment: .top, spacing: MarkXSpace.m) {
-                MarkXChoiceCard(title: "单个博主", systemImage: "person",
-                                isSelected: entryMode == .single) { entryMode = .single }
-                MarkXChoiceCard(title: "批量博主", systemImage: "person.2",
-                                isSelected: entryMode == .batch) { entryMode = .batch }
-                MarkXChoiceCard(title: "文章链接", systemImage: "link",
-                                isSelected: entryMode == .articleLinks) { entryMode = .articleLinks }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    @ViewBuilder private var inputSection: some View {
-        switch entryMode {
-        case nil:
-            EmptyView()
-        case .single:
-            MarkXGroup(title: "博主主页") {
-                MarkXRowContent {
+    @ViewBuilder private var inputGroup: some View {
+        MarkXGroup {
+            MarkXRowContent {
+                switch entryMode {
+                case .single:
                     StrictSingleLineTextField(text: Binding(get: { input }, set: { input = SingleCreatorInputPolicy.sanitize($0) }),
-                        placeholder: "@username 或 https://x.com/username")
+                        placeholder: "@username 或主页链接")
                         .frame(height: 20)
                         .padding(.horizontal, MarkXSpace.m + MarkXSpace.xxs)
                         .frame(height: 34)
                         .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
-                        .help("只接受一行；粘贴多行时保留第一条非空内容")
-                    recognizedLine(parsedHandles.first.map { "已识别 @\($0)" } ?? "等待输入博主",
-                                   ok: parsedHandles.count == 1)
-                }
-            }
-        case .batch:
-            MarkXGroup(title: "博主列表（每行一位）") {
-                MarkXRowContent {
-                    multilineInput(placeholder: "@username\nhttps://x.com/another_creator")
-                    recognizedLine("已识别 \(parsedHandles.count) 位博主", ok: !parsedHandles.isEmpty)
-                }
-            }
-        case .articleLinks:
-            MarkXGroup(title: "文章链接（每行一条，最多 500 条）") {
-                MarkXRowContent {
-                    multilineInput(placeholder: "https://x.com/username/status/…")
-                    recognizedLine("已识别 \(parsedArticleLinks.count) 条链接",
+                    recognizedLine(parsedHandles.first.map { "@\($0)" } ?? "等待输入", ok: parsedHandles.count == 1)
+                case .batch:
+                    multilineInput(placeholder: "每行一位：@username 或主页链接")
+                    recognizedLine("\(parsedHandles.count) 位博主", ok: !parsedHandles.isEmpty)
+                case .articleLinks:
+                    multilineInput(placeholder: "每行一条文章链接，最多 500 条")
+                    recognizedLine("\(parsedArticleLinks.count) 条链接" + (parsedArticleLinks.count > 500 ? "（超过 500 条）" : ""),
                                    ok: !parsedArticleLinks.isEmpty && parsedArticleLinks.count <= 500,
                                    warning: parsedArticleLinks.count > 500)
                 }
+            }
+            if entryMode == .articleLinks {
                 MarkXRow(title: "重新获取已归档文章") {
                     Toggle("重新获取已归档文章", isOn: $refreshExistingLinks)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
-                .help("重新打开原页并校验完整排版，手工修改的 Markdown 受到保护")
+            }
+        }
+    }
+
+    private var rangeGroup: some View {
+        MarkXGroup {
+            MarkXRow(title: "范围") {
+                Picker("范围", selection: $mode) {
+                    Text("最近").tag(ArchiveMode.recentWindow)
+                    Text("全部").tag(ArchiveMode.fullArchive)
+                }
+                .labelsHidden().pickerStyle(.segmented).fixedSize()
+            }
+            if mode == .recentWindow {
+                MarkXRow(title: "每位博主") {
+                    ArticleLimitControl(limit: $articleLimit)
+                }
+                MarkXRow(title: "同时刷新线上总数") {
+                    Toggle("同时刷新线上总数", isOn: $resolveTotalCount)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
             }
         }
     }
@@ -155,61 +135,46 @@ struct AddCreatorsView: View {
         TextEditor(text: $input)
             .font(MarkXFont.detail.monospaced())
             .scrollContentBackground(.hidden)
-            .frame(height: 120).padding(MarkXSpace.m)
+            .frame(height: 96).padding(MarkXSpace.m)
             .background(MarkXInterface.wash, in: RoundedRectangle(cornerRadius: MarkXRadius.control))
             .overlay(alignment: .topLeading) {
                 if input.isEmpty {
-                    Text(placeholder).font(MarkXFont.detail.monospaced()).foregroundStyle(MarkXInterface.text3)
+                    Text(placeholder).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text3)
                         .padding(MarkXSpace.l).allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
             .accessibilityLabel(entryMode == .batch ? "博主列表" : "文章链接")
     }
 
-    private var rangeSection: some View {
-        VStack(alignment: .leading, spacing: MarkXSpace.m) {
-            sectionLabel("下载范围")
-            HStack(alignment: .top, spacing: MarkXSpace.m) {
-                MarkXChoiceCard(title: "最近文章", systemImage: "clock",
-                                isSelected: mode == .recentWindow) { mode = .recentWindow }
-                MarkXChoiceCard(title: "全部文章", systemImage: "square.stack",
-                                isSelected: mode == .fullArchive) { mode = .fullArchive }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            if mode == .recentWindow {
-                MarkXGroup {
-                    MarkXRow(title: "每位博主") {
-                        HStack(spacing: MarkXSpace.s) {
-                            ForEach([5, 10, 20, 50, 100], id: \.self) { value in
-                                Button("\(value)") { articleLimit = value }
-                                    .buttonStyle(MarkXCompactButtonStyle(prominent: articleLimit == value))
-                                    .monospacedDigit()
-                                    .help("最近 \(value) 篇")
-                            }
-                            Stepper(value: $articleLimit, in: 1...100) {
-                                Text("\(articleLimit) 篇").monospacedDigit().frame(minWidth: 44, alignment: .trailing)
-                            }
-                            .fixedSize().help("每位博主下载最近 1–100 篇文章")
-                            .padding(.leading, MarkXSpace.xs)
-                        }
-                    }
-                    MarkXRow(title: "同时刷新线上文章总数") {
-                        Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
-                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    }
-                    .help("扫描完整列表来更新总数，下载范围仍为最近指定数量")
-                }
-            }
-        }
-    }
-
     private func startDownload() {
-        if !parsedArticleLinks.isEmpty {
+        if entryMode == .articleLinks {
             model.archiveArticleLinks(input: input, refreshExisting: refreshExistingLinks)
         } else {
-            guard let mode else { return }
             model.addAndArchiveCreators(input: input, mode: mode, articleLimit: articleLimit, resolveTotalCount: resolveTotalCount)
         }
+    }
+}
+
+/// “10 篇” with a preset menu and a stepper, 1–100.
+struct ArticleLimitControl: View {
+    @Binding var limit: Int
+
+    var body: some View {
+        HStack(spacing: MarkXSpace.s) {
+            Menu {
+                ForEach([5, 10, 20, 50, 100], id: \.self) { value in
+                    Button("\(value) 篇") { limit = value }
+                }
+            } label: {
+                Text("\(limit) 篇").monospacedDigit()
+            }
+            .menuStyle(.button)
+            .buttonStyle(.markxCompact)
+            .fixedSize()
+            Stepper("每位博主", value: $limit, in: 1...100)
+                .labelsHidden()
+        }
+        .help("每位博主 1–100 篇")
     }
 }
 

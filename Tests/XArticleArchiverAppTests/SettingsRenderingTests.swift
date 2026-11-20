@@ -32,6 +32,16 @@ final class SettingsRenderingTests: XCTestCase {
         }
     }
 
+    func testDownloadAndSyncSheetsAreCompact() throws {
+        let model = AppViewModel()
+        let download = try render(AddCreatorsView().environmentObject(model), name: "sheet-download")
+        let sync = try render(SyncAllCreatorsView().environmentObject(model), name: "sheet-sync")
+        for size in [download, sync] {
+            XCTAssertEqual(size.width, 480, accuracy: 1)
+            XCTAssertLessThan(size.height, 420, "no longer a 660pt-tall sheet")
+        }
+    }
+
     func testUpdateDialogIsCompactInEveryPhase() throws {
         let updater = AppUpdater.shared
         let saved = updater.phase

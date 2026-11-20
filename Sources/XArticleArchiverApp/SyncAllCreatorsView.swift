@@ -26,99 +26,72 @@ struct SyncAllCreatorsView: View {
     var body: some View {
         VStack(spacing: 0) {
             MarkXPaneHeader(title: "同步博主文章", onClose: { if !isSavingSchedule { dismiss() } })
-            ScrollView {
-                VStack(alignment: .leading, spacing: MarkXInterface.spacing) {
-                    Picker("同步方式", selection: $mode) {
-                        ForEach(Mode.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden().pickerStyle(.segmented).disabled(isSavingSchedule)
-                    .help("现在同步，或设置每天自动同步")
-                    if mode == .now { immediateContent } else { scheduleContent }
-                    if mode == .now || scheduleEnabled { readinessRow }
+            VStack(alignment: .leading, spacing: MarkXSpace.xl) {
+                Picker("同步方式", selection: $mode) {
+                    ForEach(Mode.allCases) { Text($0.title).tag($0) }
                 }
-                .padding(MarkXInterface.inset)
+                .labelsHidden().pickerStyle(.segmented).disabled(isSavingSchedule)
+                if mode == .now { immediateGroup } else { scheduleGroup }
+                if mode == .now || scheduleEnabled { readinessRow }
             }
+            .padding(.horizontal, MarkXInterface.inset)
             MarkXFooter {
                 Button("取消", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction).disabled(isSavingSchedule)
-                    .help("关闭窗口，不启动任务或更改设置")
                 if mode == .now {
                     Button("同步 \(model.enabledCreatorCount) 位博主") {
                         model.startSyncAll(articleLimit: downloadAllArticles ? nil : articleLimit,
                             resolveTotalCount: downloadAllArticles || resolveTotalCount)
                     }
                     .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
-                    .disabled(!canStartNow).help(canStartNow ? "开始同步所有已跟踪博主" : readinessWarning)
+                    .disabled(!canStartNow)
                 } else {
-                    Button(isSavingSchedule ? "正在保存…" : "保存设置", action: saveSchedule)
+                    Button(isSavingSchedule ? "正在保存…" : "保存", action: saveSchedule)
                         .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
-                        .disabled(!canSaveSchedule).help("保存每日同步时间与文章数量")
+                        .disabled(!canSaveSchedule)
                 }
             }
         }
         .background(MarkXInterface.canvas)
         .font(MarkXFont.body)
-        .frame(width: 640, height: MarkXInterface.sheetHeight(620))
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear(perform: loadScheduleOnce)
         .interactiveDismissDisabled(isSavingSchedule)
     }
 
-    private var immediateContent: some View {
-        Group {
-            MarkXSection(title: "同步范围") {
-                Picker("文章范围", selection: $downloadAllArticles) {
-                    Text("最近文章").tag(false)
-                    Text("全部文章").tag(true)
+    private var immediateGroup: some View {
+        MarkXGroup {
+            MarkXRow(title: "范围") {
+                Picker("范围", selection: $downloadAllArticles) {
+                    Text("最近").tag(false)
+                    Text("全部").tag(true)
                 }
-                .labelsHidden().pickerStyle(.segmented).help("检查最近文章，或完整扫描所有可见文章")
-                if !downloadAllArticles {
-                    limitRow($articleLimit)
-                    Toggle("同时刷新线上文章总数", isOn: $resolveTotalCount)
-                        .font(MarkXFont.detail).help("完整扫描列表来刷新总数，下载范围仍为最近指定数量")
+                .labelsHidden().pickerStyle(.segmented).fixedSize()
+            }
+            if !downloadAllArticles {
+                MarkXRow(title: "每位博主") { ArticleLimitControl(limit: $articleLimit) }
+                MarkXRow(title: "同时刷新线上总数") {
+                    Toggle("同时刷新线上总数", isOn: $resolveTotalCount)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
             }
         }
     }
 
-    private var scheduleContent: some View {
-        Group {
-            MarkXSection(title: "每日同步") {
-                HStack {
-                    Text("自动同步").font(MarkXFont.headline)
-                    Spacer()
-                    Toggle("自动同步", isOn: $scheduleEnabled)
-                        .labelsHidden().toggleStyle(.switch).help("启用或关闭每日后台同步")
+    private var scheduleGroup: some View {
+        MarkXGroup(footer: lastScheduledRunDescription) {
+            MarkXRow(title: "每天自动同步") {
+                Toggle("每天自动同步", isOn: $scheduleEnabled)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            if scheduleEnabled {
+                MarkXRow(title: "时间") {
+                    DatePicker("时间", selection: $scheduleTime, displayedComponents: .hourAndMinute)
+                        .labelsHidden().fixedSize()
                 }
-                HStack {
-                    Text("执行时间")
-                    Spacer()
-                    DatePicker("执行时间", selection: $scheduleTime, displayedComponents: .hourAndMinute)
-                        .labelsHidden().fixedSize().help("设置每天执行同步的本地时间")
-                }
-                .font(MarkXFont.detail).disabled(!scheduleEnabled)
-                limitRow($scheduleArticleLimit).disabled(!scheduleEnabled)
+                MarkXRow(title: "每位博主") { ArticleLimitControl(limit: $scheduleArticleLimit) }
             }
-            MarkXSection(title: "最近执行") {
-                Text(lastScheduledRunDescription).font(MarkXFont.detail).foregroundStyle(MarkXInterface.text2)
-                    .lineSpacing(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
-        }
-    }
-
-    private func limitRow(_ limit: Binding<Int>) -> some View {
-        HStack {
-            Text("每位博主").font(MarkXFont.detail)
-            Spacer()
-            Menu("预设") {
-                ForEach([5, 10, 20, 50, 100], id: \.self) { value in
-                    Button("最近 \(value) 篇") { limit.wrappedValue = value }
-                }
-            }
-            .fixedSize().help("快速选择每位博主的检查数量")
-            Stepper(value: limit, in: 1...100) {
-                Text("\(limit.wrappedValue) 篇").monospacedDigit().frame(minWidth: 44, alignment: .trailing)
-            }
-            .fixedSize().help("每位博主检查最近 1–100 篇文章")
         }
     }
 
@@ -134,6 +107,7 @@ struct SyncAllCreatorsView: View {
                 MarkXInfoLine(symbol: "exclamationmark.circle", text: readinessWarning, color: .orange)
             }
             .buttonStyle(.plain).help("前往连接与存储配置")
+            .padding(.horizontal, MarkXSpace.xs)
         }
     }
 

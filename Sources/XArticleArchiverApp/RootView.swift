@@ -5,6 +5,7 @@ import XArticleArchiverCore
 
 struct RootView: View {
     @EnvironmentObject private var model: AppViewModel
+    @ObservedObject private var updater = AppUpdater.shared
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isArticleListFocused: Bool
@@ -339,7 +340,17 @@ struct RootView: View {
             .buttonStyle(.markxText)
             .help("打开设置（⌘,）")
             libraryFooterActions
+            Spacer(minLength: 0)
+            if updater.hasUpdate {
+                Button { updater.showWindow() } label: {
+                    Label("更新", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(.markxCompactProminent)
+                .help("有新版本，点击下载更新")
+                .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.2), value: updater.hasUpdate)
         .padding(.horizontal, MarkXSpace.m + Self.sidebarInset)
         .frame(height: 44)
         // Sits a little above the window's bottom edge.
