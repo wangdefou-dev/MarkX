@@ -128,7 +128,7 @@ downloads/markx/<version>/SHA256SUMS.txt
 ### 6.1 应用内自动更新（0.3.66）
 
 - 更新源为生产站点 `https://markx.defou.ai/release.json`，由 `scripts/update-release-website.py` 生成，字段：`version`、`build`、`sha256`、`url`（`download.markx.defou.ai` 下的不可变 DMG 地址）、`notes`（取自 `CHANGELOG.md` 对应版本）。缺少 `url` 时按固定路径推导；只接受 `download.markx.defou.ai` 与 `1want.link` 的 HTTPS 地址。
-- `AppUpdater` 在启动 5 秒后及之后每小时检查一次（距上次检查不足 6 小时则跳过），可在设置“通用 → 软件更新”关闭；“跳过此版本”只抑制自动提醒，菜单“检查更新…”始终显示结果。
+- `AppUpdater` 在启动 5 秒后及之后每小时检查一次（距上次检查不足 55 分钟则跳过），可在设置“通用 → 软件更新”关闭；菜单“检查更新…”始终显示结果。
 - 安装流程（`AppUpdateInstaller`）：下载 DMG → 核对 SHA-256 → 只读挂载并复制 App → 核对 Bundle ID、版本与 `codesign --verify --deep --strict` → 旧版移入废纸篓、新版放回原路径 → 进程退出后由 `/bin/sh` 辅助进程重新打开。任一步失败都不改动已安装的应用；有下载任务时禁止重启安装。
 - 调试：设置环境变量 `MARKX_UPDATE_MANIFEST_URL` 可指向本地更新源（此时允许任意下载地址，Debug 构建也会自动检查）。端到端验证用独立 Bundle ID 的旧版本 + 本地 HTTP 服务；macOS 27 上 `hdiutil create -srcfolder` 可能生成损坏镜像，测试包用 `diskutil image create from` 制作。
 
@@ -205,7 +205,7 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 
 ## 8.7 更新提醒按钮（0.3.97）
 
-- `AppUpdater` 每 30 分钟自动检查（`checkInterval`），已发现新版本后不再重复检查；后台检查发现新版本只把 `phase` 置为 `.available`，不弹窗，后台失败回到 `.idle`；手动“检查更新…”仍直接弹窗。
+- `AppUpdater` 每 1 小时自动检查（`checkInterval`），已发现新版本后不再重复检查；后台检查发现新版本只把 `phase` 置为 `.available`，不弹窗，后台失败回到 `.idle`；手动“检查更新…”仍直接弹窗。
 - `hasUpdate`（available / downloading / ready / installing）为真时，主窗口侧栏底栏“设置”右侧右对齐显示“更新”按钮（`.markxPillProminentSmall`：与 `.markxPillProminent` 同款强调色胶囊，24pt 高、无最小宽度，只有文字），点击打开更新窗口。
 
 ## 9. 界面布局与视觉验收（0.3.46）

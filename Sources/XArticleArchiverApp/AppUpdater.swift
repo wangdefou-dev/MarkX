@@ -22,7 +22,7 @@ final class AppUpdater: ObservableObject {
     private static let skippedVersionKey = "skippedUpdateVersion"
     private static let lastCheckKey = "lastUpdateCheck"
     /// Frequent enough that a pushed release shows its “更新” button soon.
-    private static let checkInterval: TimeInterval = 30 * 60
+    private static let checkInterval: TimeInterval = 60 * 60
 
     @Published internal(set) var phase: Phase = .idle
     @Published private(set) var lastChecked: Date?
@@ -72,7 +72,8 @@ final class AppUpdater: ObservableObject {
 
     private func automaticCheck() {
         guard UserDefaults.standard.bool(forKey: Self.automaticChecksKey), !hasUpdate else { return }
-        if let lastChecked, Date().timeIntervalSince(lastChecked) < Self.checkInterval, !isManifestOverridden { return }
+        // A little slack so the hourly timer is never skipped by seconds.
+        if let lastChecked, Date().timeIntervalSince(lastChecked) < Self.checkInterval - 5 * 60, !isManifestOverridden { return }
         check(userInitiated: false)
     }
 
