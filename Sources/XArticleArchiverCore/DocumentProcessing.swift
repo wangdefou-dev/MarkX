@@ -480,35 +480,114 @@ public enum MarkdownRenderer {
         // any fidelity signal.
     }
 
+    /// Inline Markdown for one block. Emphasis uses Markdown delimiters only
+    /// where CommonMark will actually parse them; next to CJK punctuation,
+    /// whitespace or another marker's boundary it falls back to inline HTML
+    /// (`**「重点」**` would otherwise show literal asterisks). Code spans keep
+    /// their content raw.
     public static func renderInlineText(_ text: String, styles: [InlineStyleRange], links: [LinkRange]) -> String {
         guard !text.isEmpty else { return "" }
         if inlineRangesCross(styles: styles, links: links) {
             return renderSegmentedInlineHTML(text, styles: styles, links: links)
         }
-        let utf16Length = (text as NSString).length
+        let nsText = text as NSString
+        let utf16Length = nsText.length
         struct Marker {
             let start: Int
             let end: Int
-            let prefix: String
-            let suffix: String
+            var prefix: String
+            var suffix: String
             let order: Int
+            var rawContent = false
         }
-        var markers: [Marker] = []
-        for (order, style) in styles.enumerated() where style.offset >= 0 && style.length > 0 && style.offset + style.length <= utf16Length {
-            let pair: (String, String)
-            switch style.style {
-            case .bold: pair = ("**", "**")
-            case .italic: pair = ("*", "*")
-            case .underline: pair = ("<u>", "</u>")
-            case .strikethrough: pair = ("~~", "~~")
-            case .code: pair = ("`", "`")
+        let validStyles = styles.enumerated().filter { _, style in
+            style.offset >= 0 && style.length > 0 && style.offset + style.length <= utf16Length
+        }
+        let validLinks = links.enumerated().filter { _, link in
+            link.offset >= 0 && link.length > 0 && link.offset + link.length <= utf16Length
+        }
+        guard !validStyles.isEmpty || !validLinks.isEmpty else { return escapeInlineMarkdown(text) }
+
+        // (start, end, order) in the same order markers are emitted below.
+        var ranges: [(start: Int, end: Int, order: Int)] = []
+        for (order, style) in validStyles { ranges.append((style.offset, style.offset + style.length, order)) }
+        for (offset, link) in validLinks {
+            ranges.append((link.offset, link.offset + link.length, validStyles.count + offset))
+        }
+
+        func character(at offset: Int) -> Character? {
+            guard offset >= 0, offset < utf16Length else { return nil }
+            let range = nsText.rangeOfComposedCharacterSequence(at: offset)
+            return Character(nsText.substring(with: range))
+        }
+        func character(before offset: Int) -> Character? {
+            guard offset > 0, offset <= utf16Length else { return nil }
+            let range = nsText.rangeOfComposedCharacterSequence(at: offset - 1)
+            return Character(nsText.substring(with: range))
+        }
+        /// Whether `**`/`*`/`~~` around this range parse as emphasis. Every
+        /// other marker's prefix and suffix is ASCII punctuation, so a marker
+        /// emitted right next to this one counts as a punctuation neighbour.
+        func canUseDelimiters(start: Int, end: Int, order: Int) -> Bool {
+            let others = ranges.filter { $0.order != order }
+            let innerOpens = others.contains { $0.start == start && ($0.end < end || ($0.end == end && $0.order > order)) }
+            let outerBefore = others.contains { $0.end == start }
+                || others.contains { $0.start == start && ($0.end > end || ($0.end == end && $0.order < order)) }
+            let innerCloses = others.contains { $0.end == end && ($0.start > start || ($0.start == start && $0.order > order)) }
+            let outerAfter = others.contains { $0.start == end }
+                || others.contains { $0.end == end && ($0.start < start || ($0.start == start && $0.order < order)) }
+            enum Neighbour { case none, space, punctuation, other }
+            func kind(_ character: Character?) -> Neighbour {
+                guard let character else { return .none }
+                if isMarkdownWhitespace(character) { return .space }
+                return isMarkdownPunctuation(character) ? .punctuation : .other
             }
-            markers.append(Marker(start: style.offset, end: style.offset + style.length, prefix: pair.0, suffix: pair.1, order: order))
+            let first: Neighbour = innerOpens ? .punctuation : kind(character(at: start))
+            let before: Neighbour = outerBefore ? .punctuation : kind(character(before: start))
+            let last: Neighbour = innerCloses ? .punctuation : kind(character(before: end))
+            let after: Neighbour = outerAfter ? .punctuation : kind(character(at: end))
+            // CommonMark: left-flanking opener and right-flanking closer.
+            let opens = first != .space && first != .none && (first != .punctuation || before != .other)
+            let closes = last != .space && last != .none && (last != .punctuation || after != .other)
+            return opens && closes
         }
-        for (offset, link) in links.enumerated() where link.offset >= 0 && link.length > 0 && link.offset + link.length <= utf16Length {
-            markers.append(Marker(start: link.offset, end: link.offset + link.length, prefix: "[", suffix: "](\(link.url.absoluteString))", order: styles.count + offset))
+
+        var markers: [Marker] = []
+        for (order, style) in validStyles {
+            let start = style.offset
+            let end = style.offset + style.length
+            var marker = Marker(start: start, end: end, prefix: "", suffix: "", order: order)
+            switch style.style {
+            case .bold, .italic, .strikethrough:
+                let delimiter = style.style == .bold ? "**" : style.style == .italic ? "*" : "~~"
+                let tag = style.style == .bold ? "strong" : style.style == .italic ? "em" : "del"
+                if canUseDelimiters(start: start, end: end, order: order) {
+                    marker.prefix = delimiter; marker.suffix = delimiter
+                } else {
+                    marker.prefix = "<\(tag)>"; marker.suffix = "</\(tag)>"
+                }
+            case .underline:
+                marker.prefix = "<u>"; marker.suffix = "</u>"
+            case .code:
+                let content = nsText.substring(with: NSRange(location: start, length: end - start))
+                let overlapsOther = ranges.filter { $0.start < end && start < $0.end }.count > 1
+                if !overlapsOther, !content.contains("\n"), !content.contains("\r") {
+                    var longestRun = 0, run = 0
+                    for character in content { run = character == "`" ? run + 1 : 0; longestRun = max(longestRun, run) }
+                    let fence = String(repeating: "`", count: longestRun + 1)
+                    let pad = content.hasPrefix("`") || content.hasSuffix("`") ? " " : ""
+                    marker.prefix = fence + pad; marker.suffix = pad + fence
+                    marker.rawContent = true
+                } else {
+                    marker.prefix = "<code>"; marker.suffix = "</code>"
+                }
+            }
+            markers.append(marker)
         }
-        guard !markers.isEmpty else { return escapeInlineMarkdown(text) }
+        for (offset, link) in validLinks {
+            markers.append(Marker(start: link.offset, end: link.offset + link.length, prefix: "[",
+                                  suffix: "](\(escapeLinkDestination(link.url.absoluteString)))", order: validStyles.count + offset))
+        }
 
         var openings: [Int: [Marker]] = [:]
         var closings: [Int: [Marker]] = [:]
@@ -516,8 +595,8 @@ public enum MarkdownRenderer {
             openings[marker.start, default: []].append(marker)
             closings[marker.end, default: []].append(marker)
         }
+        let rawRanges = markers.filter(\.rawContent).map { ($0.start, $0.end) }
         let boundaries = Set([0, utf16Length] + markers.flatMap { [$0.start, $0.end] }).sorted()
-        let nsText = text as NSString
         var output = ""
         for index in 0..<(boundaries.count - 1) {
             let position = boundaries[index]
@@ -532,7 +611,9 @@ public enum MarkdownRenderer {
                 }) { output += marker.prefix }
             }
             let next = boundaries[index + 1]
-            output += escapeInlineMarkdown(nsText.substring(with: NSRange(location: position, length: next - position)))
+            let segment = nsText.substring(with: NSRange(location: position, length: next - position))
+            let isRaw = rawRanges.contains { $0.0 <= position && next <= $0.1 }
+            output += isRaw ? segment : escapeInlineMarkdown(segment)
         }
         if let closing = closings[utf16Length] {
             for marker in closing.sorted(by: {
@@ -540,6 +621,29 @@ public enum MarkdownRenderer {
             }) { output += marker.suffix }
         }
         return output
+    }
+
+    private static let markdownPunctuation = CharacterSet.punctuationCharacters.union(.symbols)
+
+    private static func isMarkdownPunctuation(_ character: Character) -> Bool {
+        character.unicodeScalars.first.map { markdownPunctuation.contains($0) } ?? false
+    }
+
+    private static func isMarkdownWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.first.map { CharacterSet.whitespacesAndNewlines.contains($0) } ?? false
+    }
+
+    /// Link destinations with spaces or parentheses need angle brackets.
+    private static func escapeLinkDestination(_ url: String) -> String {
+        guard url.contains(where: { " ()<>".contains($0) }) else { return url }
+        return "<" + url.replacingOccurrences(of: "<", with: "%3C").replacingOccurrences(of: ">", with: "%3E") + ">"
+    }
+
+    /// A soft line break inside one X block is a real line break; plain
+    /// Markdown would join the lines with a space.
+    static func hardLineBreaks(_ text: String, continuation: String = "") -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n", with: "<br>\n" + continuation)
     }
 
     private static func renderBodyLines(
@@ -555,20 +659,22 @@ public enum MarkdownRenderer {
             let text = renderInlineText(block.text, styles: block.inlineStyles, links: block.links)
             switch block.kind {
             case .paragraph:
-                if !text.isEmpty { lines.append(text); lines.append("") }
+                if !text.isEmpty { lines.append(hardLineBreaks(text)); lines.append("") }
             case .blankLine:
                 lines.append("")
             case .heading:
                 let level = min(6, max(2, block.level + 1))
-                lines.append("\(String(repeating: "#", count: level)) \(text)")
+                lines.append("\(String(repeating: "#", count: level)) \(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "<br>"))")
                 lines.append("")
             case .unorderedListItem:
-                lines.append("\(String(repeating: "    ", count: max(0, block.depth)))- \(text)")
+                let indent = String(repeating: "    ", count: max(0, block.depth))
+                lines.append("\(indent)- \(hardLineBreaks(text, continuation: indent + "  "))")
             case .orderedListItem:
                 let marker = orderedMarkers[index] ?? "1."
-                lines.append("\(String(repeating: "    ", count: max(0, block.depth)))\(marker) \(text)")
+                let indent = String(repeating: "    ", count: max(0, block.depth))
+                lines.append("\(indent)\(marker) \(hardLineBreaks(text, continuation: indent + String(repeating: " ", count: marker.count + 1)))")
             case .quote:
-                lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: false).map { "> \($0)" })
+                lines.append(contentsOf: quoteLines(text))
                 lines.append("")
             case .code:
                 let fence = codeFence(for: block.text)
@@ -633,13 +739,13 @@ public enum MarkdownRenderer {
                 if let referenceURL = block.links.first?.url {
                     lines.append("引用文章：<\(referenceURL.absoluteString)>")
                 } else {
-                    lines.append("> \(text)")
+                    lines.append(contentsOf: quoteLines(text))
                 }
                 lines.append("")
             case .unsupported:
                 let type = block.sourceEntityType ?? "unknown"
                 lines.append("<!-- unsupported:x-article-node:\(safeComment(type)) -->")
-                if !text.isEmpty { lines.append(text) }
+                if !text.isEmpty { lines.append(hardLineBreaks(text)) }
                 lines.append("")
             }
             let nextBlock = document.blocks[safe: index + 1]
@@ -651,6 +757,17 @@ public enum MarkdownRenderer {
             }
         }
         return lines
+    }
+
+    /// Each source line becomes a quote line; lines inside one paragraph get
+    /// a hard break so they are not joined.
+    private static func quoteLines(_ text: String) -> [String] {
+        let parts = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        return parts.enumerated().map { index, line in
+            let next = parts.indices.contains(index + 1) ? parts[index + 1] : nil
+            let needsBreak = !line.isEmpty && next.map { !$0.isEmpty } == true
+            return line.isEmpty ? ">" : "> \(line)\(needsBreak ? "<br>" : "")"
+        }
     }
 
     private static func isListItem(_ block: CanonicalBlock?) -> Bool {
@@ -860,7 +977,7 @@ public enum MarkdownRenderer {
                     return leftLength == rightLength ? $0.order < $1.order : leftLength > rightLength
                 }
             for span in active { output += span.prefix }
-            output += escapeHTML(nsText.substring(with: NSRange(location: start, length: end - start)))
+            output += escapeInlineMarkdown(nsText.substring(with: NSRange(location: start, length: end - start)))
             for span in active.reversed() { output += span.suffix }
         }
         return output
@@ -913,7 +1030,7 @@ public enum MarkdownRenderer {
     private static func escapeInlineMarkdown(_ value: String) -> String {
         var output = ""
         for character in value {
-            if "\\`*_{}[]<>#+-.!|".contains(character) { output.append("\\") }
+            if "\\`*_{}[]<>#+-.!|~&$=".contains(character) { output.append("\\") }
             output.append(character)
         }
         return output

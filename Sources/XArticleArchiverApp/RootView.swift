@@ -1118,7 +1118,7 @@ struct RootView: View {
                     articleDetailBody(article)
                         .padding(.top, MarkXSpace.x3)
                 }
-                .frame(minWidth: 0, maxWidth: 860, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: 680, alignment: .leading)
                 .padding(.horizontal, MarkXSpace.pageSide)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }
@@ -1473,10 +1473,12 @@ private struct DownloadResultMetricText: View {
 }
 
 /// Reading typography, after Fog's prose rules (Web/thread/body.css):
-/// paragraphs 1.25em apart, line height ~1.6 for CJK, headings in medium
-/// weight only slightly larger than the text with 1.25em above and 0.75em
-/// below, list items 0.5em apart with grey bullets, quotes as a 2pt grey rule
-/// beside grey text. Every value scales with the reader's zoom.
+/// Reading typography: whitespace, hierarchy, restraint. At 100% the sizes
+/// are 21 / 17 / 15 / 13 pt (first-level heading, second-level heading,
+/// body, captions and notes), the article title 24 pt. Body line height is
+/// 1.8 (system CJK text is ~1.2 tall, so 0.6em is added between lines);
+/// paragraphs are clearly further apart than lines, headings get far more
+/// space above than below. Every value scales with the reader's zoom.
 struct ArticleTypography {
     let scale: CGFloat
 
@@ -1488,34 +1490,38 @@ struct ArticleTypography {
     var bodySize: CGFloat { MarkXTypography.readingPointSize(13, scale: scale) }
     var em: CGFloat { bodySize }
 
-    var titleFont: Font { MarkXTypography.reading(size: 22, scale: scale, weight: .medium) }
-    var titleLineSpacing: CGFloat { 0.25 * MarkXTypography.readingPointSize(22, scale: scale) }
+    var titleFont: Font { MarkXTypography.reading(size: 22, scale: scale, weight: .semibold) }
+    var titleLineSpacing: CGFloat { 0.3 * MarkXTypography.readingPointSize(22, scale: scale) }
 
+    /// 21 / 17 / 15 pt: levels are clearly apart, never 17 against 16.
     func headingSize(level: Int) -> CGFloat {
         switch level {
-        case 0...1: bodySize * 1.4
-        case 2: bodySize * 1.22
-        default: bodySize * 1.1
+        case 0...1: bodySize * 21 / 15
+        case 2: bodySize * 17 / 15
+        default: bodySize
         }
     }
 
-    var bodyLineSpacing: CGFloat { 0.5 * em }
-    var headingLineSpacing: CGFloat { 0.2 * em }
-    var paragraphSpacing: CGFloat { 1.15 * em }
-    var headingTopSpacing: CGFloat { 1.6 * em }
+    func headingWeight(level: Int) -> Font.Weight { level <= 1 ? .bold : .semibold }
+    func headingLineSpacing(level: Int) -> CGFloat { 0.25 * headingSize(level: level) }
+    func headingTopSpacing(level: Int) -> CGFloat { level <= 1 ? 2.2 * em : 1.8 * em }
+
+    var bodyLineSpacing: CGFloat { 0.6 * em }
+    var paragraphSpacing: CGFloat { 1.3 * em }
     var headingBottomSpacing: CGFloat { 0.8 * em }
     var listItemSpacing: CGFloat { 0.5 * em }
-    var listGroupSpacing: CGFloat { 1.15 * em }
-    var listIndent: CGFloat { 1.25 * em }
+    var listGroupSpacing: CGFloat { 1.3 * em }
+    var listIndent: CGFloat { 1.5 * em }
     var listMarkerGap: CGFloat { 0.5 * em }
     var listMarkerWidth: CGFloat { 1.25 * em }
-    var quoteSpacing: CGFloat { 1.15 * em }
-    var blockSpacing: CGFloat { 1.25 * em }
-    var explicitBlankLineHeight: CGFloat { 0.75 * em }
-    var smallSize: CGFloat { 0.857 * em }
+    var quoteSpacing: CGFloat { 1.3 * em }
+    var blockSpacing: CGFloat { 1.6 * em }
+    var explicitBlankLineHeight: CGFloat { 1.0 * em }
+    /// 13 pt captions, sources, tables and code.
+    var smallSize: CGFloat { em * 13 / 15 }
 }
 
-private struct ArticleDocumentPreview: View {
+struct ArticleDocumentPreview: View {
     let document: CanonicalDocument
     let textScale: Double
 
@@ -1569,7 +1575,7 @@ private struct ArticleDocumentPreview: View {
         let next = document.blocks[index + 1]
 
         if next.kind == .blankLine || block.kind == .blankLine { return 0 }
-        if next.kind == .heading { return typography.headingTopSpacing }
+        if next.kind == .heading { return typography.headingTopSpacing(level: next.level) }
         if block.kind == .heading { return typography.headingBottomSpacing }
         if isList(block), isList(next) { return typography.listItemSpacing }
         if isList(block) { return typography.listGroupSpacing }
@@ -1617,7 +1623,8 @@ private struct ArticleBlockView: View {
         case .heading:
             inlineText
                 .font(headingFont)
-                .lineSpacing(typography.headingLineSpacing)
+                .lineSpacing(typography.headingLineSpacing(level: block.level))
+                .accessibilityAddTraits(.isHeader)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         case .unorderedListItem:
@@ -1625,10 +1632,10 @@ private struct ArticleBlockView: View {
         case .orderedListItem:
             listRow(marker: resolvedOrderedMarker ?? "1.")
         case .quote:
-            HStack(alignment: .top, spacing: 0.8 * typography.em) {
+            HStack(alignment: .top, spacing: 0.9 * typography.em) {
                 Rectangle()
                     .fill(MarkXInterface.washStrong)
-                    .frame(width: 2)
+                    .frame(width: 3)
                 inlineText
                     .font(bodyFont)
                     .foregroundStyle(MarkXInterface.text2)
@@ -1641,9 +1648,9 @@ private struct ArticleBlockView: View {
             ScrollView(.horizontal) {
                 Text(block.text)
                     .font(.system(size: typography.smallSize, design: .monospaced))
-                    .lineSpacing(0.6 * typography.smallSize)
-                    .padding(.vertical, 0.75 * typography.em)
-                    .padding(.horizontal, typography.em)
+                    .lineSpacing(0.5 * typography.smallSize)
+                    .padding(.vertical, 0.9 * typography.em)
+                    .padding(.horizontal, 1.1 * typography.em)
                     .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1733,7 +1740,7 @@ private struct ArticleBlockView: View {
     }
 
     private var headingFont: Font {
-        .system(size: typography.headingSize(level: block.level), weight: .medium)
+        .system(size: typography.headingSize(level: block.level), weight: typography.headingWeight(level: block.level))
     }
 
     private var bodyFont: Font {
@@ -1764,29 +1771,11 @@ private struct ArticleBlockView: View {
     }
 
     private var inlineText: Text {
-        let markdown = MarkdownRenderer.renderInlineText(
-            block.text,
-            styles: block.inlineStyles,
-            links: block.links
-        )
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        if let attributed = try? AttributedString(markdown: markdown, options: options) {
-            return Text(attributed)
-        }
-        return Text(block.text)
+        Text(ArticleInlineText.attributed(block.text, styles: block.inlineStyles, links: block.links))
     }
 
     private func tableCellText(_ cell: CanonicalTableCell) -> Text {
-        let markdown = MarkdownRenderer.renderInlineText(
-            cell.text,
-            styles: cell.inlineStyles,
-            links: cell.links
-        )
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        if let attributed = try? AttributedString(markdown: markdown, options: options) {
-            return Text(attributed)
-        }
-        return Text(cell.text)
+        Text(ArticleInlineText.attributed(cell.text, styles: cell.inlineStyles, links: cell.links))
     }
 
     @ViewBuilder
@@ -1833,6 +1822,43 @@ private struct ArticleBlockView: View {
         } else {
             Label("文章图片记录缺失", systemImage: "photo.badge.exclamationmark")
                 .foregroundStyle(.orange)
+        }
+    }
+}
+
+/// Builds the reading text straight from the captured styles, so every X
+/// format shows as styled text instead of going through Markdown (which
+/// could leave literal `**` or `<u>` on screen).
+enum ArticleInlineText {
+    static func attributed(_ text: String, styles: [InlineStyleRange], links: [LinkRange]) -> AttributedString {
+        var result = AttributedString(text)
+        let length = (text as NSString).length
+        func range(_ offset: Int, _ count: Int) -> Range<AttributedString.Index>? {
+            guard offset >= 0, count > 0, offset + count <= length else { return nil }
+            return Range(NSRange(location: offset, length: count), in: result)
+        }
+        for style in styles {
+            guard let span = range(style.offset, style.length) else { continue }
+            switch style.style {
+            case .bold: addIntent(.stronglyEmphasized, to: span, in: &result)
+            case .italic: addIntent(.emphasized, to: span, in: &result)
+            case .code: addIntent(.code, to: span, in: &result)
+            case .underline: result[span].underlineStyle = .single
+            case .strikethrough: result[span].strikethroughStyle = .single
+            }
+        }
+        for link in links {
+            guard let span = range(link.offset, link.length) else { continue }
+            result[span].link = link.url
+        }
+        return result
+    }
+
+    private static func addIntent(_ intent: InlinePresentationIntent, to span: Range<AttributedString.Index>,
+                                  in string: inout AttributedString) {
+        for run in string[span].runs {
+            let current = string[run.range].inlinePresentationIntent ?? []
+            string[run.range].inlinePresentationIntent = current.union(intent)
         }
     }
 }

@@ -191,6 +191,13 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - “隐藏到后台”或关闭进度窗口时不关闭窗口（WKWebView 需继续渲染 X 列表），而是居中到主窗口并 `order(.below, relativeTo:)` 放在主窗口正后方；禁止设置 `ignoresMouseEvents = true`——窗口可能经程序坞、窗口菜单、主窗口移动或最小化回到前面，点击穿透会让它无法操作。
 - `DownloadProgressWindowDelegate` 在 `windowDidBecomeKey` / `windowDidDeminiaturize` 时调用 `downloadProgressWindowDidBecomeKey`，恢复可点击并把状态记为已显示。
 
+## 8.5 详情页排版与 Markdown 格式（0.3.95）
+
+- 阅读字号阶梯（100% 缩放）：文章标题 24 semibold、一级小标题 21 bold、二级小标题 17 semibold、三级及以下 15 semibold、正文 15、图片说明 / 表格 / 代码 / 注释 13（`ArticleTypography`）。正文行距 1.8：系统中文自然行高约 1.2 倍，`bodyLineSpacing` = 0.6em；段落间距 1.3em，小标题上方 2.2em（一级）/ 1.8em，下方 0.8em；列表项间 0.5em，列表缩进 1.5em；引用为 3pt 灰线加灰色正文。正文区最宽 680pt（每行约 40 个汉字）。离屏渲染检查：`MARKX_RENDER_DIR=<目录> swift test --filter ArticleRenderingSnapshotTests` 会输出包含全部块类型的 `article-render.png`（`ImageRenderer` 不绘制滚动视图，代码块和表格在图中为空白，需在应用内确认）。
+- 详情页正文用 `ArticleInlineText.attributed` 直接把 `InlineStyleRange` / `LinkRange` 转成 AttributedString（粗体、斜体、行内代码用 `inlinePresentationIntent`，下划线、删除线、链接用对应属性），不再经由 Markdown 解析。
+- `MarkdownRenderer.renderInlineText`：粗体 / 斜体 / 删除线按 CommonMark 左右侧翼规则判断，相邻标记一律视为标点；能解析时用 `**` `*` `~~`，否则用 `<strong>` `<em>` `<del>`。下划线固定 `<u>`。行内代码不与其他样式重叠且不含换行时输出原文代码段（按内容中最长反引号串加长围栏），否则用 `<code>`。转义字符集为 ``\`*_{}[]<>#+-.!|~&$=``。块内换行：段落 / 列表 / 引用 / 未知节点用 `<br>` 加换行（列表续行按标记宽度缩进，引用逐行 `>`），标题内换行用 `<br>`。
+- 渲染规则变更时提升 `markdownFormatMigrationDefaultsKey`（当前 V2），后台对仍带有效导出校验和的 Markdown 重新生成一次。
+
 ## 9. 界面布局与视觉验收（0.3.46）
 
 - 侧边栏只负责导航（HIG Sidebars）：不放下载等操作按钮，底部不放目录选择入口，运行时仅展示任务摘要。

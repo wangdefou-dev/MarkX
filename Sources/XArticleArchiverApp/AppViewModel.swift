@@ -180,7 +180,7 @@ final class AppViewModel: ObservableObject {
     private var lastProgressUIPublish = Date.distantPast
     private var libraryRepairTask: Task<Void, Never>?
     private var todayRefreshTask: Task<Void, Never>?
-    private static let markdownFormatMigrationDefaultsKey = "didMigrateMarkdownFormattingV1"
+    private static let markdownFormatMigrationDefaultsKey = "didMigrateMarkdownFormattingV2"
     private static let clearUntrustedVerifiedEmptyDefaultsKey = "didClearUntrustedVerifiedEmptyTotalsV1"
     private let defaults = UserDefaults.standard
     private static let pinnedCreatorIDsDefaultsKey = "pinnedCreatorIDs"
