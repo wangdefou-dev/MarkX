@@ -42,6 +42,18 @@ final class SettingsRenderingTests: XCTestCase {
         }
     }
 
+    /// The sidebar footer's “更新” button: a small accent capsule, text only.
+    func testUpdateButtonIsASmallCapsule() throws {
+        let footer = HStack {
+            Label("设置", systemImage: "gearshape").font(MarkXFont.body)
+            Spacer()
+            Button("更新") {}.buttonStyle(.markxPillProminentSmall)
+        }
+        .padding(.horizontal, 16).frame(width: 248, height: 44).background(MarkXInterface.sidebarGradient)
+        let size = try render(footer, name: "footer-update")
+        XCTAssertEqual(size.height, 44, accuracy: 1)
+    }
+
     func testUpdateDialogIsCompactInEveryPhase() throws {
         let updater = AppUpdater.shared
         let saved = updater.phase

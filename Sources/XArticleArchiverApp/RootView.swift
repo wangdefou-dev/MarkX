@@ -342,10 +342,8 @@ struct RootView: View {
             libraryFooterActions
             Spacer(minLength: 0)
             if updater.hasUpdate {
-                Button { updater.showWindow() } label: {
-                    Label("更新", systemImage: "arrow.down.circle.fill")
-                }
-                .buttonStyle(.markxCompactProminent)
+                Button("更新") { updater.showWindow() }
+                .buttonStyle(.markxPillProminentSmall)
                 .help("有新版本，点击下载更新")
                 .transition(.opacity)
             }

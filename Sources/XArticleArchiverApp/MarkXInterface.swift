@@ -519,14 +519,16 @@ struct MarkXFlowLayout: Layout {
 /// - `.markxText`: grey text-only actions (Fog `.text-action`).
 struct MarkXPillButtonStyle: ButtonStyle {
     var prominent = false
+    /// Same capsule, sized for a toolbar or footer row.
+    var small = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(MarkXFont.headline)
+            .font(small ? MarkXFont.detailStrong : MarkXFont.headline)
             .foregroundStyle(prominent ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
-            .padding(.horizontal, MarkXSpace.xxl)
-            .frame(minWidth: 88, minHeight: 32)
+            .padding(.horizontal, small ? MarkXSpace.l : MarkXSpace.xxl)
+            .frame(minWidth: small ? 0 : 88, minHeight: small ? 24 : 32)
             .background(
                 Capsule().fill(prominent
                     ? AnyShapeStyle(.tint)
@@ -620,6 +622,7 @@ extension ButtonStyle where Self == MarkXIconButtonStyle {
 extension ButtonStyle where Self == MarkXPillButtonStyle {
     static var markxPill: MarkXPillButtonStyle { MarkXPillButtonStyle() }
     static var markxPillProminent: MarkXPillButtonStyle { MarkXPillButtonStyle(prominent: true) }
+    static var markxPillProminentSmall: MarkXPillButtonStyle { MarkXPillButtonStyle(prominent: true, small: true) }
 }
 
 extension ButtonStyle where Self == MarkXCompactButtonStyle {

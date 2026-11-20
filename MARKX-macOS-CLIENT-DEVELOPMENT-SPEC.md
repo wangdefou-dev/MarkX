@@ -206,7 +206,7 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 ## 8.7 更新提醒按钮（0.3.97）
 
 - `AppUpdater` 每 30 分钟自动检查（`checkInterval`），已发现新版本后不再重复检查；后台检查发现新版本只把 `phase` 置为 `.available`，不弹窗，后台失败回到 `.idle`；手动“检查更新…”仍直接弹窗。
-- `hasUpdate`（available / downloading / ready / installing）为真时，主窗口侧栏底栏“设置”右侧右对齐显示强调色“更新”按钮，点击打开更新窗口。
+- `hasUpdate`（available / downloading / ready / installing）为真时，主窗口侧栏底栏“设置”右侧右对齐显示“更新”按钮（`.markxPillProminentSmall`：与 `.markxPillProminent` 同款强调色胶囊，24pt 高、无最小宽度，只有文字），点击打开更新窗口。
 
 ## 9. 界面布局与视觉验收（0.3.46）
 
