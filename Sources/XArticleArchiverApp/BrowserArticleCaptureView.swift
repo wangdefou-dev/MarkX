@@ -86,10 +86,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             try BrowserSessionAccess.readActiveSession()
         }.value
         try Task.checkCancellation()
-        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
-        for cookie in session.cookies {
-            await cookieStore.setCookie(cookie)
-        }
+        await BrowserSessionAccess.install(session, in: webView.configuration.websiteDataStore.httpCookieStore)
         closeLoginWindow(reloadArticle: false)
         hasImportedBrowserSession = true
         pageStatus = "已导入 \(session.sourceDescription)的 X 登录状态"

@@ -171,6 +171,13 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 
 - 设置“X 登录 → 登录 X → 打开 X”（`openBrowserXLogin`）固定用 `NSWorkspace.urlForApplication(toOpen:)` 得到的系统默认浏览器打开 `https://x.com`，不使用 `preferredSessionBrowser` 推断；默认浏览器不在 `BrowserSessionDefinition.supported` 中（如 Safari），或与非“自动查找”的读取来源不一致时，用 `browserSessionCheckMessage` 提示。订阅页等需要复用会话的链接仍按 `openInSessionBrowser` 在会话对应的浏览器打开。
 
+## 8.2 多浏览器 X 登录（0.3.91）
+
+- 来源选择存于 `browserSession.preferredBrowser`，格式由 `BrowserSessionSelection` 解析：`automatic`、浏览器 ID（如 `edge`）或精确配置 `浏览器ID|配置目录`（如 `chrome|Profile 2`）。
+- `BrowserSessionAccess.probe()` 始终探测全部受支持浏览器，并把选择写入 `BrowserSessionProbe.selection`；`loggedInProfiles` 按 Cookie 数据库最后修改时间从新到旧排序，`selectedProfiles` 是当前选择允许、按尝试顺序排列的登录。设置的“使用浏览器”菜单列出“自动查找（最近使用的登录）”、全部检测到的登录和按浏览器三组；精确配置失去登录时保留一项“（未检测到登录）”并在读取时报错，不改用其他账号。
+- 读取 Cookie 数据库（Chromium 与 Firefox）一律先复制主文件及 `-wal`/`-journal` 到临时目录再打开副本，避免浏览器运行时的独占锁导致 “database is locked”；只有权限被拒时才直接报错。
+- 导入会话到 WebView 用 `BrowserSessionAccess.install`：先删除已有的 x.com / twitter.com Cookie 再写入，防止切换账号时新旧 Cookie 混用。
+
 ## 9. 界面布局与视觉验收（0.3.46）
 
 - 侧边栏只负责导航（HIG Sidebars）：不放下载等操作按钮，底部不放目录选择入口，运行时仅展示任务摘要。

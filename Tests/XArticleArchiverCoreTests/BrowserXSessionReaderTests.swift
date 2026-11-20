@@ -159,6 +159,84 @@ final class BrowserXSessionReaderTests: XCTestCase {
         XCTAssertEqual(session.browserName, "Firefox")
     }
 
+    /// A running Chromium browser holds its cookie database under an
+    /// exclusive lock; reading must still work while the browser is open.
+    func testReadsCookiesWhileBrowserHoldsExclusiveLock() throws {
+        let root = directory.appending(path: "Chrome")
+        let url = try chromium(root.appending(path: "Default/Cookies"))
+        try login(url, auth: "locked-account")
+        var browser: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &browser), SQLITE_OK)
+        defer { sqlite3_close(browser) }
+        XCTAssertEqual(sqlite3_exec(browser, "PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE cookies SET path='/' WHERE 0;", nil, nil, nil), SQLITE_OK)
+        defer { sqlite3_exec(browser, "COMMIT;", nil, nil, nil) }
+
+        var direct: OpaquePointer?
+        sqlite3_open_v2(url.path, &direct, SQLITE_OPEN_READONLY, nil)
+        XCTAssertNotEqual(sqlite3_exec(direct, "SELECT count(*) FROM cookies", nil, nil, nil), SQLITE_OK, "fixture must really be locked")
+        sqlite3_close(direct)
+
+        let probe = BrowserXSessionReader.probe(browsers: [.chrome], customRoots: ["chrome": root])
+        XCTAssertTrue(probe.issues.isEmpty, "\(probe.issues.map(\.detail))")
+        XCTAssertEqual(probe.loggedInProfiles.count, 1)
+        XCTAssertEqual(try read(root).cookies.first(where: { $0.name == "auth_token" })?.value, "locked-account")
+    }
+
+    func testAutomaticChoiceUsesMostRecentlyUsedLogin() throws {
+        let chrome = directory.appending(path: "Chrome")
+        let edge = directory.appending(path: "Edge")
+        let chromeDB = try chromium(chrome.appending(path: "Default/Cookies"))
+        let edgeDB = try chromium(edge.appending(path: "Default/Cookies"))
+        try login(chromeDB, auth: "old-chrome-account")
+        try login(edgeDB, auth: "recent-edge-account")
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -86_400)], ofItemAtPath: chromeDB.path)
+        let definitions = BrowserSessionDefinition.supported.filter { ["chrome", "edge"].contains($0.id) }
+        let roots = ["chrome": chrome, "edge": edge]
+        let session = try BrowserXSessionReader.readActiveSession(browsers: definitions, customRoots: roots, password: { _ in Data() })
+        XCTAssertEqual(session.cookies.first(where: { $0.name == "auth_token" })?.value, "recent-edge-account")
+
+        var probe = BrowserXSessionReader.probe(browsers: definitions, customRoots: roots)
+        XCTAssertEqual(probe.loggedInProfiles.map(\.browser.id), ["edge", "chrome"])
+        XCTAssertTrue(probe.summary.contains("Edge"), probe.summary)
+        XCTAssertTrue(probe.summary.contains("另有 1 个登录"), probe.summary)
+        probe.selection = BrowserSessionSelection("chrome")
+        XCTAssertEqual(probe.selectedProfiles.map(\.browser.id), ["chrome"])
+        XCTAssertEqual(probe.loggedInProfiles.count, 2, "other browsers stay listed after choosing one")
+    }
+
+    func testExactProfileChoiceReadsThatProfileOnly() throws {
+        let root = directory.appending(path: "Chrome")
+        try login(chromium(root.appending(path: "Default/Cookies")), auth: "personal-account")
+        try login(chromium(root.appending(path: "Profile 2/Network/Cookies")), auth: "work-account")
+        try state(root, ["last_used": "Default", "info_cache": ["Default": ["name": "Personal"], "Profile 2": ["name": "Work"]]])
+        let probe = BrowserXSessionReader.probe(browsers: [.chrome], customRoots: ["chrome": root])
+        let work = try XCTUnwrap(probe.loggedInProfiles.first { $0.name == "Work" })
+        XCTAssertEqual(work.selectionID, "chrome|Profile 2")
+        let session = try BrowserXSessionReader.readActiveSession(browsers: [.chrome], customRoots: ["chrome": root],
+                                                                  preferredBrowserID: work.selectionID, password: { _ in Data() })
+        XCTAssertEqual(session.profileName, "Work")
+        XCTAssertEqual(session.cookies.first(where: { $0.name == "auth_token" })?.value, "work-account")
+    }
+
+    func testPinnedProfileWithoutLoginDoesNotSilentlyUseAnotherAccount() throws {
+        let root = directory.appending(path: "Chrome")
+        try login(chromium(root.appending(path: "Default/Cookies")), auth: "personal-account")
+        _ = try chromium(root.appending(path: "Profile 2/Cookies"))
+        XCTAssertThrowsError(try BrowserXSessionReader.readActiveSession(browsers: [.chrome], customRoots: ["chrome": root],
+                                                                         preferredBrowserID: "chrome|Profile 2", password: { _ in Data() })) { error in
+            XCTAssertTrue(error.localizedDescription.contains("重新选择"), error.localizedDescription)
+        }
+    }
+
+    func testSelectionParsing() {
+        XCTAssertTrue(BrowserSessionSelection(nil).isAutomatic)
+        XCTAssertTrue(BrowserSessionSelection("automatic").isAutomatic)
+        XCTAssertEqual(BrowserSessionSelection("edge"), BrowserSessionSelection("edge|"))
+        let pinned = BrowserSessionSelection("chrome|Profile 3")
+        XCTAssertEqual(pinned.browserID, "chrome")
+        XCTAssertEqual(pinned.profileDirectory, "Profile 3")
+    }
+
     private func read(_ root: URL) throws -> ChromeXSession {
         try BrowserXSessionReader.readActiveSession(browsers: [.chrome], customRoots: ["chrome": root], password: { _ in Data() })
     }

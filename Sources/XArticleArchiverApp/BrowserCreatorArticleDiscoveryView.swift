@@ -152,10 +152,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
             try BrowserSessionAccess.readActiveSession()
         }.value
         try Task.checkCancellation()
-        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
-        for cookie in session.cookies {
-            await cookieStore.setCookie(cookie)
-        }
+        await BrowserSessionAccess.install(session, in: webView.configuration.websiteDataStore.httpCookieStore)
         hasImportedBrowserSession = true
         pageStatus = "已导入 \(session.sourceDescription)登录状态，正在刷新 Articles 列表…"
         if let currentListURL {

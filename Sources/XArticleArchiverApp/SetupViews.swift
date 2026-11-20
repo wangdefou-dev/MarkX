@@ -422,10 +422,23 @@ private struct BrowserConnectionConfiguration: View {
     var body: some View {
         MarkXGroup(title: "浏览器与 X 登录",
                    footer: "兼容 Chrome、Edge、Brave、Arc、Vivaldi、Opera、Chromium、夸克、豆包及 Firefox。仅读取 X 会话，不保存密码或 Cookie。Safari 暂不支持自动导入。") {
-            MarkXRow(title: "使用浏览器", detail: "MarkX 从这里读取你的 X 登录状态。", symbol: "globe") {
+            MarkXRow(title: "使用浏览器",
+                     detail: "在多个浏览器或配置登录过 X 时，可在这里指定用哪一个；“自动查找”优先用最近使用的登录。",
+                     symbol: "globe") {
                 Picker("使用浏览器", selection: $model.preferredBrowserID) {
-                    Text("自动查找").tag("automatic")
-                    ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
+                    Text("自动查找（最近使用的登录）").tag(BrowserSessionSelection.automaticID)
+                    let logins = model.browserSessionProbe.loggedInProfiles
+                    if !logins.isEmpty {
+                        Section("检测到的 X 登录") {
+                            ForEach(logins) { Text($0.description).tag($0.selectionID) }
+                        }
+                    }
+                    if let missing = missingSelectionLabel(logins: logins) {
+                        Text(missing).tag(model.preferredBrowserID)
+                    }
+                    Section("按浏览器") {
+                        ForEach(BrowserSessionDefinition.supported, id: \.id) { Text($0.name).tag($0.id) }
+                    }
                 }
                 .labelsHidden().fixedSize()
                 .disabled(isChecking)
@@ -491,6 +504,16 @@ private struct BrowserConnectionConfiguration: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshBrowserStatus() }
         }
+    }
+
+    /// A pinned profile that no longer has a login still needs a menu item,
+    /// or the picker would show an empty selection.
+    private func missingSelectionLabel(logins: [BrowserSessionProfile]) -> String? {
+        let selection = BrowserSessionSelection(model.preferredBrowserID)
+        guard let browserID = selection.browserID, selection.profileDirectory != nil,
+              !logins.contains(where: { $0.selectionID == model.preferredBrowserID }) else { return nil }
+        let browser = BrowserSessionDefinition.supported.first { $0.id == browserID }?.name ?? browserID
+        return "\(browser) · \(selection.profileDirectory ?? "")（未检测到登录）"
     }
 }
 

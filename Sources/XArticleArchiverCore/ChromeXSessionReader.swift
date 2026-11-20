@@ -84,17 +84,16 @@ public enum ChromeXSessionReader {
         profileName: String,
         safeStoragePassword: Data
     ) throws -> ChromeXSession {
-        var database: OpaquePointer?
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(databaseURL.path, &database, flags, nil) == SQLITE_OK,
-              let database else {
-            let detail = database.map { String(cString: sqlite3_errmsg($0)) } ?? "无法打开数据库"
-            if let database { sqlite3_close(database) }
-            throw ChromeXSessionError.cookieDatabase(detail)
+        try BrowserXSessionReader.withDatabase(databaseURL) { database in
+            try readSession(database: database, profileName: profileName, safeStoragePassword: safeStoragePassword)
         }
-        defer { sqlite3_close(database) }
-        sqlite3_busy_timeout(database, 1_500)
+    }
 
+    private static func readSession(
+        database: OpaquePointer,
+        profileName: String,
+        safeStoragePassword: Data
+    ) throws -> ChromeXSession {
         let databaseVersion = try readDatabaseVersion(database)
         let placeholders = allowedHosts.map { _ in "?" }.joined(separator: ",")
         let names = allowedCookieNames.sorted()

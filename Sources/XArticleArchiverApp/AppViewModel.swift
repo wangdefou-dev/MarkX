@@ -124,7 +124,7 @@ final class AppViewModel: ObservableObject {
         }
     }
     private var browserProbeTask: Task<Void, Never>?
-    var hasBrowserSessionData: Bool { !browserSessionProbe.loggedInProfiles.isEmpty }
+    var hasBrowserSessionData: Bool { !browserSessionProbe.selectedProfiles.isEmpty }
     @Published var downloadSheetPrefill = ""
     @Published var downloadSheetUsesArticleLinks = false
     @Published var showingCreatorArticleDiscovery = false
@@ -666,7 +666,7 @@ final class AppViewModel: ObservableObject {
         let supported = BrowserSessionDefinition.supported.first { $0.bundleIdentifier == bundleID }
         if supported == nil {
             browserSessionCheckMessage = "已在默认浏览器 \(browserName) 打开 X。MarkX 暂时无法读取 \(browserName) 的登录，请在 Chrome、Edge、Arc、Firefox 等浏览器登录 X，或把它设为默认浏览器。"
-        } else if let supported, preferredBrowserID != "automatic", preferredBrowserID != supported.id {
+        } else if let supported, let chosen = BrowserSessionSelection(preferredBrowserID).browserID, chosen != supported.id {
             browserSessionCheckMessage = "已在默认浏览器 \(browserName) 打开 X。上方“使用浏览器”不是 \(browserName)，登录后请改为“\(browserName)”或“自动查找”，MarkX 才能读取到登录。"
         } else {
             browserSessionCheckMessage = "已在默认浏览器 \(browserName) 打开 X。登录完成后点下方“验证”确认 MarkX 能读取。"
@@ -677,13 +677,16 @@ final class AppViewModel: ObservableObject {
         do {
             let session = try await Task.detached(priority: .userInitiated) { try BrowserSessionAccess.readActiveSession() }.value
             browserSessionCheckMessage = "已成功读取 \(session.sourceDescription) 的 X 会话，下载时会自动复用。"
-        } catch { browserSessionCheckMessage = error.localizedDescription }
+        } catch {
+            MarkXLog.warning("browser", "验证 X 登录失败：\(error.localizedDescription)")
+            browserSessionCheckMessage = error.localizedDescription
+        }
         refreshBrowserStatus()
     }
 
     private var preferredSessionBrowser: BrowserSessionDefinition {
-        BrowserSessionDefinition.supported.first(where: { $0.id == preferredBrowserID })
-            ?? browserSessionProbe.loggedInProfiles.first?.browser
+        BrowserSessionDefinition.supported.first(where: { $0.id == BrowserSessionSelection(preferredBrowserID).browserID })
+            ?? browserSessionProbe.selectedProfiles.first?.browser
             ?? browserSessionProbe.browserNeedingAccess.flatMap { issue in
                 BrowserSessionDefinition.supported.first { $0.id == issue.browserID }
             }

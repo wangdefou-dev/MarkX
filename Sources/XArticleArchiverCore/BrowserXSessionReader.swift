@@ -34,7 +34,39 @@ public struct BrowserSessionProfile: Sendable, Identifiable {
     public var name: String
     public var databaseURL: URL
     public var hasLoginCookies: Bool
+    /// Folder name of the profile inside the browser root (e.g. `Profile 2`).
+    public var directoryName: String = ""
+    /// Last change to the cookie database: the browser in use most recently.
+    public var lastActivity: Date?
     public var description: String { "\(browser.name) · \(name)" }
+    /// Stored as the preferred source to pin exactly this profile.
+    public var selectionID: String { BrowserSessionSelection.profileID(browserID: browser.id, directory: directoryName) }
+}
+
+/// The user's chosen login source: automatic, one browser, or one profile
+/// (`browserID|profileDirectory`).
+public struct BrowserSessionSelection: Sendable, Equatable {
+    public var browserID: String?
+    public var profileDirectory: String?
+
+    public static let automaticID = "automatic"
+
+    public init(_ stored: String?) {
+        guard let stored, !stored.isEmpty, stored != Self.automaticID else { return }
+        let parts = stored.split(separator: "|", maxSplits: 1).map(String.init)
+        browserID = parts[0]
+        profileDirectory = parts.count > 1 && !parts[1].isEmpty ? parts[1] : nil
+    }
+
+    public var isAutomatic: Bool { browserID == nil }
+
+    public static func profileID(browserID: String, directory: String) -> String { "\(browserID)|\(directory)" }
+
+    public func matches(_ profile: BrowserSessionProfile) -> Bool {
+        guard let browserID else { return true }
+        guard profile.browser.id == browserID else { return false }
+        return profileDirectory == nil || profile.directoryName == profileDirectory
+    }
 }
 
 public struct BrowserSessionIssue: Sendable {
@@ -51,15 +83,40 @@ public struct BrowserSessionProbe: Sendable {
     public init() {}
     public var profiles: [BrowserSessionProfile] = []
     public var issues: [BrowserSessionIssue] = []
-    public var loggedInProfiles: [BrowserSessionProfile] { profiles.filter(\.hasLoginCookies) }
+    /// The user's chosen source; every browser is still probed so the
+    /// settings can list all logins to switch between.
+    public var selection = BrowserSessionSelection(nil)
+    /// Every logged-in profile, most recently used first.
+    public var loggedInProfiles: [BrowserSessionProfile] {
+        profiles.enumerated()
+            .filter { $0.element.hasLoginCookies }
+            .sorted { lhs, rhs in
+                let left = lhs.element.lastActivity ?? .distantPast
+                let right = rhs.element.lastActivity ?? .distantPast
+                return left == right ? lhs.offset < rhs.offset : left > right
+            }
+            .map(\.element)
+    }
+    /// Logged-in profiles the chosen source allows, in the order they are tried.
+    public var selectedProfiles: [BrowserSessionProfile] { loggedInProfiles.filter(selection.matches) }
+    private var selectedIssues: [BrowserSessionIssue] {
+        guard let browserID = selection.browserID else { return issues }
+        return issues.filter { $0.browserID == browserID }
+    }
     /// The first browser whose data macOS refused to read, when no readable
-    /// profile already has an X login.
+    /// profile already has an X login for the chosen source.
     public var browserNeedingAccess: BrowserSessionIssue? {
-        loggedInProfiles.isEmpty ? issues.first(where: \.isPermissionDenied) : nil
+        selectedProfiles.isEmpty ? selectedIssues.first(where: \.isPermissionDenied) : nil
     }
     public var summary: String {
-        if let first = loggedInProfiles.first { return "已检测到 X 登录数据：\(first.description)" }
-        if let first = issues.first { return "\(first.browserName) 数据读取受限：\(first.detail)" }
+        if let first = selectedProfiles.first {
+            let others = loggedInProfiles.count - 1
+            return "将使用 \(first.description) 的 X 登录" + (others > 0 ? "（另有 \(others) 个登录可在“使用浏览器”中切换）" : "")
+        }
+        if let first = selectedIssues.first { return "\(first.browserName) 数据读取受限：\(first.detail)" }
+        if !selection.isAutomatic, let other = loggedInProfiles.first {
+            return "所选来源没有有效的 X 登录；\(other.description) 有登录，可在“使用浏览器”中切换"
+        }
         return profiles.isEmpty ? "未发现可读取的浏览器配置，可手动选择数据目录。" : "已找到浏览器配置，尚未发现有效的 X 登录数据。"
     }
 }
@@ -85,13 +142,15 @@ public enum BrowserXSessionReader {
                 guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else { continue }
                 let candidates = try profileDirectories(root: root, engine: browser.engine)
                 for (directory, name) in candidates {
+                    let directoryName = directory.standardizedFileURL.path == root.standardizedFileURL.path ? "" : directory.lastPathComponent
                     let files = browser.engine == .firefox ? ["cookies.sqlite"] : ["Network/Cookies", "Cookies"]
                     for file in files {
                         let url = directory.appending(path: file)
                         do {
                             guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
                             let hasLogin = try hasAuthentication(databaseURL: url, engine: browser.engine)
-                            result.profiles.append(.init(browser: browser, name: name, databaseURL: url, hasLoginCookies: hasLogin))
+                            result.profiles.append(.init(browser: browser, name: name, databaseURL: url, hasLoginCookies: hasLogin,
+                                                         directoryName: directoryName, lastActivity: lastActivity(of: url)))
                         } catch where isMissing(error) { continue }
                         catch { result.issues.append(issue(for: browser, root: root, error: error)) }
                     }
@@ -106,17 +165,23 @@ public enum BrowserXSessionReader {
                                          browsers: [BrowserSessionDefinition] = BrowserSessionDefinition.supported,
                                          customRoots: [String: URL] = [:], preferredBrowserID: String? = nil,
                                          password: ((BrowserSessionDefinition) throws -> Data)? = nil) throws -> ChromeXSession {
+        let selection = BrowserSessionSelection(preferredBrowserID)
         let selected: [BrowserSessionDefinition]
-        if let preferredBrowserID {
-            guard let browser = browsers.first(where: { $0.id == preferredBrowserID }) else {
+        if let browserID = selection.browserID {
+            guard let browser = browsers.first(where: { $0.id == browserID }) else {
                 throw BrowserSessionError.unavailable("所选浏览器暂不受支持，请在设置中重新选择来源。")
             }
             selected = [browser]
         } else { selected = browsers }
-        let probe = probe(home: home, browsers: selected, customRoots: customRoots)
+        var probe = probe(home: home, browsers: selected, customRoots: customRoots)
+        probe.selection = selection
         var failures: [String] = []
         var passwords: [String: Data] = [:]
-        for profile in probe.loggedInProfiles {
+        if probe.selectedProfiles.isEmpty, selection.profileDirectory != nil,
+           probe.loggedInProfiles.contains(where: { $0.browser.id == selection.browserID }) {
+            throw BrowserSessionError.unavailable("所选的浏览器配置已没有有效的 X 登录，请在设置的“使用浏览器”中重新选择。")
+        }
+        for profile in probe.selectedProfiles {
             do {
                 let session: ChromeXSession
                 if profile.browser.engine == .firefox {
@@ -236,9 +301,32 @@ public enum BrowserXSessionReader {
         return Data(value.utf8)
     }
 
+    /// Reads a private copy of the cookie database. A running Chromium
+    /// browser keeps its cookie database under an exclusive SQLite lock, so
+    /// opening the original fails with “database is locked” while it is open.
     static func withDatabase<T>(_ url: URL, body: (OpaquePointer) throws -> T) throws -> T {
+        let fileManager = FileManager.default
+        // Fails like the original when macOS blocks access or the file is gone.
+        _ = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        let copyDirectory = fileManager.temporaryDirectory.appending(path: "markx-cookies-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: copyDirectory) }
+        var openPath = url.path
+        var flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+        do {
+            try fileManager.createDirectory(at: copyDirectory, withIntermediateDirectories: true)
+            let copy = copyDirectory.appending(path: url.lastPathComponent)
+            try fileManager.copyItem(at: url, to: copy)
+            for suffix in ["-wal", "-journal"] where fileManager.fileExists(atPath: url.path + suffix) {
+                try? fileManager.copyItem(atPath: url.path + suffix, toPath: copy.path + suffix)
+            }
+            openPath = copy.path
+            // Read-write so SQLite can replay a copied WAL into the copy.
+            flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        } catch {
+            if isPermissionDenied(error) { throw error }
+        }
         var db: OpaquePointer?
-        let status = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        let status = sqlite3_open_v2(openPath, &db, flags, nil)
         guard status == SQLITE_OK, let database = db else {
             if let db { sqlite3_close(db) }
             throw BrowserSessionError.unavailable("浏览器数据无法打开（\(status)），可能受到 macOS 访问权限限制")
@@ -246,6 +334,12 @@ public enum BrowserXSessionReader {
         defer { sqlite3_close(database) }
         sqlite3_busy_timeout(database, 1_500)
         return try body(database)
+    }
+
+    static func lastActivity(of databaseURL: URL) -> Date? {
+        ["", "-wal", "-journal"].compactMap { suffix in
+            (try? FileManager.default.attributesOfItem(atPath: databaseURL.path + suffix))?[.modificationDate] as? Date
+        }.max()
     }
 
     static func prepare(_ db: OpaquePointer, _ sql: String) throws -> OpaquePointer {
