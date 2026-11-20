@@ -50,6 +50,10 @@ enum MarkXSpace {
     static let x6: CGFloat = 48
     /// Reading page side margin and top margin (Fog `.thread`: 64px 52px).
     static let pageSide: CGFloat = 52
+    /// Widest the reading text column gets (~40 CJK characters at 15 pt).
+    /// The detail top bar uses the same width so its title lines up with
+    /// the article text.
+    static let readingColumn: CGFloat = 680
     static let pageTop: CGFloat = 56
 }
 

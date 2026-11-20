@@ -1131,7 +1131,7 @@ struct RootView: View {
                     articleDetailBody(article)
                         .padding(.top, MarkXSpace.x3)
                 }
-                .frame(minWidth: 0, maxWidth: 680, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: MarkXSpace.readingColumn, alignment: .leading)
                 .padding(.horizontal, MarkXSpace.pageSide)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .top)
             }

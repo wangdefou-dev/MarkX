@@ -137,11 +137,9 @@ final class AppUpdater: ObservableObject {
                         expectedBundleID: bundleID, expectedVersion: manifest.version, in: directory
                     )
                 }.value
+                // Downloaded and verified; installing waits for the user.
                 phase = .ready(manifest, stagedApp: staged)
                 showWindow()
-                // Downloaded and verified: install and relaunch right away,
-                // unless a download task would be interrupted.
-                if !isBusy() { installAndRelaunch() }
             } catch is CancellationError {
                 phase = .available(manifest)
             } catch {
@@ -290,7 +288,7 @@ struct SoftwareUpdateView: View {
         case .upToDate: "已是最新版本"
         case .available(let m): "有新版本 \(m.version)"
         case .downloading: "正在下载…"
-        case .ready: "下载完成"
+        case .ready: "下载完成，安装并重启？"
         case .installing: "正在安装，即将重启…"
         case .failed: "更新未完成"
         }
@@ -326,6 +324,7 @@ struct SoftwareUpdateView: View {
         case .downloading:
             Button("取消") { updater.cancel() }.keyboardShortcut(.cancelAction)
         case .ready:
+            Button("稍后") { updater.closeWindow() }.keyboardShortcut(.cancelAction)
             Button("安装并重启") { updater.installAndRelaunch() }
                 .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                 .disabled(updater.isBusy())

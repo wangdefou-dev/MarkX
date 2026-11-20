@@ -43,7 +43,7 @@ struct DetailTopBar<Actions: View>: View {
                     .transition(.offset(y: Self.rise).combined(with: .opacity))
             }
         }
-        .frame(minWidth: 0, maxWidth: 860)
+        .frame(minWidth: 0, maxWidth: MarkXSpace.readingColumn)
         .padding(.horizontal, MarkXSpace.pageSide)
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityHidden(!shown)

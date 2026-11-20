@@ -193,7 +193,7 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 
 ## 8.5 详情页排版与 Markdown 格式（0.3.95）
 
-- 阅读字号阶梯（100% 缩放）：文章标题 24 semibold、一级小标题 21 bold、二级小标题 17 semibold、三级及以下 15 semibold、正文 15、图片说明 / 表格 / 代码 / 注释 13（`ArticleTypography`）。正文行距 1.8：系统中文自然行高约 1.2 倍，`bodyLineSpacing` = 0.6em；段落间距 1.3em，小标题上方 2.2em（一级）/ 1.8em，下方 0.8em；列表项间 0.5em，列表缩进 1.5em；引用为 3pt 灰线加灰色正文。正文区最宽 680pt（每行约 40 个汉字）。离屏渲染检查：`MARKX_RENDER_DIR=<目录> swift test --filter ArticleRenderingSnapshotTests` 会输出包含全部块类型的 `article-render.png`（`ImageRenderer` 不绘制滚动视图，代码块和表格在图中为空白，需在应用内确认）。
+- 阅读字号阶梯（100% 缩放）：文章标题 24 semibold、一级小标题 21 bold、二级小标题 17 semibold、三级及以下 15 semibold、正文 15、图片说明 / 表格 / 代码 / 注释 13（`ArticleTypography`）。正文行距 1.8：系统中文自然行高约 1.2 倍，`bodyLineSpacing` = 0.6em；段落间距 1.3em，小标题上方 2.2em（一级）/ 1.8em，下方 0.8em；列表项间 0.5em，列表缩进 1.5em；引用为 3pt 灰线加灰色正文。正文区最宽 `MarkXSpace.readingColumn`（680pt，每行约 40 个汉字），详情页顶栏 `DetailTopBar` 用同一宽度，滚动后出现的标题与正文左缘对齐。离屏渲染检查：`MARKX_RENDER_DIR=<目录> swift test --filter ArticleRenderingSnapshotTests` 会输出包含全部块类型的 `article-render.png`（`ImageRenderer` 不绘制滚动视图，代码块和表格在图中为空白，需在应用内确认）。
 - 详情页正文用 `ArticleInlineText.attributed` 直接把 `InlineStyleRange` / `LinkRange` 转成 AttributedString（粗体、斜体、行内代码用 `inlinePresentationIntent`，下划线、删除线、链接用对应属性），不再经由 Markdown 解析。
 - `MarkdownRenderer.renderInlineText`：粗体 / 斜体 / 删除线按 CommonMark 左右侧翼规则判断，相邻标记一律视为标点；能解析时用 `**` `*` `~~`，否则用 `<strong>` `<em>` `<del>`。下划线固定 `<u>`。行内代码不与其他样式重叠且不含换行时输出原文代码段（按内容中最长反引号串加长围栏），否则用 `<code>`。转义字符集为 ``\`*_{}[]<>#+-.!|~&$=``。块内换行：段落 / 列表 / 引用 / 未知节点用 `<br>` 加换行（列表续行按标记宽度缩进，引用逐行 `>`），标题内换行用 `<br>`。
 - 渲染规则变更时提升 `markdownFormatMigrationDefaultsKey`（当前 V2），后台对仍带有效导出校验和的 Markdown 重新生成一次。
@@ -201,7 +201,7 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 ## 8.6 X 登录与软件更新的精简界面（0.3.96）
 
 - 设置“X 登录”分组只有一种状态行：已登录时为“已登录 + 浏览器 · 配置”，检测到多个登录（或指定了某个来源）时右侧有“切换”菜单（自动 / 各登录）；检查中显示进度；未登录时为“未登录 + 打开 X”，macOS 拦截读取时多一行“授权读取”。出现时、应用回到前台时、以及未登录期间每 5 秒自动重新检查。
-- 软件更新窗口宽 360pt、高度随内容（`sizingOptions = .preferredContentSize`）：图标、标题（有新版本 x.y.z / 正在下载 / 正在安装，即将重启 / 已是最新版本 / 更新未完成）、进度条和按钮，不显示更新说明。下载并通过校验后若没有下载任务立即 `installAndRelaunch`；有任务时显示“安装并重启”，任务结束后可点。
+- 软件更新窗口宽 360pt、高度随内容（`sizingOptions = .preferredContentSize`）：图标、标题（有新版本 x.y.z / 正在下载 / 正在安装，即将重启 / 已是最新版本 / 更新未完成）、进度条和按钮，不显示更新说明。下载并通过校验后进入 `.ready`，弹窗询问“下载完成，安装并重启？”（稍后 / 安装并重启），用户确认才 `installAndRelaunch`；有下载任务时“安装并重启”不可点。
 
 ## 8.7 更新提醒按钮（0.3.97）
 

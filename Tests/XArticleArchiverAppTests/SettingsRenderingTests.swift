@@ -51,6 +51,7 @@ final class SettingsRenderingTests: XCTestCase {
         let phases: [(String, AppUpdater.Phase)] = [
             ("available", .available(manifest)),
             ("downloading", .downloading(manifest, progress: 0.4)),
+            ("ready", .ready(manifest, stagedApp: URL(fileURLWithPath: "/tmp/MarkX.app"))),
             ("installing", .installing(manifest)),
             ("uptodate", .upToDate)
         ]
