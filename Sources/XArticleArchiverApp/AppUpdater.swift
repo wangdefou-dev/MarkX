@@ -12,6 +12,8 @@ final class AppUpdater: ObservableObject {
         case upToDate
         case available(ReleaseManifest)
         case downloading(ReleaseManifest, progress: Double)
+        /// Downloaded; mounting, checking and copying the app out of the DMG.
+        case verifying(ReleaseManifest)
         case ready(ReleaseManifest, stagedApp: URL)
         case installing(ReleaseManifest)
         case failed(String)
@@ -24,7 +26,9 @@ final class AppUpdater: ObservableObject {
     /// Frequent enough that a pushed release shows its “更新” button soon.
     private static let checkInterval: TimeInterval = 60 * 60
 
-    @Published internal(set) var phase: Phase = .idle
+    @Published internal(set) var phase: Phase = .idle {
+        didSet { window?.title = windowTitle }
+    }
     @Published private(set) var lastChecked: Date?
     /// Bytes received and expected for the update download (0 when unknown).
     @Published internal(set) var downloadedBytes: Int64 = 0
@@ -44,7 +48,7 @@ final class AppUpdater: ObservableObject {
     /// A newer version is known: the main window shows its “更新” button.
     var hasUpdate: Bool {
         switch phase {
-        case .available, .downloading, .ready, .installing: true
+        case .available, .downloading, .verifying, .ready, .installing: true
         default: false
         }
     }
@@ -84,7 +88,7 @@ final class AppUpdater: ObservableObject {
 
     func check(userInitiated: Bool) {
         switch phase {
-        case .checking, .downloading, .installing:
+        case .checking, .downloading, .verifying, .installing:
             if userInitiated { showWindow() }
             return
         case .ready:
@@ -140,6 +144,8 @@ final class AppUpdater: ObservableObject {
                     let fraction = expected > 0 ? min(1, Double(written) / Double(expected)) : 0
                     self.phase = .downloading(manifest, progress: fraction)
                 }
+                try Task.checkCancellation()
+                phase = .verifying(manifest)
                 let bundleID = Bundle.main.bundleIdentifier ?? ""
                 let staged = try await Task.detached(priority: .userInitiated) {
                     try AppUpdateInstaller.stageApp(
@@ -229,16 +235,23 @@ final class AppUpdater: ObservableObject {
             // The window follows the dialog's height as the phase changes.
             hosting.sizingOptions = [.preferredContentSize]
             let window = NSWindow(contentViewController: hosting)
-            window.title = "软件更新"
-            window.styleMask = [.titled, .closable, .fullSizeContentView]
-            window.titlebarAppearsTransparent = true
+            window.title = windowTitle
+            window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 360, height: 200))
+            window.setContentSize(NSSize(width: 420, height: 140))
             window.center()
             self.window = window
         }
+        window?.title = windowTitle
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    var windowTitle: String {
+        switch phase {
+        case .downloading, .verifying, .ready, .installing: "正在更新 MarkX"
+        default: "软件更新"
+        }
     }
 
     func closeWindow() {
@@ -306,37 +319,50 @@ private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate
     }
 }
 
-/// One short dialog: there is a new version, download it, it installs and
-/// relaunches by itself.
+/// App icon on the left; title, progress bar and one action row on the right.
 struct SoftwareUpdateView: View {
     @EnvironmentObject private var updater: AppUpdater
 
     var body: some View {
-        VStack(spacing: MarkXSpace.xl) {
+        HStack(alignment: .top, spacing: MarkXSpace.xl) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 56, height: 56)
+                .frame(width: 64, height: 64)
                 .accessibilityHidden(true)
-            VStack(spacing: MarkXSpace.s) {
-                Text(title).font(MarkXFont.headline)
+            VStack(alignment: .leading, spacing: MarkXSpace.m) {
+                Text(title)
+                    .font(MarkXFont.headline)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
                         .font(MarkXFont.detail)
                         .foregroundStyle(MarkXInterface.text2)
-                        .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            progress
-            HStack(spacing: MarkXSpace.m) { actions }
+                if let fraction = barFraction {
+                    UpdateProgressBar(fraction: fraction)
+                        .padding(.top, MarkXSpace.xs)
+                }
+                HStack(spacing: MarkXSpace.m) {
+                    if let footnote {
+                        Text(footnote)
+                            .font(MarkXFont.body)
+                            .monospacedDigit()
+                            .foregroundStyle(.primary)
+                    }
+                    Spacer(minLength: MarkXSpace.m)
+                    actions
+                }
                 .buttonStyle(.markxPill)
                 .controlSize(.regular)
+                .padding(.top, MarkXSpace.xs)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, MarkXSpace.x4)
-        .padding(.top, MarkXSpace.x5)
-        .padding(.bottom, MarkXSpace.x3)
-        .frame(width: 360)
+        .padding(.horizontal, MarkXSpace.x3)
+        .padding(.vertical, MarkXSpace.xl)
+        .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)
         .background(MarkXInterface.canvas)
     }
@@ -346,8 +372,9 @@ struct SoftwareUpdateView: View {
         case .idle, .checking: "正在检查更新…"
         case .upToDate: "已是最新版本"
         case .available(let m): "有新版本 \(m.version)"
-        case .downloading(let m, _): "正在下载 \(m.version)…"
-        case .ready: "下载完成，安装并重启？"
+        case .downloading: "正在下载更新…"
+        case .verifying: "正在解压更新…"
+        case .ready: "可以开始安装了"
         case .installing: "正在安装，即将重启…"
         case .failed: "更新未完成"
         }
@@ -355,36 +382,29 @@ struct SoftwareUpdateView: View {
 
     private var detail: String? {
         switch updater.phase {
+        case .available: "当前版本 \(updater.currentVersion)"
+        case .upToDate: "MarkX \(updater.currentVersion)"
         case .failed(let message): message
         case .ready where updater.isBusy(): "下载任务结束后即可安装。"
         default: nil
         }
     }
 
-    @ViewBuilder
-    private var progress: some View {
+    /// `.some(nil)` is an indeterminate bar; `nil` hides the bar.
+    private var barFraction: Double?? {
         switch updater.phase {
-        case .checking, .idle, .installing:
-            ProgressView().controlSize(.small)
-        case .downloading(_, let fraction):
-            VStack(spacing: MarkXSpace.s) {
-                UpdateProgressBar(fraction: updater.expectedBytes > 0 ? fraction : nil)
-                    .frame(width: 240)
-                Text(downloadLine(fraction: fraction))
-                    .font(MarkXFont.detail)
-                    .monospacedDigit()
-                    .foregroundStyle(MarkXInterface.text2)
-            }
-        default:
-            EmptyView()
+        case .idle, .checking: .some(nil)
+        case .downloading(_, let fraction): .some(updater.expectedBytes > 0 ? fraction : nil)
+        case .verifying, .ready, .installing: .some(1)
+        default: nil
         }
     }
 
-    private func downloadLine(fraction: Double) -> String {
+    private var footnote: String? {
+        guard case .downloading = updater.phase, updater.downloadedBytes > 0 else { return nil }
         let received = ByteCountFormatter.string(fromByteCount: updater.downloadedBytes, countStyle: .file)
-        guard updater.expectedBytes > 0 else { return "已下载 \(received)" }
-        let total = ByteCountFormatter.string(fromByteCount: updater.expectedBytes, countStyle: .file)
-        return "\(Int((fraction * 100).rounded(.down)))%  ·  \(received) / \(total)"
+        guard updater.expectedBytes > 0 else { return received }
+        return "\(received) / \(ByteCountFormatter.string(fromByteCount: updater.expectedBytes, countStyle: .file))"
     }
 
     @ViewBuilder
@@ -396,9 +416,10 @@ struct SoftwareUpdateView: View {
                 .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
         case .downloading:
             Button("取消") { updater.cancel() }.keyboardShortcut(.cancelAction)
+        case .verifying:
+            Button("取消") {}.disabled(true)
         case .ready:
-            Button("稍后") { updater.closeWindow() }.keyboardShortcut(.cancelAction)
-            Button("安装并重启") { updater.installAndRelaunch() }
+            Button("安装并重启应用") { updater.installAndRelaunch() }
                 .buttonStyle(.markxPillProminent).keyboardShortcut(.defaultAction)
                 .disabled(updater.isBusy())
         case .installing, .checking, .idle:
@@ -412,6 +433,7 @@ struct SoftwareUpdateView: View {
         }
     }
 }
+
 /// Capsule bar in the app's accent colour; `nil` shows a moving segment
 /// while the size is unknown.
 private struct UpdateProgressBar: View {

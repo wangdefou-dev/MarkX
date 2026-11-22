@@ -63,6 +63,7 @@ final class SettingsRenderingTests: XCTestCase {
         let phases: [(String, AppUpdater.Phase)] = [
             ("available", .available(manifest)),
             ("downloading", .downloading(manifest, progress: 0.4)),
+            ("verifying", .verifying(manifest)),
             ("ready", .ready(manifest, stagedApp: URL(fileURLWithPath: "/tmp/MarkX.app"))),
             ("installing", .installing(manifest)),
             ("uptodate", .upToDate)
@@ -73,8 +74,8 @@ final class SettingsRenderingTests: XCTestCase {
         for (name, phase) in phases {
             updater.phase = phase
             let size = try render(SoftwareUpdateView().environmentObject(updater), name: "update-\(name)")
-            XCTAssertEqual(size.width, 360, accuracy: 1)
-            XCTAssertLessThan(size.height, 260)
+            XCTAssertEqual(size.width, 420, accuracy: 1)
+            XCTAssertLessThan(size.height, 200)
         }
     }
 }
