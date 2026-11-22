@@ -67,6 +67,9 @@ final class SettingsRenderingTests: XCTestCase {
             ("installing", .installing(manifest)),
             ("uptodate", .upToDate)
         ]
+        updater.downloadedBytes = 10_485_760
+        updater.expectedBytes = 26_214_400
+        defer { updater.downloadedBytes = 0; updater.expectedBytes = 0 }
         for (name, phase) in phases {
             updater.phase = phase
             let size = try render(SoftwareUpdateView().environmentObject(updater), name: "update-\(name)")

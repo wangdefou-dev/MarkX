@@ -26,6 +26,9 @@ final class AppUpdater: ObservableObject {
 
     @Published internal(set) var phase: Phase = .idle
     @Published private(set) var lastChecked: Date?
+    /// Bytes received and expected for the update download (0 when unknown).
+    @Published internal(set) var downloadedBytes: Int64 = 0
+    @Published internal(set) var expectedBytes: Int64 = 0
     /// Set by the app so installing never interrupts an archive task.
     var isBusy: () -> Bool = { false }
 
@@ -121,6 +124,8 @@ final class AppUpdater: ObservableObject {
     func download() {
         guard case .available(let manifest) = phase else { return }
         phase = .downloading(manifest, progress: 0)
+        downloadedBytes = 0
+        expectedBytes = 0
         task = Task { [weak self] in
             guard let self else { return }
             do {
@@ -128,8 +133,12 @@ final class AppUpdater: ObservableObject {
                     .appendingPathComponent("MarkX-Update-\(manifest.version)-\(UUID().uuidString)", isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let dmg = directory.appendingPathComponent("MarkX-\(manifest.version).dmg")
-                try await downloadFile(from: manifest.downloadURL, to: dmg) { [weak self] fraction in
-                    self?.phase = .downloading(manifest, progress: fraction)
+                try await downloadFile(from: manifest.downloadURL, to: dmg) { [weak self] written, expected in
+                    guard let self, case .downloading = self.phase else { return }
+                    self.downloadedBytes = written
+                    self.expectedBytes = expected
+                    let fraction = expected > 0 ? min(1, Double(written) / Double(expected)) : 0
+                    self.phase = .downloading(manifest, progress: fraction)
                 }
                 let bundleID = Bundle.main.bundleIdentifier ?? ""
                 let staged = try await Task.detached(priority: .userInitiated) {
@@ -193,15 +202,23 @@ final class AppUpdater: ObservableObject {
         return manifest
     }
 
-    private func downloadFile(from url: URL, to destination: URL, progress: @escaping @MainActor (Double) -> Void) async throws {
-        let delegate = DownloadProgressDelegate { fraction in Task { @MainActor in progress(fraction) } }
-        let (temporary, response) = try await URLSession.shared.download(from: url, delegate: delegate)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw AppUpdateError.diskImage("下载失败（HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)）")
+    /// A session-delegate download task: the async `download(from:delegate:)`
+    /// API never reports `didWriteData`, which left the bar stuck at 0.
+    private func downloadFile(from url: URL, to destination: URL,
+                              progress: @escaping @MainActor (Int64, Int64) -> Void) async throws {
+        let delegate = UpdateDownloadDelegate(destination: destination) { written, expected in
+            Task { @MainActor in progress(written, expected) }
         }
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: temporary, to: destination)
-        progress(1)
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                delegate.setContinuation(continuation)
+                session.downloadTask(with: url).resume()
+            }
+        } onCancel: {
+            session.invalidateAndCancel()
+        }
     }
 
     // MARK: Window
@@ -229,23 +246,64 @@ final class AppUpdater: ObservableObject {
     }
 }
 
-private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let onProgress: @Sendable (Double) -> Void
-    private var reported = 0.0
+private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let onProgress: @Sendable (Int64, Int64) -> Void
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var finishError: Error?
+    private var lastReported: Int64 = -1
 
-    init(onProgress: @escaping @Sendable (Double) -> Void) { self.onProgress = onProgress }
+    init(destination: URL, onProgress: @escaping @Sendable (Int64, Int64) -> Void) {
+        self.destination = destination
+        self.onProgress = onProgress
+    }
+
+    func setContinuation(_ continuation: CheckedContinuation<Void, Error>) {
+        lock.withLock { self.continuation = continuation }
+    }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        guard fraction - reported >= 0.01 || fraction >= 1 else { return }
-        reported = fraction
-        onProgress(fraction)
+        let expected = max(totalBytesExpectedToWrite, 0)
+        // About every 0.5% (or 256 KB when the size is unknown).
+        let step = expected > 0 ? max(expected / 200, 1) : 256 * 1024
+        guard totalBytesWritten - lastReported >= step || (expected > 0 && totalBytesWritten >= expected) else { return }
+        lastReported = totalBytesWritten
+        onProgress(totalBytesWritten, expected)
     }
 
-    // The async download API moves the file itself.
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
+    // The file at `location` is deleted when this returns, so move it now.
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            finishError = AppUpdateError.diskImage("下载失败（HTTP \(status)）")
+            return
+        }
+        do {
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: location, to: destination)
+        } catch {
+            finishError = error
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Error>? in
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        if let error {
+            let cancelled = (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled
+            continuation?.resume(throwing: cancelled ? CancellationError() : error)
+        } else if let finishError {
+            continuation?.resume(throwing: finishError)
+        } else {
+            let expected = max(task.countOfBytesExpectedToReceive, task.countOfBytesReceived)
+            onProgress(task.countOfBytesReceived, expected)
+            continuation?.resume()
+        }
+    }
 }
 
 /// One short dialog: there is a new version, download it, it installs and
@@ -288,7 +346,7 @@ struct SoftwareUpdateView: View {
         case .idle, .checking: "正在检查更新…"
         case .upToDate: "已是最新版本"
         case .available(let m): "有新版本 \(m.version)"
-        case .downloading: "正在下载…"
+        case .downloading(let m, _): "正在下载 \(m.version)…"
         case .ready: "下载完成，安装并重启？"
         case .installing: "正在安装，即将重启…"
         case .failed: "更新未完成"
@@ -309,10 +367,24 @@ struct SoftwareUpdateView: View {
         case .checking, .idle, .installing:
             ProgressView().controlSize(.small)
         case .downloading(_, let fraction):
-            ProgressView(value: fraction).frame(width: 220)
+            VStack(spacing: MarkXSpace.s) {
+                UpdateProgressBar(fraction: updater.expectedBytes > 0 ? fraction : nil)
+                    .frame(width: 240)
+                Text(downloadLine(fraction: fraction))
+                    .font(MarkXFont.detail)
+                    .monospacedDigit()
+                    .foregroundStyle(MarkXInterface.text2)
+            }
         default:
             EmptyView()
         }
+    }
+
+    private func downloadLine(fraction: Double) -> String {
+        let received = ByteCountFormatter.string(fromByteCount: updater.downloadedBytes, countStyle: .file)
+        guard updater.expectedBytes > 0 else { return "已下载 \(received)" }
+        let total = ByteCountFormatter.string(fromByteCount: updater.expectedBytes, countStyle: .file)
+        return "\(Int((fraction * 100).rounded(.down)))%  ·  \(received) / \(total)"
     }
 
     @ViewBuilder
@@ -340,6 +412,36 @@ struct SoftwareUpdateView: View {
         }
     }
 }
+/// Capsule bar in the app's accent colour; `nil` shows a moving segment
+/// while the size is unknown.
+private struct UpdateProgressBar: View {
+    var fraction: Double?
+    @State private var phase = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(MarkXInterface.washStrong)
+                if let fraction {
+                    Capsule().fill(Color.accentColor)
+                        .frame(width: max(6, proxy.size.width * min(max(fraction, 0), 1)))
+                        .animation(.easeOut(duration: 0.2), value: fraction)
+                } else {
+                    Capsule().fill(Color.accentColor)
+                        .frame(width: proxy.size.width * 0.3)
+                        .offset(x: phase ? proxy.size.width * 0.7 : 0)
+                        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: phase)
+                        .onAppear { phase = true }
+                }
+            }
+        }
+        .frame(height: 6)
+        .accessibilityElement()
+        .accessibilityLabel("下载进度")
+        .accessibilityValue(fraction.map { "\(Int($0 * 100))%" } ?? "正在下载")
+    }
+}
+
 /// Settings group for the 通用 pane.
 struct SoftwareUpdateSettingsSection: View {
     @ObservedObject private var updater = AppUpdater.shared

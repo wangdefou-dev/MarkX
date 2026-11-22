@@ -208,6 +208,11 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - `AppUpdater` 每 1 小时自动检查（`checkInterval`），已发现新版本后不再重复检查；后台检查发现新版本只把 `phase` 置为 `.available`，不弹窗，后台失败回到 `.idle`；手动“检查更新…”仍直接弹窗。
 - `hasUpdate`（available / downloading / ready / installing）为真时，主窗口侧栏底栏“设置”右侧右对齐显示“更新”按钮（`.markxPillProminentSmall`：与 `.markxPillProminent` 同款强调色胶囊，24pt 高、无最小宽度，只有文字），点击打开更新窗口。
 
+## 8.7.1 更新下载进度（0.4.2）
+
+- 更新 DMG 用带会话代理的 `URLSessionDownloadTask` 下载（`UpdateDownloadDelegate`）：异步 `download(from:delegate:)` 不会回调 `didWriteData`，进度条会一直为 0。代理在 `didFinishDownloadingTo` 内同步移动文件并检查 HTTP 200，取消时 `invalidateAndCancel` 映射为 `CancellationError`。
+- `AppUpdater.downloadedBytes / expectedBytes` 驱动弹窗：自绘胶囊进度条（强调色，6pt 高；大小未知时显示往返动画）+ 一行“百分比 · 已下载 / 总大小”。
+
 ## 8.8 页面加载判定（0.4.1）
 
 - 文章与 Articles 列表采集不再只在 `isLoading == false` 时读取页面：导航开始 `ArticleCaptureStabilityPolicy.loadingInspectionGrace`（2 秒）后即使仍未收到 `didFinish` 也照常执行提取脚本（`canInspectPage`）；加载中脚本报错视为“尚未就绪”。X 是单页应用，正文早于加载完成出现，且部分导航永远不报告完成。
