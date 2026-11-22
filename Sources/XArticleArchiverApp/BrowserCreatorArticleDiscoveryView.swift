@@ -96,6 +96,11 @@ private struct CreatorArticleListSnapshot: Decodable {
 @MainActor
 private final class BrowserCreatorArticleDiscoveryController: NSObject, ObservableObject, WKNavigationDelegate {
     @Published var isLoading = false
+    private var loadingSince: Date?
+    /// True once the page can be read, even if the navigation never finishes.
+    var isPageInspectable: Bool {
+        ArticleCaptureStabilityPolicy.canInspectPage(isLoading: isLoading, loadingSince: loadingSince)
+    }
     @Published var isDiscovering = false
     @Published var isImportingBrowserSession = false
     @Published var pageStatus = "正在准备博主文章列表…"
@@ -208,7 +213,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
         while !progressBudget.exhausted {
             progressBudget.beginPoll()
             try Task.checkCancellation()
-            if !isLoading {
+            if isPageInspectable {
                 if await revealBlockedArticleListIfNeeded() {
                     unchangedAtBottom = 0
                     gateSettlePolls = 10
@@ -313,6 +318,8 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
                     lastReason = detail
                     pageStatus = "已使用浏览器登录状态，正在等待 Articles 列表…"
+                } catch where isLoading && !(error is BrowserArticleCaptureError) {
+                    pageStatus = "已使用浏览器登录状态，正在等待 Articles 列表…"
                 }
             }
             try await Task.sleep(for: .milliseconds(750))
@@ -385,6 +392,7 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
+        loadingSince = Date()
         currentURL = webView.url
         pageStatus = "正在加载 X Articles 列表…"
     }
@@ -397,12 +405,28 @@ private final class BrowserCreatorArticleDiscoveryController: NSObject, Observab
             : "列表已加载"
     }
 
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        isLoading = false
+        if (error as NSError).code != NSURLErrorCancelled {
+            MarkXLog.warning("capture", "X Articles 列表 页面加载中断：\((error as NSError).domain) \((error as NSError).code)")
+        }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        isLoading = false
+        MarkXLog.warning("capture", "X Articles 列表 网页进程意外退出，正在重新加载")
+        webView.reload()
+    }
+
     func webView(
         _ webView: WKWebView,
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
         isLoading = false
+        if (error as NSError).code != NSURLErrorCancelled {
+            MarkXLog.warning("capture", "X Articles 列表 页面打开失败：\((error as NSError).domain) \((error as NSError).code) \(error.localizedDescription)")
+        }
         pageStatus = "Articles 列表加载失败：\(error.localizedDescription)"
     }
 

@@ -6,6 +6,11 @@ import XArticleArchiverCore
 @MainActor
 private final class BrowserArticleCaptureController: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published var isLoading = false
+    private var loadingSince: Date?
+    /// True once the page can be read, even if the navigation never finishes.
+    var isPageInspectable: Bool {
+        ArticleCaptureStabilityPolicy.canInspectPage(isLoading: isLoading, loadingSince: loadingSince)
+    }
     @Published var isCapturing = false
     @Published var isImportingBrowserSession = false
     @Published var isAutomaticCaptureRunning = false
@@ -191,7 +196,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
 
         for _ in 0..<ArticleCaptureStabilityPolicy.maxPolls {
             try Task.checkCancellation()
-            if !isLoading {
+            if isPageInspectable {
                 do {
                     let payload = try await capture(
                         updateStatus: false,
@@ -225,13 +230,18 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     previousPayload = nil
                     stableMatches = 0
                     setPageStatus("已使用浏览器登录状态，正在等待正文完整加载…")
+                } catch where isLoading && !(error is BrowserArticleCaptureError) {
+                    // The page is still mid-navigation; the script result is not final.
+                    previousPayload = nil
+                    stableMatches = 0
                 }
             }
             try await Task.sleep(
-                nanoseconds: ArticleCaptureStabilityPolicy.pollNanoseconds(isLoading: isLoading)
+                nanoseconds: ArticleCaptureStabilityPolicy.pollNanoseconds(isLoading: !isPageInspectable)
             )
         }
 
+        MarkXLog.warning("capture", "《\(request.displayTitle)》未能读取正文（页面仍在加载：\(isLoading ? "是" : "否")）：\(lastNotReadyReason)")
         throw BrowserArticleCaptureError.pageNotReady(lastNotReadyReason)
     }
 
@@ -248,7 +258,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         var lastNotReadyReason = "X Article 页面仍在加载"
         for _ in 0..<40 {
             try Task.checkCancellation()
-            if !isLoading {
+            if isPageInspectable {
                 do {
                     let payload = try await captureDisclosurePayload()
                     pageStatus = payload.isPaidPartnership
@@ -257,6 +267,8 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     return payload
                 } catch BrowserArticleCaptureError.pageNotReady(let detail) {
                     lastNotReadyReason = detail
+                    pageStatus = "正在等待文章页加载，以便核对商单内容…"
+                } catch where isLoading && !(error is BrowserArticleCaptureError) {
                     pageStatus = "正在等待文章页加载，以便核对商单内容…"
                 }
             }
@@ -278,6 +290,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
+        loadingSince = Date()
         currentURL = webView.url
         pageStatus = webView === popupWebView
             ? "正在加载 X 登录窗口…"
@@ -296,12 +309,28 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         }
     }
 
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        isLoading = false
+        if (error as NSError).code != NSURLErrorCancelled {
+            MarkXLog.warning("capture", "X Article 页面加载中断：\((error as NSError).domain) \((error as NSError).code)")
+        }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        isLoading = false
+        MarkXLog.warning("capture", "X Article 网页进程意外退出，正在重新加载")
+        webView.reload()
+    }
+
     func webView(
         _ webView: WKWebView,
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
         isLoading = false
+        if (error as NSError).code != NSURLErrorCancelled {
+            MarkXLog.warning("capture", "X Article 页面打开失败：\((error as NSError).domain) \((error as NSError).code) \(error.localizedDescription)")
+        }
         pageStatus = "页面加载失败：\(error.localizedDescription)"
     }
 

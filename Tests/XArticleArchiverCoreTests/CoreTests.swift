@@ -2499,6 +2499,16 @@ final class ParallelCreatorArchivePolicyTests: XCTestCase {
 }
 
 final class ArticleCaptureStabilityPolicyTests: XCTestCase {
+    /// A navigation that never reports finished (X keeps a request open, or
+    /// the load is cancelled after commit) must not block reading the page.
+    func testPageIsInspectedOnceLoadingOutlastsTheGrace() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        XCTAssertTrue(ArticleCaptureStabilityPolicy.canInspectPage(isLoading: false, loadingSince: start, now: start))
+        XCTAssertFalse(ArticleCaptureStabilityPolicy.canInspectPage(isLoading: true, loadingSince: start, now: start.addingTimeInterval(1)))
+        XCTAssertTrue(ArticleCaptureStabilityPolicy.canInspectPage(isLoading: true, loadingSince: start, now: start.addingTimeInterval(2)))
+        XCTAssertTrue(ArticleCaptureStabilityPolicy.canInspectPage(isLoading: true, loadingSince: nil, now: start))
+    }
+
     func testRejectsIncompleteSnapshotsAndAcceptsCompleteHTTPSMedia() {
         let incomplete = BrowserArticleCapturePayload(
             postID: "1",

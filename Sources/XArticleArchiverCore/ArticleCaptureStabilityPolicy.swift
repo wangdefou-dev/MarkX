@@ -9,6 +9,17 @@ public enum ArticleCaptureStabilityPolicy {
     public static let confirmingPollNanoseconds: UInt64 = 400_000_000
     public static let cookieImportSettleNanoseconds: UInt64 = 400_000_000
     public static let maxPolls = 90
+    /// X is a single-page app: the article is in the DOM long before the
+    /// navigation reports finished, and some loads never report it at all
+    /// (a hanging subresource, a navigation cancelled after commit). Inspect
+    /// the page anyway once it has been loading this long.
+    public static let loadingInspectionGrace: TimeInterval = 2
+
+    public static func canInspectPage(isLoading: Bool, loadingSince: Date?, now: Date = Date()) -> Bool {
+        guard isLoading else { return true }
+        guard let loadingSince else { return true }
+        return now.timeIntervalSince(loadingSince) >= loadingInspectionGrace
+    }
 
     public static func isStructurallyComplete(_ payload: BrowserArticleCapturePayload) -> Bool {
         let title = payload.title.trimmingCharacters(in: .whitespacesAndNewlines)

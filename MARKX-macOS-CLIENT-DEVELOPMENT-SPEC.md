@@ -208,6 +208,11 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - `AppUpdater` 每 1 小时自动检查（`checkInterval`），已发现新版本后不再重复检查；后台检查发现新版本只把 `phase` 置为 `.available`，不弹窗，后台失败回到 `.idle`；手动“检查更新…”仍直接弹窗。
 - `hasUpdate`（available / downloading / ready / installing）为真时，主窗口侧栏底栏“设置”右侧右对齐显示“更新”按钮（`.markxPillProminentSmall`：与 `.markxPillProminent` 同款强调色胶囊，24pt 高、无最小宽度，只有文字），点击打开更新窗口。
 
+## 8.8 页面加载判定（0.4.1）
+
+- 文章与 Articles 列表采集不再只在 `isLoading == false` 时读取页面：导航开始 `ArticleCaptureStabilityPolicy.loadingInspectionGrace`（2 秒）后即使仍未收到 `didFinish` 也照常执行提取脚本（`canInspectPage`）；加载中脚本报错视为“尚未就绪”。X 是单页应用，正文早于加载完成出现，且部分导航永远不报告完成。
+- 两个采集控制器都实现 `webView(_:didFail:withError:)` 与 `webViewWebContentProcessDidTerminate`（复位 `isLoading` 并重新加载），失败写入 `capture` 日志分类；轮询结束仍未读到正文时记录原因与是否仍在加载。
+
 ## 9. 界面布局与视觉验收（0.3.46）
 
 - 侧边栏只负责导航（HIG Sidebars）：不放下载等操作按钮，底部不放目录选择入口，运行时仅展示任务摘要。
