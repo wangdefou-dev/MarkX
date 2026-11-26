@@ -406,7 +406,7 @@ struct RootView: View {
             }
             .tint(.accentColor)
             .disabled(isBusy)
-            .help("输入博主主页或 X Article 链接开始下载（⌘N）")
+            .help("输入博主主页、X Article、长帖或线程链接开始下载（⌘N）")
         }
     }
 
@@ -1063,11 +1063,11 @@ struct RootView: View {
                     ContentUnavailableView {
                         Label("还没有归档 X Article", systemImage: "tray")
                     } description: {
-                        Text("添加一个或多个 X 博主，程序只会保存官方 X Article，不会再把普通帖子或线程当成文章。")
+                        Text("添加 X 博主会保存他们的 X Article；也可以直接粘贴长帖或作者线程的链接。")
                     } actions: {
                         Button("开始下载文章") { model.presentDownloadSheet() }
                             .buttonStyle(.markxPillProminent)
-                            .help("输入博主主页或 X Article 链接开始下载")
+                            .help("输入博主主页、X Article、长帖或线程链接开始下载")
                         Button("生成体验样例") { model.installDemo() }
                             .buttonStyle(.markxPill)
                             .help("在本地归档目录生成一篇可预览的演示文章")
@@ -1204,6 +1204,13 @@ struct RootView: View {
                         .foregroundStyle(MarkXInterface.text3)
                         .monospacedDigit()
                         .lineLimit(1)
+                    if article.contentType != .xArticle {
+                        // Long posts and threads have no Article title; say
+                        // what they are so the first-line title reads right.
+                        Text(article.contentType.displayName)
+                            .foregroundStyle(MarkXInterface.text3)
+                            .lineLimit(1)
+                    }
                 }
                 .font(MarkXFont.detail)
                 .foregroundStyle(MarkXInterface.text2)
@@ -1392,7 +1399,7 @@ struct RootView: View {
         case .creator:
             "可以从右键菜单重新拉取该博主的 X Article。"
         default:
-            "添加一个或多个 X 博主，程序只会保存官方 X Article。"
+            "添加 X 博主会保存他们的 X Article；也可以直接粘贴长帖或线程链接。"
         }
     }
 

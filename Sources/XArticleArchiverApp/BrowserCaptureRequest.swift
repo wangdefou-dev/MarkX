@@ -132,6 +132,9 @@ struct BrowserCaptureRequest: Identifiable, Hashable {
     var sourceArticleID: String?
     var expectedPlainText: String?
     var disclosureOnly: Bool
+    /// Pasted post links (and posts archived before) may be long posts or
+    /// threads. Links found in a creator's Articles tab never fall back.
+    var allowsPostFallback: Bool
 
     init(
         link: XArticleLink,
@@ -140,7 +143,8 @@ struct BrowserCaptureRequest: Identifiable, Hashable {
         publishedAt: Date? = nil,
         sourceArticleID: String? = nil,
         expectedPlainText: String? = nil,
-        disclosureOnly: Bool = false
+        disclosureOnly: Bool = false,
+        allowsPostFallback: Bool = false
     ) {
         self.link = link
         self.creator = creator
@@ -149,5 +153,6 @@ struct BrowserCaptureRequest: Identifiable, Hashable {
         self.sourceArticleID = sourceArticleID
         self.expectedPlainText = expectedPlainText
         self.disclosureOnly = disclosureOnly
+        self.allowsPostFallback = allowsPostFallback
     }
 }

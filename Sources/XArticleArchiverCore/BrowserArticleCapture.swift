@@ -16,7 +16,7 @@ public enum BrowserArticleCaptureError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .pageNotReady(let detail):
-            "X Article 页面还没有准备好：\(detail)"
+            "没有读到正文：\(detail)"
         case .subscriptionRequired(let creatorHandle):
             if let creatorHandle, !creatorHandle.isEmpty {
                 "这是一篇订阅用户专享的 X Article。当前 Chrome 登录账号没有 @\(creatorHandle) 的正文访问权限；请先订阅该博主，或切换到已订阅账号，再重新处理。"
@@ -141,6 +141,8 @@ public struct BrowserArticleCapturePayload: Codable, Hashable, Sendable {
     public var pageURL: String
     public var blocks: [BrowserCapturedBlock]
     public var unsupportedBlockCount: Int
+    /// `x_article` (default), `long_post` or `thread`. Older payloads omit it.
+    public var contentType: String?
     public var disclosureChromeText: String?
     public var disclosureLinkURLs: [String]?
     public var disclosureTestIDs: [String]?
@@ -154,6 +156,7 @@ public struct BrowserArticleCapturePayload: Codable, Hashable, Sendable {
         pageURL: String,
         blocks: [BrowserCapturedBlock],
         unsupportedBlockCount: Int = 0,
+        contentType: String? = nil,
         disclosureChromeText: String? = nil,
         disclosureLinkURLs: [String]? = nil,
         disclosureTestIDs: [String]? = nil
@@ -166,9 +169,14 @@ public struct BrowserArticleCapturePayload: Codable, Hashable, Sendable {
         self.pageURL = pageURL
         self.blocks = blocks
         self.unsupportedBlockCount = unsupportedBlockCount
+        self.contentType = contentType
         self.disclosureChromeText = disclosureChromeText
         self.disclosureLinkURLs = disclosureLinkURLs
         self.disclosureTestIDs = disclosureTestIDs
+    }
+
+    public var resolvedContentType: LongformContentType {
+        contentType.flatMap(LongformContentType.init(rawValue:)) ?? .xArticle
     }
 
     public var isPaidPartnership: Bool {
@@ -335,6 +343,8 @@ public enum BrowserArticleCaptureDecoder {
         var usedVideoIDs = Set<String>()
         var embeddedMediaCounts: [String: Int] = [:]
         var unavailableEmbeddedPostCount = 0
+        var unresolvedVideoCount = 0
+        let contentType = payload.resolvedContentType
 
         for captured in payload.blocks {
             let canonicalKind: CanonicalBlockKind
@@ -409,12 +419,8 @@ public enum BrowserArticleCaptureDecoder {
             if captured.kind == .embeddedMedia {
                 let mediaType = normalizedEmbeddedMediaType(captured.embeddedMediaType)
                 embeddedMediaCounts[mediaType, default: 0] += 1
-                if mediaType == "video" {
-                    guard let sourceURL = preferredVideoURL(from: captured.embeddedMediaURLs ?? []) else {
-                        throw BrowserArticleCaptureError.missingVideoSource(
-                            captured.embeddedMediaID ?? captured.text
-                        )
-                    }
+                if mediaType == "video",
+                   let sourceURL = preferredVideoURL(from: captured.embeddedMediaURLs ?? []) {
                     let rawID = captured.embeddedMediaID?
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     let baseID = rawID?.isEmpty == false
@@ -444,9 +450,12 @@ public enum BrowserArticleCaptureDecoder {
                     continue
                 }
 
+                if mediaType == "video" { unresolvedVideoCount += 1 }
                 let sourceURL = XArticleNavigationURL.captureURL(for: context.link)
-                let detail = captured.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                let prefix = "嵌入媒体未归档"
+                let detail = mediaType == "video"
+                    ? ""
+                    : captured.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let prefix = mediaType == "video" ? "视频未能转存" : "嵌入媒体未归档"
                 let detailSuffix = detail.isEmpty || detail == "嵌入内容" ? "" : "（\(detail)）"
                 let messagePrefix = "\(prefix)\(detailSuffix)，请在原文查看："
                 let linkText = sourceURL.absoluteString
@@ -515,7 +524,8 @@ public enum BrowserArticleCaptureDecoder {
             throw BrowserArticleCaptureError.missingBody
         }
 
-        if let expected = context.expectedPlainText,
+        if contentType == .xArticle,
+           let expected = context.expectedPlainText,
            !expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            comparableText(expected) != comparableBrowserText(blocks) {
             throw BrowserArticleCaptureError.sourceTextMismatch
@@ -536,6 +546,9 @@ public enum BrowserArticleCaptureDecoder {
         }
 
         var warnings: [String] = []
+        if unresolvedVideoCount > 0 {
+            warnings.append("文章包含 \(unresolvedVideoCount) 个没有读到 MP4 地址的视频，已在原位置保留原文查看入口")
+        }
         let otherEmbeddedMediaCount = embeddedMediaCounts
             .filter { $0.key != "video" }
             .reduce(0) { $0 + $1.value }
@@ -551,7 +564,7 @@ public enum BrowserArticleCaptureDecoder {
             titleSource: "rendered-page",
             authorName: creator.displayName,
             authorHandle: creator.username,
-            contentType: .xArticle,
+            contentType: contentType,
             sourceURL: XArticleNavigationURL.captureURL(for: context.link),
             sourcePostID: context.link.postID,
             sourceArticleID: context.sourceArticleID,

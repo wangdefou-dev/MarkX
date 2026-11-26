@@ -100,14 +100,18 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
 
     func capture(
         updateStatus: Bool = true,
-        expectedCreatorHandle: String? = nil
+        expectedCreatorHandle: String? = nil,
+        allowPostFallback: Bool = false,
+        mediaGraceExpired: Bool = false
     ) async throws -> BrowserArticleCapturePayload {
         isCapturing = true
         if updateStatus {
             pageStatus = "正在按页面顺序读取段落、列表、表格、代码和图片…"
         }
         defer { isCapturing = false }
-        let raw = try await webView.evaluateJavaScript(BrowserArticleExtractionScript.source)
+        let flags = "window.__markxAllowPostFallback = \(allowPostFallback); "
+            + "window.__markxMediaGraceExpired = \(mediaGraceExpired);\n"
+        let raw = try await webView.evaluateJavaScript(flags + BrowserArticleExtractionScript.source)
         guard let json = raw as? String else {
             throw BrowserArticleCaptureError.pageNotReady("页面返回了无法识别的结果")
         }
@@ -127,9 +131,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     ?? HandleParser.normalize(expectedCreatorHandle ?? "")
                 throw BrowserArticleCaptureError.subscriptionRequired(creatorHandle: creatorHandle)
             }
-            throw BrowserArticleCaptureError.pageNotReady(
-                "未找到完整的 X Article 正文。请确认已登录、当前链接是 Article，并等待页面加载完成。"
-            )
+            throw BrowserArticleCaptureError.pageNotReady(Self.missingBodyReason(diagnostic))
         }
         let payload = try await Task.detached(priority: .userInitiated) {
             try JSONDecoder().decode(BrowserArticleCapturePayload.self, from: Data(json.utf8))
@@ -184,30 +186,66 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         } else if !hasImportedBrowserSession {
             pageStatus = "未发现可读取的本机浏览器配置，正在尝试读取公开文章…"
         }
-        load(request)
-        pagesSinceRecycle += 1
-        if ArticleCaptureStabilityPolicy.shouldSettleAfterLoad(didJustImportCookies: didJustImportCookies) {
-            try await Task.sleep(nanoseconds: ArticleCaptureStabilityPolicy.cookieImportSettleNanoseconds)
+        var lastNotReadyReason = "X 页面一直没有加载出来"
+        for attempt in 1...ArticleCaptureStabilityPolicy.maxAttempts {
+            if attempt > 1 {
+                MarkXLog.info("capture", "《\(request.displayTitle)》第一次未读到正文（\(lastNotReadyReason)），换新页面重试")
+                setPageStatus("第一次没有读到正文，正在重新打开页面…", force: true)
+                recycleWebView()
+                await Task.yield()
+                if await BrowserSessionAccess.hasLocalBrowserData() {
+                    _ = try? await importBrowserSession()
+                }
+                didJustImportCookies = true
+            }
+            load(request)
+            pagesSinceRecycle += 1
+            if ArticleCaptureStabilityPolicy.shouldSettleAfterLoad(didJustImportCookies: didJustImportCookies) {
+                try await Task.sleep(nanoseconds: ArticleCaptureStabilityPolicy.cookieImportSettleNanoseconds)
+            }
+            do {
+                return try await pollForStablePayload(request)
+            } catch BrowserArticleCaptureError.pageNotReady(let detail) {
+                lastNotReadyReason = detail
+                if detail.hasPrefix("原文已删除") { break }
+            }
         }
 
+        MarkXLog.warning("capture", "《\(request.displayTitle)》未能读取正文（页面仍在加载：\(isLoading ? "是" : "否")）：\(lastNotReadyReason)")
+        throw BrowserArticleCaptureError.pageNotReady(lastNotReadyReason)
+    }
+
+    private func pollForStablePayload(_ request: BrowserCaptureRequest) async throws -> BrowserArticleCapturePayload {
         var previousPayload: BrowserArticleCapturePayload?
         var stableMatches = 0
-        var lastNotReadyReason = "X Article 页面仍在加载"
+        var inspectablePolls = 0
+        var lastNotReadyReason = "X 页面一直没有加载出来"
 
         for _ in 0..<ArticleCaptureStabilityPolicy.maxPolls {
             try Task.checkCancellation()
             if isPageInspectable {
+                inspectablePolls += 1
+                let mediaGraceExpired = inspectablePolls >= ArticleCaptureStabilityPolicy.mediaGracePolls
                 do {
                     let payload = try await capture(
                         updateStatus: false,
-                        expectedCreatorHandle: request.creator.username
+                        expectedCreatorHandle: request.creator.username,
+                        allowPostFallback: request.allowsPostFallback
+                            && inspectablePolls >= ArticleCaptureStabilityPolicy.postFallbackPolls,
+                        mediaGraceExpired: mediaGraceExpired
                     )
-                    let complete = ArticleCaptureStabilityPolicy.isStructurallyComplete(payload)
+                    let complete = ArticleCaptureStabilityPolicy.isStructurallyComplete(
+                        payload,
+                        allowUnresolvedVideo: mediaGraceExpired
+                    )
                     if complete, payload == previousPayload {
                         stableMatches += 1
                     } else {
                         previousPayload = payload
                         stableMatches = 0
+                    }
+                    if !complete {
+                        lastNotReadyReason = ArticleCaptureStabilityPolicy.incompleteReason(payload)
                     }
                     let required = ArticleCaptureStabilityPolicy.requiredConsecutiveMatches(
                         blockCount: payload.blocks.count,
@@ -229,7 +267,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                     lastNotReadyReason = detail
                     previousPayload = nil
                     stableMatches = 0
-                    setPageStatus("已使用浏览器登录状态，正在等待正文完整加载…")
+                    setPageStatus("正在等待正文完整加载：\(detail)")
                 } catch where isLoading && !(error is BrowserArticleCaptureError) {
                     // The page is still mid-navigation; the script result is not final.
                     previousPayload = nil
@@ -240,9 +278,26 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                 nanoseconds: ArticleCaptureStabilityPolicy.pollNanoseconds(isLoading: !isPageInspectable)
             )
         }
-
-        MarkXLog.warning("capture", "《\(request.displayTitle)》未能读取正文（页面仍在加载：\(isLoading ? "是" : "否")）：\(lastNotReadyReason)")
         throw BrowserArticleCaptureError.pageNotReady(lastNotReadyReason)
+    }
+
+    /// Turns the page snapshot taken when no Article body exists into a
+    /// reason the user can act on.
+    private static func missingBodyReason(_ diagnostic: BrowserArticlePageDiagnostic) -> String {
+        let text = diagnostic.visibleText.lowercased()
+        let loginHints = ["sign in", "log in", "登录", "登入", "create account", "注册"]
+        if loginHints.contains(where: text.contains) && text.count < 2_000 {
+            return "X 要求登录才能查看。请在浏览器里登录 X 后重试。"
+        }
+        let goneHints = ["this post is unavailable", "this page doesn’t exist", "this page doesn't exist",
+                         "hmm...this page", "此帖子不可用", "此页面不存在", "post was deleted", "帖子已被删除"]
+        if goneHints.contains(where: text.contains) {
+            return "原文已删除或不可访问。"
+        }
+        if text.contains("something went wrong") || text.contains("出错了") {
+            return "X 页面加载出错（可能被限流），稍后重试即可。"
+        }
+        return "页面里没有找到文章或帖子正文。请确认已登录 X，且链接指向一篇文章或帖子。"
     }
 
     private func captureDisclosure(_ request: BrowserCaptureRequest) async throws -> BrowserArticleCapturePayload {
@@ -377,10 +432,208 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
     (() => {
       const ERROR = "__X_CAPTURE_ERROR__:";
       const DIAGNOSTIC = "__X_CAPTURE_DIAGNOSTIC__:";
+      const embeddedMediaID = element => {
+        const values = [
+          element.getAttribute('poster') || '',
+          element.currentSrc || '',
+          element.getAttribute('src') || ''
+        ];
+        for (const value of values) {
+          const match = value.match(/\/(?:amplify_video(?:_thumb)?|ext_tw_video(?:_thumb)?|tweet_video)\/(\d{1,19})(?:\/|\.)/);
+          if (match) return match[1];
+        }
+        return null;
+      };
+      const downloadableVideoURLs = (video, block) => {
+        const output = new Set();
+        const add = value => {
+          if (typeof value !== 'string' || !value.includes('video.twimg.com')) return;
+          try {
+            const parsed = new URL(value, location.href);
+            if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'video.twimg.com') return;
+            if (!/\.(?:mp4|m3u8)$/i.test(parsed.pathname)) return;
+            output.add(parsed.href);
+          } catch (_) {}
+        };
+        add(video.currentSrc || '');
+        add(video.getAttribute('src') || '');
+        [...video.querySelectorAll('source[src]')].forEach(source => add(source.getAttribute('src') || ''));
+
+        // X plays HLS through a blob: URL, while the progressive MP4 variants
+        // remain in the React media payload attached to the rendered player.
+        // Read only video.twimg.com URL strings from that local component data;
+        // no cookies, headers, or unrelated page state leave the web view.
+        const seen = new WeakSet();
+        let remaining = 25000;
+        const visit = (value, depth) => {
+          if (--remaining < 0 || depth > 8 || value == null) return;
+          if (typeof value === 'string') { add(value); return; }
+          if ((typeof value !== 'object' && typeof value !== 'function') || seen.has(value)) return;
+          seen.add(value);
+          let keys = [];
+          try { keys = Object.keys(value); } catch (_) { return; }
+          for (const key of keys.slice(0, 200)) {
+            try { visit(value[key], depth + 1); } catch (_) {}
+          }
+        };
+        let current = video;
+        while (current) {
+          const reactKeys = Object.keys(current).filter(key => key.startsWith('__react'));
+          for (const key of reactKeys) {
+            try { visit(current[key], 0); } catch (_) {}
+          }
+          if (current === block) break;
+          current = current.parentElement;
+        }
+
+        const id = embeddedMediaID(video);
+        if (id) {
+          performance.getEntriesByType('resource')
+            .map(entry => entry.name)
+            .filter(value => value.includes(`/${id}/`))
+            .forEach(add);
+        }
+        return [...output];
+      };
+
       const articleView = document.querySelector('[data-testid="twitterArticleReadView"]');
       const richRoot = articleView?.querySelector('[data-testid="longformRichTextComponent"]')
         || articleView?.querySelector('[data-testid="twitterArticleRichTextView"]');
       if (!articleView || !richRoot) {
+        // Not (yet) an Article. Once the Swift side has waited long enough for
+        // an Article to appear, fall back to the focal post: long posts and
+        // the author's own thread are archived as plain text + media.
+        if (window.__markxAllowPostFallback === true && !articleView) {
+          const post = (() => {
+            const pathID = location.pathname.match(/\/status\/(\d{1,19})(?:\/|$)/i)?.[1];
+            if (!pathID) return null;
+            const statusIDOf = anchor => (anchor.getAttribute('href') || '')
+              .match(/^\/(?:[A-Za-z0-9_]{1,15}|i)\/status\/(\d{1,19})\/?$/)?.[1] || null;
+            const tweets = [...document.querySelectorAll('article[data-testid="tweet"]')];
+            const ownTimeLink = tweet => [...tweet.querySelectorAll('a[href] time')]
+              .map(time => time.closest('a[href]'))
+              .find(anchor => anchor && !anchor.closest('[role="link"]') && statusIDOf(anchor));
+            const focalIndex = tweets.findIndex(tweet => statusIDOf(ownTimeLink(tweet) || document.createElement('a')) === pathID);
+            if (focalIndex < 0) return null;
+            const focal = tweets[focalIndex];
+            // An Article's status page renders a cover card first; never
+            // archive that card as a post while the Article view is loading.
+            if (focal.querySelector('a[href*="/article/"], [data-testid="article-cover-image"]')) return 'article';
+            const handleOf = tweet => [...tweet.querySelectorAll('[data-testid="User-Name"] a[href]')]
+              .map(a => (a.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]{1,15})\/?$/)?.[1])
+              .find(Boolean) || null;
+            const authorHandle = handleOf(focal);
+            const authorName = (focal.querySelector('[data-testid="User-Name"] a[href] span')?.innerText || '').trim() || null;
+            const chain = [focal];
+            for (let i = focalIndex + 1; i < tweets.length; i++) {
+              const next = tweets[i];
+              if (!authorHandle || handleOf(next) !== authorHandle) break;
+              if (next.querySelector('a[href*="/article/"]')) break;
+              chain.push(next);
+            }
+            const absolute = value => { try { return new URL(value, location.href).href; } catch (_) { return null; } };
+            const blocks = [];
+            const insideQuote = (tweet, node) => {
+              const quote = node.closest('[role="link"]');
+              return Boolean(quote && tweet.contains(quote) && quote !== tweet);
+            };
+            const pushText = (tweet, textRoot) => {
+              let text = '';
+              const links = [];
+              const walk = node => {
+                if (node.nodeType === Node.TEXT_NODE) { text += node.nodeValue || ''; return; }
+                if (node.nodeType !== Node.ELEMENT_NODE) return;
+                if (node.tagName === 'IMG') { text += node.getAttribute('alt') || ''; return; }
+                if (node.tagName === 'BR') { text += '\n'; return; }
+                const anchor = node.tagName === 'A' ? node : null;
+                const start = text.length;
+                node.childNodes.forEach(walk);
+                if (anchor) {
+                  const label = text.slice(start);
+                  const href = absolute(anchor.getAttribute('href') || '');
+                  // X truncates displayed URLs ("example.com/abc…"); keep the
+                  // full t.co target so the Markdown link still works.
+                  if (href && label) links.push({offset:start, length:label.length, url:href});
+                }
+              };
+              textRoot.childNodes.forEach(walk);
+              let cursor = 0;
+              for (const line of text.split('\n')) {
+                const lineStart = cursor;
+                cursor += line.length + 1;
+                const trimmed = line.trim();
+                if (!trimmed) {
+                  if (blocks.length && blocks[blocks.length - 1].kind !== 'blank_line')
+                    blocks.push({kind:'blank_line', text:'', level:0, depth:0, styles:[], links:[], imageURL:null, imageID:null, altText:null, language:null});
+                  continue;
+                }
+                const lead = line.length - line.trimStart().length;
+                const lineLinks = links
+                  .filter(link => link.offset >= lineStart && link.offset + link.length <= lineStart + line.length)
+                  .map(link => ({offset:link.offset - lineStart - lead, length:link.length, url:link.url}))
+                  .filter(link => link.offset >= 0 && link.offset + link.length <= trimmed.length);
+                blocks.push({kind:'paragraph', text:trimmed, level:0, depth:0, styles:[], links:lineLinks, imageURL:null, imageID:null, altText:null, language:null});
+              }
+            };
+            let pending = null;
+            for (const tweet of chain) {
+              if (blocks.length && blocks[blocks.length - 1].kind !== 'divider' && tweet !== focal)
+                blocks.push({kind:'blank_line', text:'', level:0, depth:0, styles:[], links:[], imageURL:null, imageID:null, altText:null, language:null});
+              const textRoot = [...tweet.querySelectorAll('[data-testid="tweetText"]')].find(node => !insideQuote(tweet, node));
+              if (textRoot) pushText(tweet, textRoot);
+              const seen = new Set();
+              for (const image of tweet.querySelectorAll('[data-testid="tweetPhoto"] img')) {
+                if (insideQuote(tweet, image)) continue;
+                const value = absolute(image.currentSrc || image.src || '');
+                if (!value || !value.startsWith('https://pbs.twimg.com/media/')) continue;
+                if (!image.complete || image.naturalWidth <= 0) {
+                  image.loading = 'eager';
+                  image.scrollIntoView({block:'center'});
+                  pending = pending || '帖子图片还没有完整加载。';
+                }
+                const id = (image.closest('a[href*="/photo/"]')?.getAttribute('href') || '').match(/\/photo\/(\d+)/)?.[1];
+                const key = value.split('?')[0];
+                if (seen.has(key)) continue;
+                seen.add(key);
+                blocks.push({kind:'image', text:'', level:0, depth:0, styles:[], links:[], imageURL:value, imageID:null, altText:image.getAttribute('alt') || null, language:null});
+              }
+              for (const video of tweet.querySelectorAll('video')) {
+                if (insideQuote(tweet, video)) continue;
+                const source = absolute(location.href);
+                blocks.push({
+                  kind:'embedded_media', text:'视频', level:0, depth:0, styles:[],
+                  links:source ? [{offset:0, length:2, url:source}] : [],
+                  imageURL:null, imageID:null, altText:null, language:null,
+                  embeddedMediaType:'video', embeddedMediaID:embeddedMediaID(video),
+                  embeddedMediaURLs:downloadableVideoURLs(video, tweet),
+                  posterURL:absolute(video.getAttribute('poster') || ''), durationSeconds:null
+                });
+              }
+              const quote = [...tweet.querySelectorAll('[role="link"]')].find(node => tweet.contains(node));
+              if (quote) {
+                const quoted = [...quote.querySelectorAll('a[href]')]
+                  .map(anchor => absolute(anchor.getAttribute('href') || ''))
+                  .find(href => href && /^https:\/\/(?:x|twitter)\.com\/[A-Za-z0-9_]{1,15}\/status\/\d{1,19}$/.test(href));
+                if (quoted) blocks.push({kind:'embedded_post', text:quoted, level:0, depth:0, styles:[], links:[{offset:0, length:quoted.length, url:quoted}], imageURL:null, imageID:null, altText:null, language:null});
+              }
+            }
+            while (blocks.length && blocks[blocks.length - 1].kind === 'blank_line') blocks.pop();
+            if (pending) return ERROR + pending;
+            if (!blocks.some(block => block.text.trim() || block.kind === 'image')) return null;
+            const firstLine = blocks.find(block => block.kind === 'paragraph')?.text || '';
+            const title = (firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine)
+              || (authorName ? `${authorName} 的帖子` : '图片帖子');
+            return JSON.stringify({
+              postID: pathID, title, authorHandle, authorName,
+              publishedAt: ownTimeLink(focal)?.querySelector('time')?.getAttribute('datetime') || null,
+              pageURL: location.href, blocks, unsupportedBlockCount: 0,
+              contentType: chain.length > 1 ? 'thread' : 'long_post',
+              disclosureChromeText: '',
+              disclosureLinkURLs: [], disclosureTestIDs: []
+            });
+          })();
+          if (typeof post === 'string' && post !== 'article') return post;
+        }
         const diagnosticRoot = document.querySelector('main') || document.body;
         const authorHandle = location.pathname
           .match(/^\/([A-Za-z0-9_]{1,15})\/(?:status|article)\//i)?.[1] || null;
@@ -578,70 +831,6 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         });
         return true;
       };
-      const embeddedMediaID = element => {
-        const values = [
-          element.getAttribute('poster') || '',
-          element.currentSrc || '',
-          element.getAttribute('src') || ''
-        ];
-        for (const value of values) {
-          const match = value.match(/\/(?:amplify_video(?:_thumb)?|ext_tw_video(?:_thumb)?|tweet_video)\/(\d{1,19})(?:\/|\.)/);
-          if (match) return match[1];
-        }
-        return null;
-      };
-      const downloadableVideoURLs = (video, block) => {
-        const output = new Set();
-        const add = value => {
-          if (typeof value !== 'string' || !value.includes('video.twimg.com')) return;
-          try {
-            const parsed = new URL(value, location.href);
-            if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'video.twimg.com') return;
-            if (!/\.(?:mp4|m3u8)$/i.test(parsed.pathname)) return;
-            output.add(parsed.href);
-          } catch (_) {}
-        };
-        add(video.currentSrc || '');
-        add(video.getAttribute('src') || '');
-        [...video.querySelectorAll('source[src]')].forEach(source => add(source.getAttribute('src') || ''));
-
-        // X plays HLS through a blob: URL, while the progressive MP4 variants
-        // remain in the React media payload attached to the rendered player.
-        // Read only video.twimg.com URL strings from that local component data;
-        // no cookies, headers, or unrelated page state leave the web view.
-        const seen = new WeakSet();
-        let remaining = 25000;
-        const visit = (value, depth) => {
-          if (--remaining < 0 || depth > 8 || value == null) return;
-          if (typeof value === 'string') { add(value); return; }
-          if ((typeof value !== 'object' && typeof value !== 'function') || seen.has(value)) return;
-          seen.add(value);
-          let keys = [];
-          try { keys = Object.keys(value); } catch (_) { return; }
-          for (const key of keys.slice(0, 200)) {
-            try { visit(value[key], depth + 1); } catch (_) {}
-          }
-        };
-        let current = video;
-        while (current) {
-          const reactKeys = Object.keys(current).filter(key => key.startsWith('__react'));
-          for (const key of reactKeys) {
-            try { visit(current[key], 0); } catch (_) {}
-          }
-          if (current === block) break;
-          current = current.parentElement;
-        }
-
-        const id = embeddedMediaID(video);
-        if (id) {
-          performance.getEntriesByType('resource')
-            .map(entry => entry.name)
-            .filter(value => value.includes(`/${id}/`))
-            .forEach(add);
-        }
-        return [...output];
-      };
-
       const mergeRanges = ranges => {
         const sorted = ranges
           .filter(r => r.length > 0)
@@ -737,6 +926,24 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         return true;
       };
       let unsupportedBlockCount = 0;
+      const appendFallbackText = (node, rawText, inline) => {
+        if (inline && inline.text) {
+          blocks.push({kind:'paragraph', text:inline.text, level:0, depth:0, styles:inline.styles, links:inline.links, imageURL:null, imageID:null, altText:null, language:null});
+          return;
+        }
+        const lines = String(rawText || '').split('\n').map(line => line.trim()).filter(Boolean);
+        if (!lines.length) return;
+        const href = [...node.querySelectorAll('a[href]')]
+          .map(anchor => absoluteURL(anchor.getAttribute('href')))
+          .find(value => value && value.startsWith('https://'));
+        lines.forEach((text, index) => {
+          blocks.push({
+            kind:'paragraph', text, level:0, depth:0, styles:[],
+            links: href && index === 0 ? [{offset:0, length:text.length, url:href}] : [],
+            imageURL:null, imageID:null, altText:null, language:null
+          });
+        });
+      };
       const cover = [...articleView.querySelectorAll('[data-testid="tweetPhoto"] img')]
         .find(img => {
           if (richRoot.contains(img)) return false;
@@ -745,6 +952,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
       if (cover) {
         appendImage(cover);
       }
+      const coverBlockCount = blocks.length;
 
       const renderedBlocks = [...richRoot.querySelectorAll('[data-block="true"]')]
         .filter(node => !node.parentElement?.closest('[data-block="true"]'));
@@ -780,7 +988,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                   };
                 }))
               .filter(row => row.length > 0);
-            if (!tableRows.length) { unsupportedBlockCount += 1; continue; }
+            if (!tableRows.length) { appendFallbackText(node, (node.innerText || '').trim()); continue; }
             blocks.push({
               kind:'table',
               text:tableRows.flat().map(cell => cell.text).join('\n'),
@@ -799,7 +1007,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             const href = [...node.querySelectorAll('a[href]')]
               .map(anchor => canonicalXContentURL(anchor.getAttribute('href')))
               .find(Boolean);
-            if (!href) { unsupportedBlockCount += 1; continue; }
+            if (!href) { appendFallbackText(node, (node.innerText || '').trim()); continue; }
             blocks.push({
               kind:'embedded_post', text:href, level:0, depth:0, styles:[],
               links:[{offset:0, length:href.length, url:href}],
@@ -832,7 +1040,10 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
                   || /\/tweet_video\/[^/]+\.mp4$/i.test(path);
               } catch (_) { return false; }
             });
-            if (mediaType === 'video' && !hasProgressiveMP4)
+            // Give X time to expose the MP4 variants; after the grace period
+            // keep the video as a source-linked placeholder instead of
+            // failing the whole Article.
+            if (mediaType === 'video' && !hasProgressiveMP4 && window.__markxMediaGraceExpired !== true)
               return ERROR + "视频正在解析真实 MP4 地址。";
             blocks.push({
               kind:'embedded_media', text:detail, level:0, depth:0, styles:[],
@@ -933,7 +1144,10 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
             });
             continue;
           }
-          unsupportedBlockCount += 1;
+          // New X modules (callouts, link cards, polls…) still carry
+          // readable text. Keep it in place rather than rejecting the
+          // whole Article.
+          appendFallbackText(node, leftoverText);
           continue;
         }
 
@@ -972,7 +1186,7 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
           blocks.push({kind:'divider', text:'', level:0, depth:0, styles:[], links:[], imageURL:null, imageID:null, altText:null, language:null});
           continue;
         } else if (!inline.text) kind = 'blank_line';
-        else if (tag !== 'div' && tag !== 'p') { unsupportedBlockCount += 1; continue; }
+        else if (tag !== 'div' && tag !== 'p') { appendFallbackText(node, inline.text, inline); continue; }
 
         blocks.push({
           kind, text:inline.text, level, depth, styles:inline.styles, links:inline.links,
@@ -980,13 +1194,20 @@ private final class BrowserArticleCaptureController: NSObject, ObservableObject,
         });
       }
 
-      if (!blocks.some(b => b.text.trim().length > 0))
+      if (!blocks.slice(coverBlockCount).some(b => b.text.trim().length > 0 || b.kind === 'image' || b.kind === 'embedded_media'))
         return ERROR + "正文块还没有完整加载。";
 
       const visibleArticleImages = [...articleView.querySelectorAll('[data-testid="tweetPhoto"] img')]
         .filter(image => !belongsToQuotedCard(image) && articleMediaURL(image) !== null);
-      if (visibleArticleImages.some(image => !image.complete || image.naturalWidth <= 0))
-        return ERROR + "文章原图还没有完整加载。";
+      const pendingImages = visibleArticleImages.filter(image => !image.complete || image.naturalWidth <= 0);
+      if (pendingImages.length) {
+        // The capture web view is only one screen tall, so lazily loaded
+        // images further down never start. Force them to load and bring the
+        // first pending one into view; the next poll checks again.
+        pendingImages.forEach(image => { image.loading = 'eager'; });
+        pendingImages[0].scrollIntoView({block:'center'});
+        return ERROR + `文章原图还没有完整加载（还差 ${pendingImages.length} 张）。`;
+      }
 
       const expectedMediaIDs = new Set(
         [...articleView.querySelectorAll('a[href*="/media/"]')]

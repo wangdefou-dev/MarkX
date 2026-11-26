@@ -1761,7 +1761,8 @@ final class AppViewModel: ObservableObject {
                 creator: creator,
                 displayTitle: article.title,
                 publishedAt: article.publishedAt,
-                sourceArticleID: article.sourceArticleID
+                sourceArticleID: article.sourceArticleID,
+                allowsPostFallback: article.contentType != .xArticle
             )
         ])
     }
@@ -2766,6 +2767,7 @@ final class AppViewModel: ObservableObject {
                 let built = try await makeCaptureRequests(
                     links: links,
                     refreshExisting: refreshExisting,
+                    allowsPostFallback: true,
                     preferredTitles: preferredTitles
                 )
                 try await reload()
@@ -2895,6 +2897,7 @@ final class AppViewModel: ObservableObject {
             let built = try await makeCaptureRequests(
                 links: items.map(\.link),
                 refreshExisting: false,
+                allowsPostFallback: false,
                 preferredTitles: Dictionary(
                     items.map { ($0.link.postID, $0.title) },
                     uniquingKeysWith: { first, _ in first }
@@ -2963,6 +2966,7 @@ final class AppViewModel: ObservableObject {
     private func makeCaptureRequests(
         links: [XArticleLink],
         refreshExisting: Bool,
+        allowsPostFallback: Bool = false,
         preferredTitles: [String: String]
     ) async throws -> (requests: [BrowserCaptureRequest], skipped: Int) {
         guard let archiveRoot, let database else {
@@ -3021,7 +3025,9 @@ final class AppViewModel: ObservableObject {
                 creator: creator,
                 displayTitle: title,
                 publishedAt: sourcePublishedAt ?? existing?.publishedAt,
-                sourceArticleID: existing?.sourceArticleID
+                sourceArticleID: existing?.sourceArticleID,
+                allowsPostFallback: allowsPostFallback
+                    && link.originalURL.pathComponents.contains("status")
             ))
         }
         return (requests, skipped)
@@ -3048,7 +3054,8 @@ final class AppViewModel: ObservableObject {
                 creator: creator,
                 displayTitle: article.title,
                 publishedAt: article.publishedAt,
-                sourceArticleID: article.sourceArticleID
+                sourceArticleID: article.sourceArticleID,
+                allowsPostFallback: article.contentType != .xArticle
             )
         }
     }

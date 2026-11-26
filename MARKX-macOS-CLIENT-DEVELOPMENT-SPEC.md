@@ -218,6 +218,14 @@ ps ax -o pid=,command= | rg '/Applications/MarkX\\.app/Contents/MacOS/XArticleAr
 - 宽 420 的横排布局：左侧 64pt 应用图标；右侧依次为标题、进度条、底部一行（左：“已下载 / 总大小”，右：按钮）。标准标题栏，更新进行中标题为“正在更新 MarkX”，其他阶段为“软件更新”。
 - 阶段：`available`（有新版本 x，当前版本 y；稍后 / 下载更新）→ `downloading`（正在下载更新…；取消）→ `verifying`（下载完成后挂载、核对 SHA-256 与签名并复制 App：正在解压更新…；取消置灰）→ `ready`（可以开始安装了；安装并重启应用）→ `installing`。
 
+## 8.7.3 正文读取容错与长帖（0.4.4）
+
+- 轮询上限 `maxPolls` 150（约 1 分钟）；`maxAttempts` 2：第一次读不到正文时回收 WebView、重新导入登录状态再试一次（原文已删除时不重试）。最终错误用 `incompleteReason` / `missingBodyReason` 给出具体原因，不再统一显示“页面仍在加载”。
+- 懒加载图片：未完成的图片设 `loading = eager` 并滚动到第一张，下一轮再检查。
+- 未知排版块（新模块、无行的表格、找不到链接的引用卡片、未知标签）按文字段落保留，不再计入 `unsupportedBlockCount`。
+- 视频：`mediaGracePolls`（30 轮）内仍要求真实 MP4；之后脚本标记 `__markxMediaGraceExpired`，视频块可无 MP4，解码为“视频未能转存”占位链接并写入警告。
+- 长帖 / 作者线程：仅 `BrowserCaptureRequest.allowsPostFallback`（粘贴的 status 链接，或已保存为长帖 / 线程的文章重新处理）且 `postFallbackPolls`（15 轮）内没有出现 Article 视图时启用；读取焦点帖及其后连续的作者自回复，`contentType` 为 `long_post` / `thread`。焦点帖含 Article 封面卡时不兜底。博主 Articles 同步仍只保存 X Article。
+
 ## 8.8 页面加载判定（0.4.1）
 
 - 文章与 Articles 列表采集不再只在 `isLoading == false` 时读取页面：导航开始 `ArticleCaptureStabilityPolicy.loadingInspectionGrace`（2 秒）后即使仍未收到 `didFinish` 也照常执行提取脚本（`canInspectPage`）；加载中脚本报错视为“尚未就绪”。X 是单页应用，正文早于加载完成出现，且部分导航永远不报告完成。
